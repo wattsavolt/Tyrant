@@ -1,0 +1,41 @@
+#pragma once
+
+#include "Core.h"
+#include "RendererMacros.h"
+#include "RenderAPI/RenderAPI.h"
+#include "Scene.h"
+#include "RenderGraphResource.h"
+#include "RenderGraphAllocation.h"
+
+namespace tyr
+{
+	
+	// A render pass
+	class Pass : INonCopyable
+	{
+	public:
+		// The scene id passed can be invalid if this pass instance is needed by more than one scene
+		Pass(SceneId sceneId = Scene::c_InvalidID);
+		virtual ~Pass();
+
+		SceneId GetSceneId() const { return m_SceneId; }
+
+		// Called by the render graph builder every time the render graph is built.
+		virtual void CreateRenderGraphDependencies(RGVector<RenderGraphDependencyInput>& inputs, RGVector<RenderGraphDependencyOutput>& outputs) {};
+
+	protected:
+		// Used by the rendergraph to organize nodes based on the scene.
+		SceneId m_SceneId;
+	};
+
+	// A pass that uses a graphics or compute shader
+	class ShaderPass : public Pass
+	{
+	public:
+		ShaderPass(Scene* scene);
+		virtual ~ShaderPass();
+
+	protected:
+		Scene* m_Scene;
+	};
+}

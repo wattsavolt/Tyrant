@@ -203,14 +203,13 @@ namespace tyr
 			return *this;
 		}
 
-		/** Returns the magnitude of the vector. */
 		float Length() const
 		{
 			return Math::Sqrt(x * x + y * y);
 		}
 
 		/// Returns the magnitude of the vector squared. 
-		float SqrdLength() const
+		int SqrdLength() const
 		{
 			return x * x + y * y;
 		}

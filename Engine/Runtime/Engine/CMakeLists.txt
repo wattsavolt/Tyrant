@@ -27,7 +27,8 @@ set(EXCLUDED_SRCS
 	"Win32"
 	"Unix"
 	"Linux"
-	"MacOS")
+	"MacOS"
+	"Importing")
 
 if(WIN32)
 	list(REMOVE_ITEM EXCLUDED_SRCS "Win32")
@@ -41,6 +42,10 @@ if(UNIX)
 	elseif(APPLE)
 		list(REMOVE_ITEM EXCLUDED_SRCS "MacOS")
 	endif()
+endif()
+
+if (TYR_EDITOR_MODE)
+	list(REMOVE_ITEM EXCLUDED_SRCS "Importing") 	
 endif()
 
 add_source_groups(SRCS "${EXCLUDED_SRCS}")

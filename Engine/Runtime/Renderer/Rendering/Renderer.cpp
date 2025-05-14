@@ -58,5 +58,8 @@ namespace tyr
 		m_SceneRenderer->Render(deltaTime, updateData);
 	}
 
-
+	Device* Renderer::GetDevice() const
+	{
+		return m_RenderAPI->GetDevice();
+	}
 }

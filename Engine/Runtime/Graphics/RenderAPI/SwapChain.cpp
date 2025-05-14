@@ -1,4 +1,3 @@
-
 #include "SwapChain.h"
 #include "Image.h"
 #include "Sync.h"
@@ -72,7 +71,7 @@ namespace tyr
 		barrier.dstAccess = m_RenderingWriteAccess;
 		barrier.srcLayout = IMAGE_LAYOUT_UNKNOWN;
 		barrier.dstLayout = m_RenderingLayout;
-		barrier.image = m_Images[imageIndex].get();
+		barrier.image = m_Images[imageIndex].Get();
 		barrier.subresourceRange.aspect = m_SubresourceAspect; 
 		barrier.subresourceRange.baseMipLevel = 0;
 		barrier.subresourceRange.mipLevelCount = 1;
@@ -89,7 +88,7 @@ namespace tyr
 		barrier.dstAccess = BARRIER_ACCESS_NONE;
 		barrier.srcLayout = m_RenderingLayout;
 		barrier.dstLayout = IMAGE_LAYOUT_PRESENT_SRC;
-		barrier.image = m_Images[imageIndex].get();
+		barrier.image = m_Images[imageIndex].Get();
 		barrier.subresourceRange.aspect = m_SubresourceAspect;
 		barrier.subresourceRange.baseMipLevel = 0;
 		barrier.subresourceRange.mipLevelCount = 1;

@@ -41,7 +41,7 @@ namespace tyr
 
 	void GpuBuffer::CreateTransferBarrier(BufferBarrier& gpuBarrier, uint srcQueueFamilyIndex)
 	{
-		gpuBarrier.buffer = m_Buffer.get();
+		gpuBarrier.buffer = m_Buffer.Get();
 		gpuBarrier.srcAccess = BARRIER_ACCESS_NONE;
 		gpuBarrier.dstAccess = BARRIER_ACCESS_TRANSFER_WRITE_BIT;
 		gpuBarrier.srcStage = PIPELINE_STAGE_TOP_OF_PIPE_BIT;

@@ -100,7 +100,7 @@ namespace tyr
 		static inline float Abs(float f) { return std::fabs(f); }
 
 		/// Returns to the nearest integer. 
-		static inline int Round(float f) { return std::round(f); }
+		static inline float Round(float f) { return std::round(f); }
 
 		/// Returns the nearest integer equal or higher to the provided value. 
 		static inline float Ceil(float val) { return std::ceil(val); }

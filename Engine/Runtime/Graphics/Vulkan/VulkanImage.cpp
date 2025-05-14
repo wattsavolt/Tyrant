@@ -73,7 +73,7 @@ namespace tyr
 		: ImageView(desc)
 		, m_Device(device)
 	{
-		const Ref<VulkanImage>& image = RefCast<VulkanImage>(desc.image);
+		const VulkanImage* image = desc.image.GetAs<VulkanImage>();
 
 		VkImageViewCreateInfo imageViewCI;
 		imageViewCI.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;

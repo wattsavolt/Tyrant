@@ -7,13 +7,15 @@
 #include "World/Camera.h"
 #include "Time/Timer.h"
 #include "Math/Vector2.h"
+#include "RenderAPI/Device.h"
 
 namespace tyr
 {
 	Engine* Engine::s_Instance = nullptr;
 
-	Engine::Engine()
-		: m_Initialized(false)
+	Engine::Engine(const EngineProperties& properties)
+		: m_Properties(properties)
+		, m_Initialized(false)
 		, m_Running(false)
 		, m_App(nullptr)
 		, m_WorldCount(0)
@@ -69,6 +71,16 @@ namespace tyr
 
 		m_Renderer->Initialize(rendererConfig, m_SurfaceWidth, m_SurfaceHeight);
 
+		Device* device = m_Renderer->GetDevice();
+		
+		ThreadResourcePoolsDesc poolsDesc;
+		poolsDesc.bufferCount = 200;
+		poolsDesc.bufferViewCount = poolsDesc.bufferCount;
+		poolsDesc.imageCount = m_Properties.maxTextures;
+		poolsDesc.imageViewCount = poolsDesc.imageCount;
+
+		device->CreateThreadResourcePools(poolsDesc);
+		
 		m_Initialized = true;
 	}
 

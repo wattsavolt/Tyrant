@@ -1,7 +1,6 @@
-
 #include "RenderAPI.h"
-#include "Device.h"
 #include "SwapChain.h"
+#include "Image.h"
 
 namespace tyr
 {

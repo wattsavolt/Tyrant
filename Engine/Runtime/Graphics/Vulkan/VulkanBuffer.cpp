@@ -80,7 +80,7 @@ namespace tyr
 		: BufferView(desc)
 		, m_Device(device)
 	{
-		const Ref<VulkanBuffer>& buffer = RefCast<VulkanBuffer>(desc.buffer);
+		const VulkanBuffer* buffer = desc.buffer.GetAs<VulkanBuffer>();
 		VkBufferViewCreateInfo bufferViewInfo{};
 		bufferViewInfo.pNext = nullptr;
 		bufferViewInfo.sType = VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO;
@@ -102,7 +102,7 @@ namespace tyr
 			m_BufferView = nullptr;
 		}
 
-		m_Buffer = buffer.get();
+		m_Buffer = m_Desc.buffer.GetAs<VulkanBuffer>();
 	}
 
 	VulkanBufferView::~VulkanBufferView()

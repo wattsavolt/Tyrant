@@ -1,4 +1,3 @@
-
 #include "Device.h"
 #include "Sync.h"
 

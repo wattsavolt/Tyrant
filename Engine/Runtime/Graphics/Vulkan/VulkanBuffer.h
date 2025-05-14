@@ -29,7 +29,9 @@ namespace tyr
 		VulkanBufferView(VulkanDevice& device, const BufferViewDesc& desc);
 		~VulkanBufferView();
 
-		VulkanBuffer* GetBuffer() const { return m_Buffer; };
+		VulkanBuffer* GetBuffer() { return m_Buffer; };
+
+		const VulkanBuffer* GetBuffer() const { return m_Buffer; };
 
 	private:
 		VulkanDevice& m_Device;

@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "GraphicsBase.h"
@@ -52,9 +51,9 @@ namespace tyr
 		
 		const SwapChainDesc& GetDesc() const { return m_Desc; }
 
-		const Array<Ref<Image>>& GetImages() const { return m_Images; }
+		const Array<SRef<Image>>& GetImages() const { return m_Images; }
 
-		const Array<Ref<ImageView>>& GetImageViews() const { return m_ImageViews; }
+		const Array<SRef<ImageView>>& GetImageViews() const { return m_ImageViews; }
 
 		const uint GetWidth() const { return m_Width; }
 
@@ -65,8 +64,8 @@ namespace tyr
 
 		Device& m_Device;
 		SwapChainDesc m_Desc;
-		Array<Ref<Image>> m_Images;
-		Array<Ref<ImageView>> m_ImageViews;
+		Array<SRef<Image>> m_Images;
+		Array<SRef<ImageView>> m_ImageViews;
 		BarrierAccess m_RenderingWriteAccess;
 		BarrierAccess m_RenderingReadAccess;
 		ImageLayout m_RenderingLayout;

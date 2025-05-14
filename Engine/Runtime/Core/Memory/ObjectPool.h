@@ -1,12 +1,12 @@
 #pragma once
 
-#include "Containers/DynamicArray.h"
+#include "Containers/Array.h"
 #include "Threading/Threading.h"
 
 namespace tyr
 {
     template<class T>
-    class ObjectPool 
+    class ObjectPool final
     {
     public:
         ObjectPool(uint maxObjects)
@@ -15,10 +15,16 @@ namespace tyr
             m_Pool = AllocN<T>(maxObjects);
         }
 
+        ~ObjectPool()
+        {
+            TYR_ASSERT(m_ObjectCount == 0);
+            Free(m_Pool);
+        }
+
         template<class ...Args>
         T* Create(Args&&... args) 
         {
-            TYR_ASSERT(m_ObjectCount < maxObjects);
+            TYR_ASSERT(m_ObjectCount < m_MaxObjects);
             uint index;
             if (!m_FreeSpaces.IsEmpty()) 
             {
@@ -40,6 +46,48 @@ namespace tyr
         {
             LockGuard guard(m_Mutex);
             return Create(std::forward<Args>(args)...);
+        }
+
+        uint GetIndex(const T* object) const
+        {
+            TYR_ASSERT(object != nullptr && m_ObjectCount > 0);
+            return object - m_Pool;
+        }
+
+        const T* GetObject(uint index) const
+        {
+            return m_Pool[index];
+        }
+
+        T* GetObject(uint index)
+        {
+            return m_Pool[index];
+        }
+
+        void Delete(T* object)
+        {
+            TYR_ASSERT(object != nullptr && m_ObjectCount > 0);
+            const uint index = object - m_Pool;
+            m_FreeSpaces.Add(index);
+            object->~T();
+            m_ObjectCount--;
+        }
+
+        void Delete(uint index)
+        {
+            Delete(GetObject(index));
+        }
+
+        void DeleteSafe(T* object)
+        {
+            LockGuard guard(m_Mutex);
+            Delete(object);
+        }
+
+        void DeleteSafe(uint index)
+        {
+            LockGuard guard(m_Mutex);
+            Delete(index);
         }
 
     private:

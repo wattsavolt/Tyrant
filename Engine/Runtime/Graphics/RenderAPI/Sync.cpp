@@ -1,4 +1,3 @@
-
 #include "Sync.h"
 
 namespace tyr

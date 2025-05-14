@@ -55,7 +55,7 @@ namespace tyr
 		void AddRenderBarriers();
 		void CreateCommandAllocators();
 		void CreateCommandLists();
-		void CreateBufferBindingUpdate(BufferBindingUpdate& bindingUpdate, Ref<BufferView>& bufferView, uint descriptorIndex, uint bindingIndex);
+		void CreateBufferBindingUpdate(BufferBindingUpdate& bindingUpdate, SRef<BufferView>& bufferView, uint descriptorIndex, uint bindingIndex);
 
 		static bool s_Instantiated;
 
@@ -66,7 +66,7 @@ namespace tyr
 		Ref<GpuBuffer> m_VertexBuffer;
 		Ref<GpuBuffer> m_IndexBuffer;
 		Ref<GpuBuffer> m_InstanceBuffer;
-		Array<Ref<Buffer>> m_VertexBuffers;
+		Array<Buffer*> m_VertexBuffers;
 		Ref<GpuBuffer> m_SpotLightBuffer;
 		Ref<GpuBuffer> m_MaterialBuffer;
 		Ref<GpuBuffer> m_SceneInfoBuffer;

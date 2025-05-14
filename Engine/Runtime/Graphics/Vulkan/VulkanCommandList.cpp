@@ -57,7 +57,7 @@ namespace tyr
 		TYR_GASSERT(vkResetCommandBuffer(m_CommandBuffer, releaseResources ? VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT : 0));
 	}
 
-	void VulkanCommandList::ClearColourImage(Ref<Image>& image, ImageLayout layout, const ClearColourValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount)
+	void VulkanCommandList::ClearColourImage(SRef<Image>& image, ImageLayout layout, const ClearColourValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount)
 	{
 		VkImageSubresourceRange* vkSubresourceRanges = StackAlloc<VkImageSubresourceRange>(rangeCount);
 		for (uint i = 0; i < rangeCount; ++i)
@@ -69,11 +69,11 @@ namespace tyr
 			vkSubresourceRanges[i].layerCount = subresourceRanges[i].arrayLayerCount;
 		}
 		VkClearColorValue* vkClearValue = (VkClearColorValue*)&clearValue;
-		vkCmdClearColorImage(m_CommandBuffer, RefCast<VulkanImage>(image)->GetImage(), static_cast<VkImageLayout>(layout), vkClearValue, rangeCount, vkSubresourceRanges);
+		vkCmdClearColorImage(m_CommandBuffer, image.GetAs<VulkanImage>()->GetImage(), static_cast<VkImageLayout>(layout), vkClearValue, rangeCount, vkSubresourceRanges);
 		StackFreeLast();
 	}
 
-	void VulkanCommandList::ClearDepthStencilImage(Ref<Image>& image, ImageLayout layout, const ClearDepthStencilValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount)
+	void VulkanCommandList::ClearDepthStencilImage(SRef<Image>& image, ImageLayout layout, const ClearDepthStencilValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount)
 	{
 		VkImageSubresourceRange* vkSubresourceRanges = StackAlloc<VkImageSubresourceRange>(rangeCount);
 		for (uint i = 0; i < rangeCount; ++i)
@@ -85,7 +85,7 @@ namespace tyr
 			vkSubresourceRanges[i].layerCount = subresourceRanges[i].arrayLayerCount;
 		}
 		VkClearDepthStencilValue* vkClearValue = (VkClearDepthStencilValue*)&clearValue;
-		vkCmdClearDepthStencilImage(m_CommandBuffer, RefCast<VulkanImage>(image)->GetImage(), static_cast<VkImageLayout>(layout), vkClearValue, rangeCount, vkSubresourceRanges);
+		vkCmdClearDepthStencilImage(m_CommandBuffer, image.GetAs<VulkanImage>()->GetImage(), static_cast<VkImageLayout>(layout), vkClearValue, rangeCount, vkSubresourceRanges);
 		StackFreeLast();
 	}
 
@@ -96,12 +96,12 @@ namespace tyr
 		{
 			vkRenderingAttachmentInfo.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
 			vkRenderingAttachmentInfo.pNext = nullptr;
-			vkRenderingAttachmentInfo.imageView = RefCast<VulkanImageView>(renderingAttachmentInfo.imageView)->GetImageView();
+			vkRenderingAttachmentInfo.imageView = renderingAttachmentInfo.imageView.GetAs<VulkanImageView>()->GetImageView();
 			vkRenderingAttachmentInfo.imageLayout = VulkanUtility::ToVulkanImageLayout(renderingAttachmentInfo.imageLayout);
 			vkRenderingAttachmentInfo.resolveMode = static_cast<VkResolveModeFlagBits>(renderingAttachmentInfo.resolveMode);
 			if (renderingAttachmentInfo.resolveImageView)
 			{
-				vkRenderingAttachmentInfo.resolveImageView = RefCast<VulkanImageView>(renderingAttachmentInfo.resolveImageView)->GetImageView();
+				vkRenderingAttachmentInfo.resolveImageView = renderingAttachmentInfo.resolveImageView.GetAs<VulkanImageView>()->GetImageView();
 				vkRenderingAttachmentInfo.resolveImageLayout = VulkanUtility::ToVulkanImageLayout(renderingAttachmentInfo.resolveImageLayout);
 			}
 			else
@@ -257,7 +257,7 @@ namespace tyr
 		vkCmdPipelineBarrier2(m_CommandBuffer, &vkDependencyInfo);
 	}
 
-	void VulkanCommandList::CopyBuffer(const Ref<Buffer>& srcBuffer, const Ref<Buffer>& dstBuffer, const BufferCopyInfo* copyInfos, uint copyInfoCount)
+	void VulkanCommandList::CopyBuffer(const SRef<Buffer>& srcBuffer, const SRef<Buffer>& dstBuffer, const BufferCopyInfo* copyInfos, uint copyInfoCount)
 	{
 		VkBufferCopy* copies = StackAlloc<VkBufferCopy>(copyInfoCount);
 		for (uint i = 0; i < copyInfoCount; ++i)
@@ -266,20 +266,20 @@ namespace tyr
 			copies[i].dstOffset = static_cast<VkDeviceSize>(copyInfos[i].dstOffset);
 			copies[i].size = static_cast<VkDeviceSize>(copyInfos[i].size);
 		}
-		vkCmdCopyBuffer(m_CommandBuffer, RefCast<VulkanBuffer>(srcBuffer)->GetBuffer(), RefCast<VulkanBuffer>(dstBuffer)->GetBuffer(), copyInfoCount, copies);
+		vkCmdCopyBuffer(m_CommandBuffer, srcBuffer.GetAs<VulkanBuffer>()->GetBuffer(), dstBuffer.GetAs<VulkanBuffer>()->GetBuffer(), copyInfoCount, copies);
 		StackFreeLast();
 	}
 
-	void VulkanCommandList::CopyBuffer(const Ref<Buffer>& srcBuffer, const Ref<Buffer>& dstBuffer)
+	void VulkanCommandList::CopyBuffer(const SRef<Buffer>& srcBuffer, const SRef<Buffer>& dstBuffer)
 	{
 		VkBufferCopy vkBufferCopy;
 		vkBufferCopy.srcOffset = 0;
 		vkBufferCopy.dstOffset = 0;
 		vkBufferCopy.size = static_cast<VkDeviceSize>(srcBuffer->GetDesc().size);
-		vkCmdCopyBuffer(m_CommandBuffer, RefCast<VulkanBuffer>(srcBuffer)->GetBuffer(), RefCast<VulkanBuffer>(dstBuffer)->GetBuffer(), 1, &vkBufferCopy);
+		vkCmdCopyBuffer(m_CommandBuffer, srcBuffer.GetAs<VulkanBuffer>()->GetBuffer(), dstBuffer.GetAs<VulkanBuffer>()->GetBuffer(), 1, &vkBufferCopy);
 	}
 
-	void VulkanCommandList::CopyBufferToImage(const Ref<Buffer>& buffer, const Ref<Image>& image, ImageLayout targetLayout, const BufferImageCopyInfo* regions, uint regionCount)
+	void VulkanCommandList::CopyBufferToImage(const SRef<Buffer>& buffer, const SRef<Image>& image, ImageLayout targetLayout, const BufferImageCopyInfo* regions, uint regionCount)
 	{
 		VkBufferImageCopy* copies = StackAlloc<VkBufferImageCopy>(regionCount);
 		for (uint i = 0; i < regionCount; ++i)
@@ -294,11 +294,11 @@ namespace tyr
 			copy.imageExtent = { region.imageExtent.width, region.imageExtent.height, region.imageExtent.depth };
 		}
 		VkImageLayout vkLayout = VulkanUtility::ToVulkanImageLayout(targetLayout);
-		vkCmdCopyBufferToImage(m_CommandBuffer, RefCast<VulkanBuffer>(buffer)->GetBuffer(), RefCast<VulkanImage>(image)->GetImage(), vkLayout, regionCount, copies);
+		vkCmdCopyBufferToImage(m_CommandBuffer, buffer.GetAs<VulkanBuffer>()->GetBuffer(), image.GetAs<VulkanImage>()->GetImage(), vkLayout, regionCount, copies);
 		StackFreeLast();
 	}
 
-	void VulkanCommandList::CopyImage(const Ref<Image>& srcImage, ImageLayout srcLayout, const Ref<Image>& dstImage, ImageLayout dstLayout, const ImageCopyInfo* regions, uint regionCount)
+	void VulkanCommandList::CopyImage(const SRef<Image>& srcImage, ImageLayout srcLayout, const SRef<Image>& dstImage, ImageLayout dstLayout, const ImageCopyInfo* regions, uint regionCount)
 	{
 		VkImageCopy* copies = StackAlloc<VkImageCopy>(regionCount);
 		for (uint i = 0; i < regionCount; ++i)
@@ -313,11 +313,11 @@ namespace tyr
 		}
 		VkImageLayout vkSrcLayout = VulkanUtility::ToVulkanImageLayout(srcLayout);
 		VkImageLayout vkDstLayout = VulkanUtility::ToVulkanImageLayout(dstLayout);
-		vkCmdCopyImage(m_CommandBuffer, RefCast<VulkanImage>(srcImage)->GetImage(), vkSrcLayout, RefCast<VulkanImage>(dstImage)->GetImage(), vkDstLayout, regionCount, copies);
+		vkCmdCopyImage(m_CommandBuffer, srcImage.GetAs<VulkanImage>()->GetImage(), vkSrcLayout, dstImage.GetAs<VulkanImage>()->GetImage(), vkDstLayout, regionCount, copies);
 		StackFreeLast();
 	}
 
-	void VulkanCommandList::CopyImageToBuffer(const Ref<Image>& image, const Ref<Buffer>& buffer, ImageLayout currentLayout, const BufferImageCopyInfo* regions, uint regionCount)
+	void VulkanCommandList::CopyImageToBuffer(const SRef<Image>& image, const SRef<Buffer>& buffer, ImageLayout currentLayout, const BufferImageCopyInfo* regions, uint regionCount)
 	{
 		VkBufferImageCopy* copies = StackAlloc<VkBufferImageCopy>(regionCount);
 		for (uint i = 0; i < regionCount; ++i)
@@ -332,7 +332,7 @@ namespace tyr
 			copy.imageExtent = { region.imageExtent.width, region.imageExtent.height, region.imageExtent.depth };
 		}
 		VkImageLayout vkLayout = VulkanUtility::ToVulkanImageLayout(currentLayout);
-		vkCmdCopyImageToBuffer(m_CommandBuffer, RefCast<VulkanImage>(image)->GetImage(), vkLayout, RefCast<VulkanBuffer>(buffer)->GetBuffer(), regionCount, copies);
+		vkCmdCopyImageToBuffer(m_CommandBuffer, image.GetAs<VulkanImage>()->GetImage(), vkLayout, buffer.GetAs<VulkanBuffer>()->GetBuffer(), regionCount, copies);
 		StackFreeLast();
 	}
 
@@ -393,7 +393,7 @@ namespace tyr
 		vkCmdBindPipeline(m_CommandBuffer, bindPoint, vkPipeline);
 	}
 
-	void VulkanCommandList::BindVertexBuffers(const Ref<Buffer>* vertexBuffers, uint bufferCount)
+	void VulkanCommandList::BindVertexBuffers(const Buffer* const* vertexBuffers, uint bufferCount)
 	{
 		TYR_ASSERT(bufferCount > 0);
 
@@ -403,14 +403,14 @@ namespace tyr
 
 		for (uint i = 0; i < bufferCount; ++i)
 		{
-			Ref<VulkanBuffer> buffer = RefCast<VulkanBuffer>(vertexBuffers[i]);
+			const VulkanBuffer* buffer = static_cast<const VulkanBuffer*>(vertexBuffers[i]);
 			buffers[i] = buffer->GetBuffer();
 			offsets[i] = 0;
 		}
 		vkCmdBindVertexBuffers(m_CommandBuffer, 0, bufferCount, buffers, offsets);
 	}
 
-	void VulkanCommandList::BindVertexBuffers(const Ref<BufferView>* vertexBufferViews, uint bufferViewCount)
+	void VulkanCommandList::BindVertexBuffers(const BufferView* const* vertexBufferViews, uint bufferViewCount)
 	{
 		TYR_ASSERT(bufferViewCount > 0);
 
@@ -420,7 +420,7 @@ namespace tyr
 
 		for (uint i = 0; i < bufferViewCount; ++i)
 		{
-			const Ref<VulkanBufferView>& bufferView = RefCast<VulkanBufferView>(vertexBufferViews[i]);
+			const VulkanBufferView* bufferView = static_cast<const VulkanBufferView*>(vertexBufferViews[i]);
 			const BufferViewDesc& viewDesc = bufferView->GetDesc();
 			buffers[i] = bufferView->GetBuffer()->GetBuffer();
 			offsets[i] = viewDesc.offset;
@@ -428,20 +428,20 @@ namespace tyr
 		vkCmdBindVertexBuffers(m_CommandBuffer, 0, bufferViewCount, buffers, offsets);
 	}
 
-	void VulkanCommandList::BindIndexBuffer(const Ref<Buffer>& indexBuffer, size_t offset)
+	void VulkanCommandList::BindIndexBuffer(const SRef<Buffer>& indexBuffer, size_t offset)
 	{
-		const Ref<VulkanBuffer>& buffer = RefCast<VulkanBuffer>(indexBuffer);
-		BindIndexBufferInternal(buffer.get(), offset);
+		const VulkanBuffer* buffer = indexBuffer.GetAs<VulkanBuffer>();
+		BindIndexBufferInternal(buffer, offset);
 	}
 
-	void VulkanCommandList::BindIndexBuffer(const Ref<BufferView>& indexBufferView)
+	void VulkanCommandList::BindIndexBuffer(const SRef<BufferView>& indexBufferView)
 	{
-		const Ref<VulkanBufferView>& vulkanBufferView = RefCast<VulkanBufferView>(indexBufferView);
+		const VulkanBufferView* vulkanBufferView = indexBufferView.GetAs<VulkanBufferView>();
 		const BufferViewDesc& viewDesc = indexBufferView->GetDesc();
 		BindIndexBufferInternal(vulkanBufferView->GetBuffer(), viewDesc.offset);
 	}
 
-	void VulkanCommandList::BindIndexBufferInternal(VulkanBuffer* buffer, size_t offset)
+	void VulkanCommandList::BindIndexBufferInternal(const VulkanBuffer* buffer, size_t offset)
 	{
 		const BufferDesc& bufferDesc = buffer->GetDesc();
 		VkIndexType type;

@@ -61,12 +61,14 @@ namespace tyr
 
 		Ref<TransferBuffer>& GetTransferBuffer() { return m_TransferBuffer; }
 
-		Ref<Buffer>& GetBuffer() { return m_Buffer; }
-		Buffer* GetBufferRawPtr() const { return m_Buffer.get(); }
+		SRef<Buffer>& GetBuffer() { return m_Buffer; }
+		const Buffer* GetBufferRawPtr() const { return m_Buffer.Get(); }
+		Buffer* GetBufferRawPtr() { return m_Buffer.Get(); }
 		void* GetBufferNativePtr() const { return m_Buffer->GetNativePtr(); }
 
-		Ref<BufferView>& GetBufferView() { return m_BufferView; }
-		BufferView* GetBufferViewRawPtr() const { return m_BufferView.get(); }
+		SRef<BufferView>& GetBufferView() { return m_BufferView; }
+		const BufferView* GetBufferViewRawPtr() const { return m_BufferView.Get(); }
+		BufferView* GetBufferViewRawPtr() { return m_BufferView.Get(); }
 		
 	private:
 		void CreateTransferBuffer(const GpuBufferDesc& desc);
@@ -75,8 +77,8 @@ namespace tyr
 		// Buffer in cpu memory.
 		Ref<TransferBuffer> m_TransferBuffer;
 		// buffer in gpu memory.
-		Ref<Buffer> m_Buffer;
-		Ref<BufferView> m_BufferView;
+		SRef<Buffer> m_Buffer;
+		SRef<BufferView> m_BufferView;
 		bool m_UseTransferBuffer;
 	};
 }

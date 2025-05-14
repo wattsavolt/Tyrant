@@ -8,6 +8,12 @@ namespace tyr
 {
 	class AppBase;
 
+	// Should be loaded from a .ini file
+	struct EngineProperties
+	{
+		uint maxTextures = 3000;
+	};
+
 	struct EngineParams
 	{
 		const char* appName = "";
@@ -62,7 +68,7 @@ namespace tyr
 
 	private:
 		friend class EngineManager;
-		Engine();
+		Engine(const EngineProperties& properties);
 
 		void Initialize(const EngineParams& engineParams);
 		void Shutdown();
@@ -76,6 +82,7 @@ namespace tyr
 		URef<Renderer> m_Renderer;
 		World m_Worlds[Scene::c_MaxScenes];
 		RenderUpdateData m_RenderUpdateData;
+		EngineProperties m_Properties;
 		uint m_WorldCount;
 		uint m_SurfaceWidth;
 		uint m_SurfaceHeight;

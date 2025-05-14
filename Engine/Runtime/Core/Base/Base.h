@@ -60,6 +60,8 @@ extern "C" {
 #	define TYR_ASSERT(v)
 #endif
 
+#define TYR_STATIC_ASSERT(v, m) static_assert(v, m)
+
 #define TYR_MAX_PATH 260
 
 namespace tyr

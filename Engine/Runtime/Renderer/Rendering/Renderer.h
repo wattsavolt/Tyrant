@@ -8,6 +8,7 @@
 namespace tyr
 {
 	class SceneRenderer;
+	class Device;
 	struct RenderUpdateData;
 
 	class TYR_RENDERER_EXPORT Renderer final : INonCopyable
@@ -21,6 +22,8 @@ namespace tyr
 		void Render(double deltaTime, const RenderUpdateData& updateData);
 		bool IsInitialized();
 	
+		Device* GetDevice() const;
+
 	private:
 		static bool s_Instantiated;
 		bool m_Initialized;

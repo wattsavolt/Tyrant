@@ -27,7 +27,7 @@ namespace tyr
 
 		VkSubpassDescription* subpasses = stack.Alloc<VkSubpassDescription>(renderPassDesc.subpasses.Size());
 		// Array<FixedArray<Array<VkAttachmentReference>, 5>> subpassAttachments;
-		for (int i = 0; i < renderPassDesc.subpasses.Size(); ++i)
+		for (uint i = 0; i < renderPassDesc.subpasses.Size(); ++i)
 		{
 			const SubpassDesc& desc = renderPassDesc.subpasses[i];
 			VkSubpassDescription& subpass = subpasses[i];

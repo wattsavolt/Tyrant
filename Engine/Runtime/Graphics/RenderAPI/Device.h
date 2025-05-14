@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "GraphicsBase.h"
@@ -50,6 +49,14 @@ namespace tyr
 		uint maxStorageBufferRange;
 	};
 
+	struct ThreadResourcePoolsDesc
+	{
+		uint bufferCount = 200;
+		uint bufferViewCount = 300;
+		uint imageCount = 3000;
+		uint imageViewCount = 4500;
+	};
+
 	/// Class repesenting a logical device 
 	class TYR_GRAPHICS_EXPORT Device
 	{
@@ -64,10 +71,10 @@ namespace tyr
 		virtual Ref<CommandAllocator> CreateCommandAllocator(const CommandAllocatorDesc& desc) = 0;
 		virtual Ref<CommandList> CreateCommandList(const CommandListDesc& desc) = 0;
 		virtual Ref<AccelerationStructure> CreateAccelerationStructure(const AccelerationStructureDesc& desc) = 0;
-		virtual Ref<Buffer> CreateBuffer(const BufferDesc& desc) = 0;
-		virtual Ref<BufferView> CreateBufferView(const BufferViewDesc& desc) = 0;
-		virtual Ref<Image> CreateImage(const ImageDesc& desc) = 0;
-		virtual Ref<ImageView> CreateImageView(const ImageViewDesc& desc) = 0;
+		virtual SRef<Buffer> CreateBuffer(const BufferDesc& desc) = 0;
+		virtual SRef<BufferView> CreateBufferView(const BufferViewDesc& desc) = 0;
+		virtual SRef<Image> CreateImage(const ImageDesc& desc) = 0;
+		virtual SRef<ImageView> CreateImageView(const ImageViewDesc& desc) = 0;
 		virtual Ref<Sampler> CreateSampler(const SamplerDesc& desc) = 0;
 		virtual Ref<Shader> CreateShader(const ShaderDesc& desc) = 0;
 		virtual Ref<DescriptorPool> CreateDescriptorPool(const DescriptorPoolDesc& desc, const char* debugName = "") = 0;
@@ -77,6 +84,9 @@ namespace tyr
 		virtual Ref<Semaphore> CreateSemaphoreResource(const SemaphoreDesc& desc) = 0;
 		virtual Ref<Event> CreateEventResource(const EventDesc& desc) = 0;
 
+		// Creates resource pools for the calling thread
+		virtual void CreateThreadResourcePools(const ThreadResourcePoolsDesc& desc) = 0;
+
 		/// Blocks the calling thread until all operations on the device are complete. 
 		virtual void WaitIdle() = 0;
 		virtual bool IsDiscreteGPU() const = 0;
@@ -85,7 +95,7 @@ namespace tyr
 
 		uint GetIndex() const { return m_Index; }
 
-		const DeviceProperties& GetProperties() const { return m_Properties; }
+		const DeviceProperties& GetProperties() const { return m_DeviceProperties; }
 
 		// Finds what requested memory property flags the devuce has
 		virtual uint FindMemoryType(uint requirementBits, MemoryProperty requestedFlags) const = 0;
@@ -98,7 +108,7 @@ namespace tyr
 
 	protected:
 		// Physical device properties
-		DeviceProperties m_Properties;
+		DeviceProperties m_DeviceProperties;
 		// Index of the physical device
 		uint m_Index;
 	};

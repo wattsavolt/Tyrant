@@ -37,7 +37,7 @@ namespace tyr
 
 	void TransferBuffer::CreateTransferBarrier(BufferBarrier& barrier, uint srcQueueFamilyIndex)
 	{
-		barrier.buffer = m_Buffer.get();
+		barrier.buffer = m_Buffer.Get();
 		barrier.srcAccess = BARRIER_ACCESS_NONE;
 		barrier.dstAccess = BARRIER_ACCESS_TRANSFER_READ_BIT;
 		barrier.srcStage = PIPELINE_STAGE_TOP_OF_PIPE_BIT;

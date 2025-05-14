@@ -51,9 +51,9 @@ namespace tyr
 
 		static Ref<Texture> Create(Device& device, const TextureDesc& desc);
 
-		Ref<Image>& GetImage() { return m_Image; }
+		SRef<Image>& GetImage() { return m_Image; }
 
-		Ref<ImageView>& GetImageView() { return m_ImageView; }
+		SRef<ImageView>& GetImageView() { return m_ImageView; }
 
 		ImageLayout GetImageLayout() const { return m_ImageLayout; }
 
@@ -68,8 +68,8 @@ namespace tyr
 		static uint GetTexelFormatSize(PixelFormat format);
 
 	private:
-		Ref<Image> m_Image;
-		Ref<ImageView> m_ImageView;
+		SRef<Image> m_Image;
+		SRef<ImageView> m_ImageView;
 		// Current layout tracked by the render graph 
 		friend class RenderGraph;
 		ImageLayout m_ImageLayout;

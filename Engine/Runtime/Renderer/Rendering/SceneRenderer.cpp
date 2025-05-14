@@ -132,7 +132,7 @@ namespace tyr
 		m_CommandList->SetViewport(&m_Viewport, 1);	
 		m_CommandList->SetScissor(&m_RenderingInfo.renderArea, 1);
 		m_CommandList->BindPipeline(m_Pipeline);
-		m_CommandList->BindVertexBuffers(m_VertexBuffers.Data(), (uint)m_VertexBuffers.Size());
+		m_CommandList->BindVertexBuffers(m_VertexBuffers.Data(), m_VertexBuffers.Size());
 		m_CommandList->BindIndexBuffer(m_IndexBuffer->GetBufferView());
 		m_CommandList->BindDescriptorSetGroup(m_DescriptorSetGroup, m_Pipeline);
 		m_CommandList->DrawIndexed(Cube::c_NumIndices, 1, 0, 0, 0);
@@ -461,7 +461,7 @@ namespace tyr
 			desc.usage = GpuBufferUsage::Vertex;
 			m_VertexBuffer = GpuBuffer::Create(*m_Device, desc);
 			m_VertexBuffer->Write(static_cast<const void*>(Cube::c_Vertices), 0, desc.size);
-			m_VertexBuffers.Add(m_VertexBuffer->GetBuffer());
+			m_VertexBuffers.Add(m_VertexBuffer->GetBuffer().Get());
 		}
 		{
 			GpuBufferDesc desc;
@@ -482,7 +482,7 @@ namespace tyr
 			Matrix4 shaderTransform = m_RenderAPI->CreateShaderMatrix(transform);
 			m_InstanceBuffer = GpuBuffer::Create(*m_Device, desc);
 			m_InstanceBuffer->Write(static_cast<const void*>(&shaderTransform), 0, desc.size);
-			m_VertexBuffers.Add(m_InstanceBuffer->GetBuffer());
+			m_VertexBuffers.Add(m_InstanceBuffer->GetBuffer().Get());
 		}
 		{
 			GpuBufferDesc desc;
@@ -577,7 +577,7 @@ namespace tyr
 		m_ExecuteDesc.waitDstPipelineStages.Add(PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
 	}
 
-	void SceneRenderer::CreateBufferBindingUpdate(BufferBindingUpdate& bindingUpdate, Ref<BufferView>& bufferView, uint descriptorIndex, uint bindingIndex)
+	void SceneRenderer::CreateBufferBindingUpdate(BufferBindingUpdate& bindingUpdate, SRef<BufferView>& bufferView, uint descriptorIndex, uint bindingIndex)
 	{
 		BufferBindingInfo bindingInfo;
 		bindingInfo.bufferView = bufferView;

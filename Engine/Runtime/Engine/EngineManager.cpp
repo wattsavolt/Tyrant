@@ -7,7 +7,9 @@ namespace tyr
 	void EngineManager::RunEngine(const EngineParams& engineParams)
 	{
 		// TODO: Provide function that will load properties from file.
-		Engine* engine = new Engine();
+		EngineProperties properties;
+		properties.maxTextures = 3000;
+		Engine* engine = new Engine(properties);
 		engine->Initialize(engineParams);
 		engine->Run();
 		engine->Shutdown();

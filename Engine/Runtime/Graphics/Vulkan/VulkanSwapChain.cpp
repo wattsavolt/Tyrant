@@ -145,9 +145,9 @@ namespace tyr
 	VulkanSwapChain::~VulkanSwapChain()
 	{
 		// The image views need to be manually destroyed to ensure they are destroyed before the images.
-		for (Ref<ImageView>& view : m_ImageViews) 
+		for (SRef<ImageView>& view : m_ImageViews) 
 		{
-			Ref<VulkanImageView> vkView = RefCast<VulkanImageView>(view);
+			VulkanImageView* vkView = view.GetAs<VulkanImageView>();
 			vkDestroyImageView(m_LogicalDevice, vkView->GetImageView(), g_VulkanAllocationCallbacks);
 		}
 		vkDestroySwapchainKHR(m_LogicalDevice, m_SwapChain, g_VulkanAllocationCallbacks);

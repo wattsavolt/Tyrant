@@ -85,7 +85,7 @@ namespace tyr
 	class Buffer;
 
 	/// Class repesenting a image
-	class TYR_GRAPHICS_EXPORT Image
+	class TYR_GRAPHICS_EXPORT Image : public AtomicRefCountedObject
 	{
 	public:
 		Image(Device& device, const ImageDesc& desc);
@@ -112,7 +112,7 @@ namespace tyr
 #if TYR_DEBUG
 		String debugName;
 #endif
-		Ref<Image> image;
+		SRef<Image> image;
 		SubresourceRange subresourceRange;
 		ImageType viewType;
 		// Specifies whether this image view points at a swap chain image
@@ -120,7 +120,7 @@ namespace tyr
 	};
 
 	/// Class repesenting a image view
-	class TYR_GRAPHICS_EXPORT ImageView
+	class TYR_GRAPHICS_EXPORT ImageView : public AtomicRefCountedObject
 	{
 	public:
 		ImageView(const ImageViewDesc& desc);

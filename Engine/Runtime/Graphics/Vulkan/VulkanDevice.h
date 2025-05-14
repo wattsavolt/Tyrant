@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "VulkanUtility.h"
@@ -38,13 +37,13 @@ namespace tyr
 		uint GetQueueFamilyIndex(CommandQueueType type) const override { return m_QueueGroups[(int)type].familyIndex; }
 
 		/// Returns a set of properties describing the physical device. 
-		const VkPhysicalDeviceProperties& GetDeviceProperties() const { return m_DeviceProperties; }
+		const VkPhysicalDeviceProperties& GetDeviceProperties() const { return m_VulkanDeviceProperties; }
 
 		/// Returns a set of features that the application can use to check if a specific feature is supported. 
-		const VkPhysicalDeviceFeatures& GetDeviceFeatures() const { return m_DeviceFeatures; }
+		const VkPhysicalDeviceFeatures& GetDeviceFeatures() const { return m_VulkanDeviceFeatures; }
 
 		/// Returns a set of properties describing the memory of the physical device. 
-		const VkPhysicalDeviceMemoryProperties& GetMemoryProperties() const { return m_MemoryProperties; }
+		const VkPhysicalDeviceMemoryProperties& GetMemoryProperties() const { return m_VulkanMemoryProperties; }
 
 		/// Allocates memory for the provided buffer, and binds it to the buffer. Returns null if it cannot find memory
 		/// using the property flags provided.
@@ -69,10 +68,10 @@ namespace tyr
 		Ref<CommandAllocator> CreateCommandAllocator(const CommandAllocatorDesc& desc) override;
 		Ref<CommandList> CreateCommandList(const CommandListDesc& desc) override;
 		Ref<AccelerationStructure> CreateAccelerationStructure(const AccelerationStructureDesc& desc) override;
-		Ref<Buffer> CreateBuffer(const BufferDesc& desc) override;
-		Ref<BufferView> CreateBufferView(const BufferViewDesc& desc) override;
-		Ref<Image> CreateImage(const ImageDesc& desc) override;
-		Ref<ImageView> CreateImageView(const ImageViewDesc& desc) override;
+		SRef<Buffer> CreateBuffer(const BufferDesc& desc) override;
+		SRef<BufferView> CreateBufferView(const BufferViewDesc& desc) override;
+		SRef<Image> CreateImage(const ImageDesc& desc) override;
+		SRef<ImageView> CreateImageView(const ImageViewDesc& desc) override;
 		Ref<Sampler> CreateSampler(const SamplerDesc& desc) override;
 		Ref<Shader> CreateShader(const ShaderDesc& desc) override;
 		Ref<DescriptorPool> CreateDescriptorPool(const DescriptorPoolDesc& desc, const char* debugName) override;
@@ -82,16 +81,17 @@ namespace tyr
 		Ref<Semaphore> CreateSemaphoreResource(const SemaphoreDesc& desc) override;
 		Ref<Event> CreateEventResource(const EventDesc& desc) override;
 
-		static const Array<const char*> c_RequiredDeviceExtensions;
+		void CreateThreadResourcePools(const ThreadResourcePoolsDesc& desc) override;
 
 		VmaAllocator GetAllocator() { return m_Allocator; }
 
 		/// Checks if the device is a discrete GPU (not an integrated GPU).
 		bool IsDiscreteGPU() const override
 		{ 
-			return m_DeviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+			return m_VulkanDeviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
 		}
 		
+		static const Array<const char*> c_RequiredDeviceExtensions;
 
 	private:
 		VkPhysicalDevice m_PhysicalDevice;
@@ -99,9 +99,9 @@ namespace tyr
 
 		VmaAllocator m_Allocator;
 
-		VkPhysicalDeviceProperties m_DeviceProperties;
-		VkPhysicalDeviceFeatures m_DeviceFeatures;
-		VkPhysicalDeviceMemoryProperties m_MemoryProperties;
+		VkPhysicalDeviceProperties m_VulkanDeviceProperties;
+		VkPhysicalDeviceFeatures m_VulkanDeviceFeatures;
+		VkPhysicalDeviceMemoryProperties m_VulkanMemoryProperties;	
 
 		/// Contains data about a set of queues of a specific type. 
 		struct VulkanQueueGroup

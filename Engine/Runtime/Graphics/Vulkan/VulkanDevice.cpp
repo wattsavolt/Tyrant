@@ -1,5 +1,3 @@
-
-
 #include "VulkanDevice.h"
 #include "VulkanHelper.h"
 #include "VulkanPipeline.h"
@@ -7,11 +5,11 @@
 #include "VulkanCommandList.h"
 #include "VulkanAccelerationStructure.h"
 #include "VulkanBuffer.h"
-#include "VulkanBuffer.h"
 #include "VulkanImage.h"
 #include "VulkanShader.h"
 #include "VulkanDescriptorSet.h"
 #include "VulkanSync.h"
+#include "Memory/ObjectPool.h"
 
 #define VMA_IMPLEMENTATION
 #include <vma/vk_mem_alloc.h>
@@ -29,6 +27,62 @@ namespace tyr
 #endif
 	};
 
+	class ThreadResourcePools
+	{
+	public:
+		ThreadResourcePools(const ThreadResourcePoolsDesc& desc)
+			: m_BufferPool(desc.bufferCount)
+			, m_BufferViewPool(desc.bufferViewCount)
+			, m_ImagePool(desc.imageCount)
+			, m_ImageViewPool(desc.imageViewCount)
+		{
+		}
+
+		void DeleteBuffer(RefCountedObject* ptr)
+		{
+			VulkanBuffer* buffer = static_cast<VulkanBuffer*>(ptr);
+			m_BufferPool.Delete(buffer);
+		}
+
+		void DeleteBufferView(RefCountedObject* ptr)
+		{
+			VulkanBufferView* bufferView = static_cast<VulkanBufferView*>(ptr);
+			m_BufferViewPool.Delete(bufferView);
+		}
+
+		void DeleteImage(RefCountedObject* ptr)
+		{
+			VulkanImage* image = static_cast<VulkanImage*>(ptr);
+			m_ImagePool.Delete(image);
+		}
+
+		void DeleteImageView(RefCountedObject* ptr)
+		{
+			VulkanImageView* imageView = static_cast<VulkanImageView*>(ptr);
+			m_ImageViewPool.Delete(imageView);
+		}
+
+		ObjectPool<VulkanBuffer>& GetBufferPool() { return m_BufferPool; }
+
+		ObjectPool<VulkanBufferView>& GetBufferViewPool() { return m_BufferViewPool; }
+
+		ObjectPool<VulkanImage>& GetImagePool() { return m_ImagePool; }
+
+		ObjectPool<VulkanImageView>& GetImageViewPool() { return m_ImageViewPool; }
+
+		static URef<ThreadResourcePools>& Instance()
+		{
+			TYR_THREADLOCAL static URef<ThreadResourcePools> threadResourcePools;
+			return threadResourcePools;
+		}
+
+	private:
+		ObjectPool<VulkanBuffer> m_BufferPool;
+		ObjectPool<VulkanBufferView> m_BufferViewPool;
+		ObjectPool<VulkanImage> m_ImagePool;
+		ObjectPool<VulkanImageView> m_ImageViewPool;
+	};
+
 	VulkanDevice::VulkanDevice(VkInstance instance, VkPhysicalDevice device, uint index)
 		: Device(index)
 		, m_PhysicalDevice(device)
@@ -39,11 +93,10 @@ namespace tyr
 			m_QueueGroups[i].familyIndex = (uint)-1;
 		}
 			
-
-		vkGetPhysicalDeviceProperties(device, &m_DeviceProperties);
-		m_Properties.maxStorageBufferRange = m_DeviceProperties.limits.maxStorageBufferRange;
-		vkGetPhysicalDeviceFeatures(device, &m_DeviceFeatures);
-		vkGetPhysicalDeviceMemoryProperties(device, &m_MemoryProperties);
+		vkGetPhysicalDeviceProperties(device, &m_VulkanDeviceProperties);
+		m_DeviceProperties.maxStorageBufferRange = m_VulkanDeviceProperties.limits.maxStorageBufferRange;
+		vkGetPhysicalDeviceFeatures(device, &m_VulkanDeviceFeatures);
+		vkGetPhysicalDeviceMemoryProperties(device, &m_VulkanMemoryProperties);
 
 		uint numQueueFamilies;
 		vkGetPhysicalDeviceQueueFamilyProperties(device, &numQueueFamilies, nullptr);
@@ -141,7 +194,7 @@ namespace tyr
 		deviceInfo.flags = 0;
 		deviceInfo.queueCreateInfoCount = (uint32_t)queueCreateInfos.Size();
 		deviceInfo.pQueueCreateInfos = queueCreateInfos.Data();
-		deviceInfo.pEnabledFeatures = &m_DeviceFeatures;
+		deviceInfo.pEnabledFeatures = &m_VulkanDeviceFeatures;
 		deviceInfo.enabledExtensionCount = numExtensions;
 		deviceInfo.ppEnabledExtensionNames = extensions;
 		deviceInfo.enabledLayerCount = 0;
@@ -290,11 +343,11 @@ namespace tyr
 	uint VulkanDevice::FindMemoryType(uint requirementBits, MemoryProperty requestedFlags) const
 	{
 		const VkMemoryPropertyFlags vkRequestedFlags = static_cast<VkMemoryPropertyFlags>(requestedFlags);
-		for (uint i = 0; i < m_MemoryProperties.memoryTypeCount; i++)
+		for (uint i = 0; i < m_VulkanMemoryProperties.memoryTypeCount; i++)
 		{
 			if (requirementBits & (1 << i))
 			{
-				if (Utility::HasFlag(m_MemoryProperties.memoryTypes[i].propertyFlags, vkRequestedFlags))
+				if (Utility::HasFlag(m_VulkanMemoryProperties.memoryTypes[i].propertyFlags, vkRequestedFlags))
 				{
 					return i;
 				}
@@ -306,9 +359,9 @@ namespace tyr
 	bool VulkanDevice::HasMemoryType(MemoryProperty requestedFlags) const
 	{
 		const VkMemoryPropertyFlags vkRequestedFlags = static_cast<VkMemoryPropertyFlags>(requestedFlags);
-		for (uint i = 0; i < m_MemoryProperties.memoryTypeCount; i++)
+		for (uint i = 0; i < m_VulkanMemoryProperties.memoryTypeCount; i++)
 		{	
-			if (Utility::HasFlag(m_MemoryProperties.memoryTypes[i].propertyFlags, vkRequestedFlags))
+			if (Utility::HasFlag(m_VulkanMemoryProperties.memoryTypes[i].propertyFlags, vkRequestedFlags))
 			{
 				return i;
 			}
@@ -353,24 +406,48 @@ namespace tyr
 		return MakeRef<VulkanAccelerationStructure>(*this, desc);
 	}
 
-	Ref<Buffer> VulkanDevice::CreateBuffer(const BufferDesc& desc)
+	SRef<Buffer> VulkanDevice::CreateBuffer(const BufferDesc& desc)
 	{
-		return MakeRef<VulkanBuffer>(*this, desc);
+		URef<ThreadResourcePools>& threadResourcePools = ThreadResourcePools::Instance();
+		if (threadResourcePools)
+		{
+			static RefCountedObjectDeleter deleter = std::bind(&ThreadResourcePools::DeleteBuffer, threadResourcePools.get(), std::placeholders::_1);
+			return MakeSRef<VulkanBuffer>(deleter, *this, desc);
+		}
+		return MakeSRef<VulkanBuffer>(nullptr, *this, desc);
 	}
 
-	Ref<BufferView> VulkanDevice::CreateBufferView(const BufferViewDesc& desc)
+	SRef<BufferView> VulkanDevice::CreateBufferView(const BufferViewDesc& desc)
 	{
-		return MakeRef<VulkanBufferView>(*this, desc);
+		URef<ThreadResourcePools>& threadResourcePools = ThreadResourcePools::Instance();
+		if (threadResourcePools)
+		{
+			static RefCountedObjectDeleter deleter = std::bind(&ThreadResourcePools::DeleteBufferView, threadResourcePools.get(), std::placeholders::_1);
+			return MakeSRef<VulkanBufferView>(deleter, *this, desc);
+		}
+		return MakeSRef<VulkanBufferView>(nullptr, *this, desc);
 	}
 
-	Ref<Image> VulkanDevice::CreateImage(const ImageDesc& desc)
+	SRef<Image> VulkanDevice::CreateImage(const ImageDesc& desc)
 	{
-		return MakeRef<VulkanImage>(*this, desc);
+		URef<ThreadResourcePools>& threadResourcePools = ThreadResourcePools::Instance();
+		if (threadResourcePools)
+		{
+			static RefCountedObjectDeleter deleter = std::bind(&ThreadResourcePools::DeleteImage, threadResourcePools.get(), std::placeholders::_1);
+			return MakeSRef<VulkanImage>(deleter, *this, desc);
+		}
+		return MakeSRef<VulkanImage>(nullptr, *this, desc);
 	}
 
-	Ref<ImageView> VulkanDevice::CreateImageView(const ImageViewDesc& desc)
+	SRef<ImageView> VulkanDevice::CreateImageView(const ImageViewDesc& desc)
 	{
-		return MakeRef<VulkanImageView>(*this, desc);
+		URef<ThreadResourcePools>& threadResourcePools = ThreadResourcePools::Instance();
+		if (threadResourcePools)
+		{
+			static RefCountedObjectDeleter deleter = std::bind(&ThreadResourcePools::DeleteImageView, threadResourcePools.get(), std::placeholders::_1);
+			return MakeSRef<VulkanImageView>(deleter, *this, desc);
+		}
+		return MakeSRef<VulkanImageView>(nullptr, *this, desc);
 	}
 
 	Ref<Sampler> VulkanDevice::CreateSampler(const SamplerDesc& desc)
@@ -411,5 +488,10 @@ namespace tyr
 	Ref<Event> VulkanDevice::CreateEventResource(const EventDesc& desc)
 	{
 		return MakeRef<VulkanEvent>(*this, desc);
+	}
+
+	void VulkanDevice::CreateThreadResourcePools(const ThreadResourcePoolsDesc& desc)
+	{
+		ThreadResourcePools::Instance() = MakeURef<ThreadResourcePools>(desc);
 	}
 }

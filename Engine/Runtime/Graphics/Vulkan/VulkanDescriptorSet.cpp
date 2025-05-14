@@ -1,5 +1,3 @@
-
-
 #include "VulkanDescriptorSet.h"
 #include "VulkanDevice.h"
 #include "VulkanBuffer.h"
@@ -134,9 +132,9 @@ namespace tyr
 				for (uint j = 0; j < bindingInfoCount; ++j)
 				{
 					const BufferBindingInfo& bindingInfo = bufferUpdate.bufferBindingInfos[j];
-					const Ref<BufferView>& bufferView = bindingInfo.bufferView;
+					const SRef<BufferView>& bufferView = bindingInfo.bufferView;
 					const BufferViewDesc& viewDesc = bufferView->GetDesc();
-					const Ref<VulkanBuffer>& buffer = RefCast<VulkanBuffer>(viewDesc.buffer);
+					const VulkanBuffer* buffer = viewDesc.buffer.GetAs<VulkanBuffer>();
 					vkBufferInfos[j].buffer = buffer->GetBuffer();
 					vkBufferInfos[j].offset = viewDesc.offset;
 					vkBufferInfos[j].range = viewDesc.size;
@@ -166,9 +164,9 @@ namespace tyr
 			for (uint j = 0; j < bindingInfoCount; ++j)
 			{
 				const ImageBindingInfo& bindingInfo = imageUpdate.imageBindingInfos[j];
-				const Ref<VulkanImageView>& imageView = RefCast<VulkanImageView>(bindingInfo.imageView);
+				const VulkanImageView* imageView = bindingInfo.imageView.GetAs<VulkanImageView>();
 				const ImageViewDesc& viewDesc = imageView->GetDesc();
-				const Ref<VulkanImage>& image = RefCast<VulkanImage>(viewDesc.image);
+				const VulkanImage* image = viewDesc.image.GetAs<VulkanImage>();
 				const ImageDesc& imageDesc = image->GetDesc();
 
 				vkImageInfos[j].imageView = imageView->GetImageView();

@@ -31,7 +31,7 @@ namespace tyr
 	};
 
 	/// Class repesenting a buffer in vulkan and a heap in D3D12
-	class TYR_GRAPHICS_EXPORT Buffer
+	class TYR_GRAPHICS_EXPORT Buffer : public AtomicRefCountedObject
 	{
 	public:
 		Buffer(const BufferDesc& desc);
@@ -56,13 +56,13 @@ namespace tyr
 
 	struct BufferViewDesc
 	{
-		Ref<Buffer> buffer;
+		SRef<Buffer> buffer;
 		size_t offset;
 		size_t size;
 	};
 
 	/// Class repesenting a CPU or GPU buffer view
-	class TYR_GRAPHICS_EXPORT BufferView
+	class TYR_GRAPHICS_EXPORT BufferView : public AtomicRefCountedObject
 	{
 	public:
 		BufferView(const BufferViewDesc& desc);

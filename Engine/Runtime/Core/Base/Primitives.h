@@ -21,5 +21,4 @@ namespace tyr
 	using int64  = int64_t;
 	using uint64 = uint64_t;
 	using ulong = unsigned long;
-	using uchar = unsigned char;
 }

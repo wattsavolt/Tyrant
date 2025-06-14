@@ -359,17 +359,17 @@ namespace tyr
 
 #define TYR_NEW_OVERRIDE_ENABLED 1
 
-#if TYR_NEW_OVERRIDE_ENABLED
-void* TYR_CDECL operator new(size_t cb);
-
-void* TYR_CDECL operator new[](size_t cb);
-
-void* TYR_CDECL operator new(size_t cb, const std::nothrow_t&) noexcept;
-
-void TYR_CDECL operator delete(void* pv);
-
-void TYR_CDECL operator delete[](void* pv);
-#endif
+//#if TYR_NEW_OVERRIDE_ENABLED
+//void* TYR_CDECL operator new(size_t cb);
+//
+//void* TYR_CDECL operator new[](size_t cb);
+//
+//void* TYR_CDECL operator new(size_t cb, const std::nothrow_t&) noexcept;
+//
+//void TYR_CDECL operator delete(void* pv);
+//
+//void TYR_CDECL operator delete[](void* pv);
+//#endif
 
 #ifndef TYR_SAFE_DELETE
 #define TYR_SAFE_DELETE(p)  { if(p) { delete p; p = nullptr; } }

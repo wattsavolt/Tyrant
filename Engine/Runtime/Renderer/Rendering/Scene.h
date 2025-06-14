@@ -10,7 +10,7 @@
 
 namespace tyr
 {
-	typedef int8 SceneId;
+	typedef int8 SceneID;
 
 	enum class SceneType : uint
 	{
@@ -55,14 +55,14 @@ namespace tyr
 	class Scene final
 	{
 	public:
-		Scene(SceneType type, SceneId sceneId, bool active = true);
+		Scene(SceneType type, SceneID sceneId, bool active = true);
 		~Scene();
 
 		SceneData const& GetSceneData() const { return m_SceneData; }
 
 		SceneType GetType() const { return m_Type; }
 
-		SceneId GetId() const { return m_Id; }
+		SceneID GetId() const { return m_Id; }
 
 		void SetVisible(bool visible) { m_Visible = visible; }
 
@@ -70,13 +70,13 @@ namespace tyr
 
 		static constexpr uint c_MaxScenes = 4;
 
-		static constexpr SceneId c_InvalidID = -1;
+		static constexpr SceneID c_InvalidID = -1;
 
 	private:
 		friend class SceneRenderer;
 
 		SceneType m_Type;
-		SceneId m_Id;
+		SceneID m_Id;
 		SceneData m_SceneData;
 		bool m_Visible;
 	};

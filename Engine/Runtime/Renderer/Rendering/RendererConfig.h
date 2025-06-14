@@ -15,5 +15,6 @@ namespace tyr
 		RenderAPIConfig renderAPIConfig;
 		String shaderDir;
 		String shaderIncludeDir;
+		bool voxelRendering = false;
 	};
 }

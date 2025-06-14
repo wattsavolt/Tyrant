@@ -2,7 +2,7 @@
 
 namespace tyr
 {
-	Scene::Scene(SceneType type, SceneId sceneId, bool visible)
+	Scene::Scene(SceneType type, SceneID sceneId, bool visible)
 		: m_Type(type)
 		, m_Id(sceneId)
 		, m_Visible(visible)

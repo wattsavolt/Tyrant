@@ -53,6 +53,9 @@ else()
 	target_compile_definitions(TyrantCore PUBLIC TYR_IS_FINAL=0) 
 endif()
 
+if(WIN32)
+	target_link_libraries(TyrantCore PRIVATE Rpcrt4)
+endif()
 
 option(TYR_USE_SIMD "If true, SIMD instructions are used in math types." ON)
 

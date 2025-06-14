@@ -48,4 +48,6 @@ namespace tyr
 
 	/// String stream mainly used for UTF-32 strings. 
 	using U32StringStream = BasicStringStream<char32_t>;	
+
+	using StringView = std::string_view;
 }

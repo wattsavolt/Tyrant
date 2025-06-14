@@ -53,7 +53,7 @@ namespace tyr
 			return m_Worlds[index];
 		}
 
-		static Engine* Get() 
+		static Engine* Instance() 
 		{ 
 			TYR_ASSERT(s_Instance);
 			return s_Instance; 
@@ -80,13 +80,13 @@ namespace tyr
 		URef<Window> m_MainWindow;
 		URef<InputManager> m_InputManager;
 		URef<Renderer> m_Renderer;
-		World m_Worlds[Scene::c_MaxScenes];
+		FixedArray<World, Scene::c_MaxScenes> m_Worlds;
 		RenderUpdateData m_RenderUpdateData;
 		EngineProperties m_Properties;
-		uint m_WorldCount;
+		double m_LastFrameTime;
 		uint m_SurfaceWidth;
 		uint m_SurfaceHeight;
-		double m_LastFrameTime;
+		uint m_WorldCount;
 
 		static Engine* s_Instance;
 	};

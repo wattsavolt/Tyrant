@@ -5,15 +5,15 @@
 
 namespace tyr
 {
-	class TYR_CORE_EXPORT FileStream final : public BinaryStream
+	class TYR_CORE_EXPORT FileStream : public BinaryStream
 	{
 	public:
 		FileStream(const char* filePath, Operation op = Operation::Read, bool overwrite = true);
-		~FileStream();
+		virtual ~FileStream();
 
 		size_t Write(const void* buffer, size_t count) override;
 
-		size_t Read(void* buffer, size_t count) const override;
+		size_t Read(void* buffer, size_t count) override;
 
 		Type GetStreamType() const override;
 
@@ -50,9 +50,9 @@ namespace tyr
 		{
 			FileStream stream(filePath);
 			const size_t size = stream.GeSize();
-			if (size > buffer.Size())
+			if ((uint)size > buffer.Size())
 			{
-				buffer.Resize(size);
+				buffer.Resize((uint)size);
 			}
 			return stream.Read(reinterpret_cast<void*>(buffer.Data()), size);
 		}
@@ -65,8 +65,6 @@ namespace tyr
 	
 	private:
 		FileHandle m_Handle;
-		size_t m_Offset;
-	
 	};
 	
 }

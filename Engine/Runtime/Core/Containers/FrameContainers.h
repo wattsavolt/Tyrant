@@ -21,10 +21,10 @@ namespace tyr
 	using FrameMap = std::map <K, V, P, A>;
 
 	template <typename T, typename H = std::hash<T>, typename C = std::equal_to<T>, typename A = StdAllocator<T, FrameAllocator>>
-	using FrameUnorderedSet = std::unordered_set<T, H, C, A>;
+	using FrameHashSet = std::unordered_set<T, H, C, A>;
 
 	template <typename K, typename V, typename H = std::hash<K>, typename C = std::equal_to<K>, typename A = StdAllocator<std::pair<const K, V>, FrameAllocator>>
-	using FrameUnorderedMap = std::unordered_map<K, V, H, C, A>;
+	using FrameHashMap = std::unordered_map<K, V, H, C, A>;
 
 	template <typename T, typename A>
 	using FrameArray = Array<T, FrameAllocator>;

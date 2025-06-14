@@ -12,7 +12,6 @@
 #include "RenderAPI/DescriptorSet.h"
 #include "RenderAPI/Sync.h"
 #include "Math/Matrix4.h"
-#include "Math/Matrix4.h"
 
 namespace tyr
 {

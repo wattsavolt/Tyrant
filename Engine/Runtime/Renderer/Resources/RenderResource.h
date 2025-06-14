@@ -20,7 +20,8 @@ namespace tyr
 
 		uint64 GetID() const { return m_ID; }
 
-		BarrierAccess GetAccessState() const { return m_AccessState; }
+		// Updatelater to support one per buffer view
+		BarrierAccess GetAccessState(uint index = 0) const { return m_AccessState; }
 
 	protected:
 		Device& m_Device;

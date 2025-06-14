@@ -90,10 +90,4 @@ namespace tyr
 		m_Data = new char[m_Size];
 		m_Data[0] = '\0';
 	}
-
-	size_t CString::Size() const
-	{
-		return m_Size;
-	}
-
 }

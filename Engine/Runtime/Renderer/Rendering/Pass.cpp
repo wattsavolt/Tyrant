@@ -2,7 +2,7 @@
 
 namespace tyr
 {
-	Pass::Pass(SceneId sceneId)
+	Pass::Pass(SceneID sceneId)
 		: m_SceneId(Scene::c_InvalidID)
 	{
 	

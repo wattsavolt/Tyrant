@@ -98,7 +98,7 @@ namespace tyr
 		extent.width = m_Width;
 		extent.height = m_Height;
 
-		uint minImageCount = desc.useTripleBuffering ? 3 : 2;
+		const uint minImageCount = desc.useTripleBuffering ? 3 : 2;
 
 		// Max of 0 means no max.
 		if (capabilities.maxImageCount > 0 && capabilities.maxImageCount < minImageCount)
@@ -139,7 +139,7 @@ namespace tyr
 
 		CreateSwapChainImagesAndViews(reinterpret_cast<Handle*>(m_Images.Data()), imageCount);
 
-		// TODO: Create framebuffers  (in wrapper api) from these images if using render passes.
+		// TODO: Create framebuffers (in wrapper api) from these images if using render passes.
 	}
 
 	VulkanSwapChain::~VulkanSwapChain()

@@ -5,7 +5,8 @@
 namespace tyr
 {
 	World::World()
-		: m_Initialized(false)
+		: m_WorldID(Scene::c_InvalidID)
+		, m_Initialized(false)
 		, m_IsFirstFrame(true)
 		, m_Camera(nullptr)
 	{
@@ -17,10 +18,11 @@ namespace tyr
 		
 	}
 
-	void World::Initialize(const WorldParams& params)
+	void World::Initialize(WorldID worldID, const WorldParams& params)
 	{
 		TYR_ASSERT(!m_Initialized);
 		TYR_ASSERT(params.camera != nullptr);
+		m_WorldID = worldID;
 		m_ViewArea = params.viewArea;
 		m_Camera = params.camera;
 		m_IsFirstFrame = true;

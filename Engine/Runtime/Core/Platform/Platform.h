@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "CoreMacros.h"
@@ -24,6 +23,7 @@ namespace tyr
 		TruncateExisting
 	};
 
+	struct Guid;
 	class TYR_CORE_EXPORT Platform
 	{
 	public:
@@ -65,6 +65,8 @@ namespace tyr
 		static void CloseFile(FileHandle handle);
 
 		static void ShowAlertMessage(const char* msg);
+
+		static void CreateGuid(Guid& guid);
 
 		static String GetBinaryDirectory();
 

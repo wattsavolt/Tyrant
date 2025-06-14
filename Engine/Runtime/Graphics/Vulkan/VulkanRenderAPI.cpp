@@ -35,11 +35,12 @@ namespace tyr
 
 		// This may be created by the API user later.
 		SwapChainDesc swapChainDesc;
-		swapChainDesc.vSyncEnabled = m_Config.vSyncEnabled;
 		swapChainDesc.pixelFormat = m_Config.outputPixelFormat;
 		swapChainDesc.colorSpace = m_Config.outputColorSpace;
 		// TODO: Enable later
 		swapChainDesc.createDepth = false;
+		swapChainDesc.vSyncEnabled = m_Config.vSyncEnabled;
+		swapChainDesc.useTripleBuffering = m_Config.useTripleBuffering;
 
 		m_SwapChain = new VulkanSwapChain(*static_cast<VulkanDevice*>(m_Device), m_Surface, swapChainDesc);
 	}
@@ -77,6 +78,7 @@ namespace tyr
 		appInfo.apiVersion = c_VulkanAPIVersion;
 
 		Array<const char*> extensions;
+		extensions.Reserve(5);
 		VulkanHelper::GetRequiredInstanceExtensions(extensions, m_ValidationLayersEnabled);
 
 		VkInstanceCreateInfo createInfo{};
@@ -105,7 +107,9 @@ namespace tyr
 	void VulkanRenderAPI::SetupDebugMessenger()
 	{
 		if (!m_ValidationLayersEnabled)
+		{
 			return;
+		}
 
 		VkDebugUtilsMessengerCreateInfoEXT createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
@@ -139,7 +143,6 @@ namespace tyr
 
 		// Use an ordered map to automatically sort candidates by increasing score
 		MultiMap<int, VulkanPhyscialDeviceData> candidates;
-
 		for (uint i = 0; i < devices.Size(); ++i)
 		{
 			VulkanPhyscialDeviceData data;

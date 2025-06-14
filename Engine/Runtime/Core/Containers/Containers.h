@@ -49,7 +49,7 @@ namespace tyr
 	template <typename T, typename H, typename C = std::equal_to<T>>
 	using HashSet = std::unordered_set<T, H, C>;
 
-	template <typename K, typename V, typename H, typename C = std::equal_to<K>>
+	template <typename K, typename V, typename H = std::hash<K>, typename C = std::equal_to<K>>
 	using HashMap = std::unordered_map<K, V, H, C>;
 
 	template <typename K, typename V, typename H, typename C = std::equal_to<K>>

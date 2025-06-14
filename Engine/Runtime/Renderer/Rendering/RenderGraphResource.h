@@ -13,7 +13,7 @@
 
 namespace tyr
 {
-	enum class RenderGraphResourceType
+	enum class RenderGraphResourceType : uint8
 	{
 		TransferBuffer,
 		GpuBuffer,
@@ -21,7 +21,7 @@ namespace tyr
 		Attachment
 	};
 
-	struct RenderGraphResourceStateInfo
+	struct RenderGraphResourceStateInfo 
 	{
 		BarrierAccess access = BARRIER_ACCESS_NONE;
 		PipelineStage stage = PIPELINE_STAGE_NONE;
@@ -39,6 +39,12 @@ namespace tyr
 		};
 	};
 
+	struct RenderGraphResourceRegion
+	{
+		RenderResource* resource = nullptr;
+		uint regionIndex = 0;
+	};
+
 	struct RenderGraphDependencyInput
 	{
 		RenderGraphResourceType type;
@@ -47,31 +53,31 @@ namespace tyr
 		RenderGraphResourceStateInfo stateInfo;
 		union
 		{
-			// Only required for external resources
-			RenderResource* resource = nullptr;
-			// Only required for internal resources
+			// Required for external resources
+			RenderGraphResourceRegion resourceRegion;
+			// Required for internal resources
 			RenderGraphResourceCreateInfo createInfo;
 		};
 	};
 
 	struct RenderGraphDependencyOutput
 	{
-		RenderGraphResourceType type;
-		bool external = false;
 		union
 		{
-			// Only required for external resources
-			RenderResource* resource = nullptr;
-			// Only required for internal resources
+			// Required for external resources
+			RenderGraphResourceRegion resourceRegion;
+			// Required for internal resources
 			RenderGraphResourceCreateInfo createInfo;
 		};
+		RenderGraphResourceType type;
+		bool external = true;
 	};
 
 	struct RenderGraphResource
 	{
+		RenderGraphResourceRegion resourceRegion;
 		RenderGraphResourceType type;
 		RenderGraphResourceStateInfo stateInfo;
 		bool external = false;
-		RenderResource* resource = nullptr;
 	};
 }

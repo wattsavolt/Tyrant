@@ -19,6 +19,8 @@ namespace tyr
 		ColorSpace outputColorSpace = CP_SRGB_NONLINEAR;
 		String appName = "";
 		bool vSyncEnabled = false;
+		// Should enable when using v-sync
+		bool useTripleBuffering = false;
 		bool windowed = true;
 		bool multiSamplingEnabled = true;
 		Handle windowHandle = nullptr;

@@ -61,9 +61,8 @@ float4 main(VS_OUTPUT input) : SV_TARGET
 	// Sample the BC7 texture
 	float3 linearColor = float3(1,0,0);// textures[0].Sample(sampler, uv).rgb;
 
-	// Convert to sRGB (BC7 stores in linear space, typically)
-	float3 srgbColor = pow(linearColor, 1.0 / 2.2); // gamma encode
-	return float4(srgbColor, 1.0f);
+	// No need to convert to sRGB manually as the swapchain format is sRGB so the linear colour is automatically converted to sRGB.
+    return float4(linearColor, 1.0f);
 }
 
 #endif

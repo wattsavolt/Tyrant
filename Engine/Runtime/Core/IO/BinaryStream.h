@@ -18,7 +18,7 @@ namespace tyr
 		enum class Type
 		{
 			File = 1,
-			Memory = 2
+			BufferedFile = 2
 		};
 	public:
 		BinaryStream(Operation op = Operation::Read);
@@ -42,7 +42,7 @@ namespace tyr
 
 		virtual size_t Write(const void* buffer, size_t count) { return 0; }
 
-		virtual size_t Read(void* buffer, size_t count) const = 0;
+		virtual size_t Read(void* buffer, size_t count) = 0;
 
 		virtual Type GetStreamType() const = 0;
 

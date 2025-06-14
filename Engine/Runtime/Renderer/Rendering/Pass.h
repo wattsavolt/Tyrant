@@ -15,17 +15,17 @@ namespace tyr
 	{
 	public:
 		// The scene id passed can be invalid if this pass instance is needed by more than one scene
-		Pass(SceneId sceneId = Scene::c_InvalidID);
+		Pass(SceneID sceneId = Scene::c_InvalidID);
 		virtual ~Pass();
 
-		SceneId GetSceneId() const { return m_SceneId; }
+		SceneID GetSceneId() const { return m_SceneId; }
 
 		// Called by the render graph builder every time the render graph is built.
 		virtual void CreateRenderGraphDependencies(RGVector<RenderGraphDependencyInput>& inputs, RGVector<RenderGraphDependencyOutput>& outputs) {};
 
 	protected:
 		// Used by the rendergraph to organize nodes based on the scene.
-		SceneId m_SceneId;
+		SceneID m_SceneId;
 	};
 
 	// A pass that uses a graphics or compute shader

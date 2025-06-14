@@ -1,8 +1,6 @@
-
-
 #pragma once
 
-/// Prevents derivativing classes from being copied
+/// Prevents deriving classes from being copied
 class INonCopyable
 {
 protected:

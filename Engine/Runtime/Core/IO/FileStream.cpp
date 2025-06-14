@@ -38,11 +38,12 @@ namespace tyr
 		if (m_Handle && m_Operation == Operation::Write)
 		{
 			Platform::WriteToFile(m_Handle, static_cast<const uint8*>(buffer), count, bytesWritten);
+			TYR_ASSERT(bytesWritten == count);
 		}
 		return bytesWritten;
 	}
 
-	size_t FileStream::Read(void* buffer, size_t count) const
+	size_t FileStream::Read(void* buffer, size_t count) 
 	{
 		TYR_ASSERT(buffer && m_Handle && m_Operation == Operation::Read);
 		size_t bytesRead;

@@ -247,7 +247,7 @@ namespace tyr
 		vkDependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
 		vkDependencyInfo.pNext = nullptr;
 		vkDependencyInfo.dependencyFlags = static_cast<VkDependencyFlags>(dependency);
-		vkDependencyInfo.memoryBarrierCount = static_cast<uint32_t>(pipelineBarrierCount);
+		vkDependencyInfo.memoryBarrierCount = static_cast<uint>(pipelineBarrierCount);
 		vkDependencyInfo.pMemoryBarriers = vkMemoryBarriers;
 		vkDependencyInfo.bufferMemoryBarrierCount = static_cast<uint>(bufferBarrierCount);
 		vkDependencyInfo.pBufferMemoryBarriers = vkBufferBarriers;

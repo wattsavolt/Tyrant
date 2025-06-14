@@ -1,10 +1,11 @@
-
 #pragma once
 
 #include "Win32Platform.h"
 #include <windows.h>
 #include "String/StringTypes.h"
+#include "Identifiers/Guid.h"
 #include <intrin.h>
+#include <rpc.h>
 
 namespace tyr
 {
@@ -189,6 +190,12 @@ namespace tyr
 	void Platform::ShowAlertMessage(const char* msg)
 	{
 		MessageBox(NULL, msg, "Alert!", MB_OK | MB_ICONINFORMATION);
+	}
+
+	void Platform::CreateGuid(Guid& guid)
+	{
+		const RPC_STATUS status = UuidCreate(reinterpret_cast<UUID*>(&guid));
+		TYR_ASSERT(status == RPC_S_OK);
 	}
 
 	String Platform::GetBinaryDirectory()

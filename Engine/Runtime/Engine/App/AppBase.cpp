@@ -10,7 +10,7 @@ namespace tyr
 
 	void AppBase::Start()
 	{
-		m_Engine = Engine::Get();
+		m_Engine = Engine::Instance();
 	}
 
 	void AppBase::Stop()

@@ -24,9 +24,13 @@ namespace tyr
 		if (-1.0f < f)
 		{
 			if (f < 1.0f)
+			{
 				return std::acos(f);
+			}
 			else
+			{
 				return 0;
+			}
 		}
 		else
 		{
@@ -39,9 +43,13 @@ namespace tyr
 		if (-1.0f < f)
 		{
 			if (f < 1.0f)
+			{
 				return std::asin(f);
+			}
 			else
+			{
 				return c_HalfPi;
+			}
 		}
 		else
 		{

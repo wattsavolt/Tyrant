@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include <thread>
@@ -23,7 +22,7 @@ namespace tyr
 
 	using RecursiveMutex = std::recursive_mutex;
 
-	using Signal = std::condition_variable;
+	using ConditionVariable = std::condition_variable;
  
 	using Thread = std::thread;
 
@@ -34,6 +33,9 @@ namespace tyr
 	using RecursiveLock = std::unique_lock<RecursiveMutex>;
 
 	using LockGuard = std::lock_guard<Mutex>;
+
+	template <typename T>
+	using Atomic = std::atomic<T>;
 
 	/// Class that allows for mutex locking or no locking via a template parameter.
 	template<bool UseLock>

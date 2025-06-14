@@ -8,6 +8,8 @@
 
 namespace tyr
 {
+	using WorldID = SceneID;
+
 	class Camera;
 
 	struct WorldParams
@@ -24,16 +26,18 @@ namespace tyr
 	public:
 		World();
 		~World();
-		void Initialize(const WorldParams& params);
+		void Initialize(WorldID worldID, const WorldParams& params);
 		void Shutdown();
 		bool IsFirstFrame() const { return m_IsFirstFrame; }
 		void SetIsFirstFrame(bool value) { m_IsFirstFrame = value; }
 		bool IsInitialized() const { return m_Initialized; }
 		Camera* GetCamera() const; 
+		WorldID GetWorldID() const { return m_WorldID; }
 		void SetCamera(Camera* camera);
 		SceneViewArea& GetViewArea() { return m_ViewArea; }
 
 	private:
+		WorldID m_WorldID;
 		Camera* m_Camera;
 		SceneViewArea m_ViewArea;
 		bool m_IsFirstFrame;

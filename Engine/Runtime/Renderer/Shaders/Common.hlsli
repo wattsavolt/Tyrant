@@ -24,70 +24,18 @@ struct Material
     float metallic;
 };
 
-float3 DecodeSRGB(float3 c) 
+float3 DecodeSRGB(float3 c)
 {
-    float3 result;
-    if (c.x <= 0.04045) 
-    {
-        result.x = c.x / 12.92;
-    }
-    else 
-    {
-        result.x = pow((c.x + 0.055) / 1.055, 2.4);
-    }
-
-    if (c.y <= 0.04045) 
-    {
-        result.y = c.y / 12.92;
-    }
-    else 
-    {
-        result.y = pow((c.y + 0.055) / 1.055, 2.4);
-    }
-
-    if (c.z <= 0.04045) 
-    {
-        result.z = c.z / 12.92;
-    }
-    else 
-    {
-        result.z = pow((c.z + 0.055) / 1.055, 2.4);
-    }
-
-    return clamp(result, 0.0, 1.0);
+    float3 lt = c / 12.92;
+    float3 gt = pow((c + 0.055) / 1.055, 2.4);
+    return clamp(lerp(lt, gt, step(0.04045, c)), 0.0, 1.0);
 }
 
-float3 EncodeSRGB(float3 c) 
+float3 EncodeSRGB(float3 c)
 {
-    float3 result;
-    if (c.x <= 0.0031308) 
-    {
-        result.x = c.x * 12.92;
-    }
-    else 
-    {
-        result.x = 1.055 * pow(c.x, 1.0 / 2.4) - 0.055;
-    }
-
-    if (c.y <= 0.0031308) 
-    {
-        result.y = c.y * 12.92;
-    }
-    else 
-    {
-        result.y = 1.055 * pow(c.y, 1.0 / 2.4) - 0.055;
-    }
-
-    if (c.z <= 0.0031308) 
-    {
-        result.z = c.z * 12.92;
-    }
-    else 
-    {
-        result.z = 1.055 * pow(c.z, 1.0 / 2.4) - 0.055;
-    }
-
-    return clamp(result, 0.0, 1.0);
+    float3 lt = c * 12.92;
+    float3 gt = 1.055 * pow(c, 1.0 / 2.4) - 0.055;
+    return clamp(lerp(lt, gt, step(0.0031308, c)), 0.0, 1.0);
 }
 
 

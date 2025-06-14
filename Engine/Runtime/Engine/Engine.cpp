@@ -18,10 +18,10 @@ namespace tyr
 		, m_Initialized(false)
 		, m_Running(false)
 		, m_App(nullptr)
-		, m_WorldCount(0)
 		, m_LastFrameTime(0)
 		, m_SurfaceWidth(0)
 		, m_SurfaceHeight(0)
+		, m_WorldCount(0)
 	{
 		TYR_ASSERT(!s_Instance);
 		s_Instance = this;
@@ -174,12 +174,11 @@ namespace tyr
 
 	uint Engine::AddWorld(const WorldParams& params)
 	{
-		TYR_ASSERT(m_WorldCount < Scene::c_MaxScenes - 1);
 		for (uint i = 0; i < Scene::c_MaxScenes; ++i)
 		{
 			if (!m_Worlds[i].IsInitialized())
 			{
-				m_Worlds[i].Initialize(params);
+				m_Worlds[i].Initialize((WorldID)i, params);
 				m_WorldCount++;
 				return i;
 			}
@@ -201,7 +200,7 @@ namespace tyr
 
 	void Engine::RemoveWorlds()
 	{
-		for (int i = 0; i < Scene::c_MaxScenes; ++i)
+		for (uint i = 0; i < Scene::c_MaxScenes; ++i)
 		{
 			RemoveWorld(i);
 		}

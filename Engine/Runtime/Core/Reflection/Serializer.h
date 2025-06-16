@@ -47,14 +47,15 @@ namespace tyr
 
     struct Field;
     struct TypeInfo;
-    class TYR_CORE_EXPORT Serializer 
+    class TYR_CORE_EXPORT Serializer final
     {
     public:
         static constexpr size_t c_BufferSize = 65536;
-        static uint8* GetBuffer();
+
+        ~Serializer() = default;
 
         template<typename T>
-        static void Serialize(BinaryStream& stream, const T& data)
+        void Serialize(BinaryStream& stream, const T& data)
         {
             if constexpr (IsLocalArray<T>::value)
             {
@@ -95,7 +96,7 @@ namespace tyr
         }
 
         template<typename T>
-        static void Deserialize(BinaryStream& stream, T& data)
+        void Deserialize(BinaryStream& stream, T& data)
         {
             if constexpr (IsLocalArray<T>::value)
             {
@@ -136,30 +137,44 @@ namespace tyr
         }
 
         template <typename T>
-        static void SerializeToFile(const char* filePath, const T& data, bool overwrite = true)
+        void SerializeToFile(const char* filePath, const T& data, bool overwrite = true)
         {
-            BufferedFileStream stream(GetBuffer(), c_BufferSize, filePath, BinaryStream::Operation::Write, overwrite);
+            BufferedFileStream stream(m_Buffer, c_BufferSize, filePath, BinaryStream::Operation::Write, overwrite);
             Serialize<T>(stream, data);
         }
 
         template <typename T>
-        static void DeserializeFromFile(const char* filePath, T& data)
+        void DeserializeFromFile(const char* filePath, T& data)
         {
-            BufferedFileStream stream(GetBuffer(), c_BufferSize, filePath, BinaryStream::Operation::Read);
+            BufferedFileStream stream(m_Buffer, c_BufferSize, filePath, BinaryStream::Operation::Read);
             Deserialize<T>(stream, data);
         }
 
+        void SetSerializeNonFinal(bool serializeNonFinal);
+
+        bool IsSerializingNonFinal() const { return m_SerializeNonFinal; }
+
+        static Serializer& Instance();
+
     private:
-        static void SerializeVersion(BinaryStream& stream, int version);
-        static void SerializeField(BinaryStream& stream, const uint8* data, const Field& field);
-        static void SerializeCArray(BinaryStream& stream, const uint8* data, uint count, const TypeInfo& typeInfo);
-        static void SerializeObject(BinaryStream& stream, const uint8* data, const TypeInfo& typeInfo);
-        static void SerializeValue(BinaryStream& stream, const uint8* data, const TypeInfo& typeInfo);
-        static int DeserializeVersion(BinaryStream& stream);
-        static void DeserializeField(BinaryStream& stream, uint8* data, const Field& field);
-        static void DeserializeCArray(BinaryStream& stream, uint8* data, const TypeInfo& typeInfo);
-        static void DeserializeObject(BinaryStream& stream, uint8* data, const TypeInfo& typeInfo);
-        static void DeserializeValue(BinaryStream& stream, uint8* data, const TypeInfo& typeInfo);
+        Serializer(bool serializeNonFinal);
+
+        void SerializeVersion(BinaryStream& stream, int version);
+        void SerializeField(BinaryStream& stream, const uint8* data, const Field& field);
+        void SerializeCArray(BinaryStream& stream, const uint8* data, uint count, const TypeInfo& typeInfo);
+        void SerializeObject(BinaryStream& stream, const uint8* data, const TypeInfo& typeInfo);
+        void SerializeValue(BinaryStream& stream, const uint8* data, const TypeInfo& typeInfo);
+        int DeserializeVersion(BinaryStream& stream);
+        void DeserializeField(BinaryStream& stream, uint8* data, const Field& field);
+        void DeserializeCArray(BinaryStream& stream, uint8* data, const TypeInfo& typeInfo);
+        void DeserializeObject(BinaryStream& stream, uint8* data, const TypeInfo& typeInfo);
+        void DeserializeValue(BinaryStream& stream, uint8* data, const TypeInfo& typeInfo);
+
+        // Should editor-only / debug fields be included
+        // Note: The editor will only load in types that include non-final fields
+        // but can serialize including or excluding (packaging) non-final fields
+        bool m_SerializeNonFinal;
+        uint8 m_Buffer[c_BufferSize];
     };
 
     class CustomObjectSerializer
@@ -179,10 +194,10 @@ namespace tyr
         void Serialize(BinaryStream& stream, const void* object) const override
         {
             const LocalArray<T, C>& arr = *(static_cast<const LocalArray<T, C>*>(object));
-            Serializer::Serialize<uint>(stream, arr.Size());
+            Serializer::Instance().Serialize<uint>(stream, arr.Size());
             for (const T& elem : arr)
             {
-                Serializer::Serialize<T>(stream, elem);
+                Serializer::Instance().Serialize<T>(stream, elem);
             }
         }
 
@@ -191,11 +206,11 @@ namespace tyr
             LocalArray<T, C>& arr = *(static_cast<LocalArray<T, C>*>(object));
             arr.Clear();
             uint size;
-            Serializer::Deserialize<uint>(stream, size);
+            Serializer::Instance().Deserialize<uint>(stream, size);
             for (uint i = 0; i < size; ++i)
             {
                 T& elem = arr.ExpandOne();
-                Serializer::Deserialize<T>(stream, elem);
+                Serializer::Instance().Deserialize<T>(stream, elem);
             }
         }
 
@@ -213,10 +228,10 @@ namespace tyr
         void Serialize(BinaryStream& stream, const void* object) const override
         {
             const Array<T>& arr = *(static_cast<const Array<T>*>(object));
-            Serializer::Serialize<uint>(stream, arr.Size());
+            Serializer::Instance().Serialize<uint>(stream, arr.Size());
             for (const T& elem : arr)
             {
-                Serializer::Serialize<T>(stream, elem);
+                Serializer::Instance().Serialize<T>(stream, elem);
             }     
         }
 
@@ -225,12 +240,12 @@ namespace tyr
             Array<T>& arr = *(static_cast<Array<T>*>(object));
             arr.Clear();
             uint size;
-            Serializer::Deserialize<uint>(stream, size);
+            Serializer::Instance().Deserialize<uint>(stream, size);
             arr.Reserve(size);
             for (uint i = 0; i < size; ++i)
             {
                 T elem;
-                Serializer::Deserialize<T>(stream, elem);
+                Serializer::Instance().Deserialize<T>(stream, elem);
                 arr.Add(std::move(elem));
             }
         }
@@ -249,11 +264,11 @@ namespace tyr
         void Serialize(BinaryStream& stream, const void* object) const override
         {
             const HashMap<K, V>& map = *(static_cast<const HashMap<K, V>*>(object));
-            Serializer::Serialize<size_t>(stream, map.size());
+            Serializer::Instance().Serialize<size_t>(stream, map.size());
             for (const auto& pair : map)
             {
-                Serializer::Serialize<K>(stream, pair.first);
-                Serializer::Serialize<V>(stream, pair.second);
+                Serializer::Instance().Serialize<K>(stream, pair.first);
+                Serializer::Instance().Serialize<V>(stream, pair.second);
             }
         }
 
@@ -262,14 +277,14 @@ namespace tyr
             HashMap<K, V>& map = *(static_cast<HashMap<K, V>*>(object));
             map.clear();
             size_t size;
-            Serializer::Deserialize<size_t>(stream, size);
+            Serializer::Instance().Deserialize<size_t>(stream, size);
             map.reserve(size);
             for (size_t i = 0; i < size; ++i)
             {
                 K key;
                 V value;
-                Serializer::Deserialize<K>(stream, key);
-                Serializer::Deserialize<V>(stream, value);
+                Serializer::Instance().Deserialize<K>(stream, key);
+                Serializer::Instance().Deserialize<V>(stream, value);
                 map[key] = value;
             }
         }

@@ -8,6 +8,7 @@
 #include "Memory/Memory.h"
 #include "String/StringUtil.h"
 #include "Math/Math.h"
+#include "Identifiers/Guid.h"
 #include "Identifiers/Identifiers.h"
 #include "Reflection/Reflection.h"
 #include "Reflection/Serializer.h"

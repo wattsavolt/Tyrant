@@ -26,9 +26,9 @@ namespace tyr
         } \
     } TYR_REFL_CONCAT(metaClassInst_, __LINE__); 
 
-#define TYR_REFL_FIELD(fieldPtr, name, isVisible, isEditable) TypeInfoUtil::AddField(info, name, GetFieldTypeName(fieldPtr), GetFieldBuiltInCustomObjectSerializer(fieldPtr), 0, GetFieldOffset(fieldPtr), isVisible, isEditable, false);
+#define TYR_REFL_FIELD(fieldPtr, name, isVisible, isEditable, isFinal) TypeInfoUtil::AddField(info, name, GetFieldTypeName(fieldPtr), GetFieldBuiltInCustomObjectSerializer(fieldPtr), 0, GetFieldOffset(fieldPtr), isVisible, isEditable, isFinal, false);
 
-#define TYR_REFL_ARRAY_FIELD(countFieldPtr, dataFieldPtr, name, isVisible, isEditable) TypeInfoUtil::AddField(info, name, GetFieldTypeName(dataFieldPtr), nullptr, GetFieldOffset(countFieldPtr), GetFieldOffset(dataFieldPtr), isVisible, isEditable, true);
+#define TYR_REFL_ARRAY_FIELD(countFieldPtr, dataFieldPtr, name, isVisible, isEditable, isFinal) TypeInfoUtil::AddField(info, name, GetFieldTypeName(dataFieldPtr), nullptr, GetFieldOffset(countFieldPtr), GetFieldOffset(dataFieldPtr), isVisible, isEditable, isFinal, true);
 }
 
 

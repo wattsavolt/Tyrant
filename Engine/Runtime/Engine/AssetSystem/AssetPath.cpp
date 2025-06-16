@@ -6,7 +6,7 @@
 namespace tyr
 {
 	TYR_REFL_CLASS_START(AssetPath, 0);
-		TYR_REFL_ARRAY_FIELD(&AssetPath::m_Size, &AssetPath::m_Data, "Path", true, true);
+		TYR_REFL_ARRAY_FIELD(&AssetPath::m_Size, &AssetPath::m_Data, "Path", true, true, true);
 	TYR_REFL_CLASS_END();
 
 	AssetPath::AssetPath()
@@ -20,14 +20,28 @@ namespace tyr
 		Copy(data);
 	}
 
+	AssetPath::AssetPath(const AssetPath& other)
+		: AssetPath(other.m_Data)
+	{
+	}
+
 	AssetPath::~AssetPath()
 	{
-		
+
 	}
 
 	AssetPath& AssetPath::operator=(const char* data)
 	{
-		Copy(data);
+		if (m_Data != data)
+		{
+			Copy(data);
+		}
+		return *this;
+	}
+
+	AssetPath& AssetPath::operator=(const AssetPath& other)
+	{
+		*this = other.m_Data;
 		return *this;
 	}
 

@@ -3,6 +3,9 @@
 
 namespace tyr
 {
+    Serializer::Serializer(bool serializeNonFinal)
+        : m_SerializeNonFinal(false) { }
+
     void Serializer::SerializeVersion(BinaryStream& stream, int version)
     {
         stream.Write(&version, sizeof(version));
@@ -58,7 +61,10 @@ namespace tyr
         for (uint i = 0; i < typeInfo.fieldCount; ++i)
         {
             const Field& field = typeInfo.fields[i];
-            SerializeField(stream, data, field);
+            if (m_SerializeNonFinal || field.isFinal)
+            {
+                SerializeField(stream, data, field);
+            }
         }
     }
 
@@ -134,9 +140,18 @@ namespace tyr
         stream.Read(data, typeInfo.size);
     }
 
-    uint8* Serializer::GetBuffer()
+    void Serializer::SetSerializeNonFinal(bool serializeNonFinal)
     {
-        static TYR_THREADLOCAL uint8 buffer[c_BufferSize]; 
-        return buffer;
+        m_SerializeNonFinal = serializeNonFinal;
+    }
+
+    Serializer& Serializer::Instance()
+    {
+#if TYR_FINAL_MODE
+        static TYR_THREADLOCAL Serializer serializer(false);
+#else
+        static TYR_THREADLOCAL Serializer serializer(true);
+#endif
+        return serializer;
     }
 }

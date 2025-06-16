@@ -17,6 +17,7 @@ namespace tyr
 		uint dataOffset;
 		bool isVisible;
 		bool isEditable;
+		bool isFinal;
 		bool isCArray;
 	};
 
@@ -36,7 +37,7 @@ namespace tyr
 	class TYR_CORE_EXPORT TypeInfoUtil
 	{
 	public:
-		static void AddField(TypeInfo& info, const String& name, const String& typeName, const CustomObjectSerializer* customSerializer, size_t countOffset, size_t dataOffset, bool isVisible, bool isEditable, bool isCArray);
+		static void AddField(TypeInfo& info, const String& name, const String& typeName, const CustomObjectSerializer* customSerializer, size_t countOffset, size_t dataOffset, bool isVisible, bool isEditable, bool isFinal, bool isCArray);
 	};
 
 }

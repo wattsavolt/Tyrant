@@ -15,8 +15,10 @@ namespace tyr
 
 		AssetPath();
 		AssetPath(const char* data);
+		AssetPath(const AssetPath& other);
 		~AssetPath();
 		AssetPath& operator=(const char* data);
+		AssetPath& operator=(const AssetPath& other);
 		bool operator==(const AssetPath& val);
 		bool operator==(const char* data);
 
@@ -30,8 +32,6 @@ namespace tyr
 		void CreateEmpty();
 		void Copy(const char* data);
 		
-		
-
 		uint m_Size;
 		char m_Data[c_MaxAssetPathDataSize];
 	};

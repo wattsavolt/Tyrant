@@ -1,7 +1,7 @@
 #include "Shapes.h"
 #include "Math/Vector3.h"
 #include "Math/Matrix3.h"
-#include "DataUtility/MeshUtil.h"
+#include "RenderDataUtility/MeshUtil.h"
 
 namespace tyr
 {

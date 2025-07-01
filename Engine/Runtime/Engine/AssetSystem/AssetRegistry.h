@@ -22,19 +22,22 @@ namespace tyr
 	public:
 		static AssetRegistry& Instance();
 
-		void AddAsset(AssetID assetID, const char* assetPath);
+		void AddAsset(AssetID assetID, const char* assetPath, AssetID* refAssetID = nullptr);
 		void AddAssetReference(AssetID assetID, AssetID referenceID);
 		void UpdateAssetPath(AssetID assetID, const char* assetPath);
 		void RemoveAsset(AssetID assetID);
-		bool HasAssetPath(const char* assetPath, AssetID& assetID);
+		bool RemoveAssetIfExists(const char* assetPath);
+		bool HasAssetPath(const char* assetPath, AssetID& assetID) const;
+		int GetAssetRefCount(const char* assetPath) const;
+
 		// Should only be called from a single thread
-		const AssetData& GetAssetData(AssetID assetID);
+		const AssetData& GetAssetData(AssetID assetID) const;
 
 	private:
 		AssetRegistry();
 
 		AssetRegistryFile m_RegistryFile;
-		Mutex m_Mutex;
+		mutable Mutex m_Mutex;
 	};
 	
 }

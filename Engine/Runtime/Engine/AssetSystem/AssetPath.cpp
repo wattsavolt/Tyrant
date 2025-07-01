@@ -63,7 +63,7 @@ namespace tyr
 	void AssetPath::Copy(const char* data)
 	{
 		m_Size = strlen(data) + 1;
-		TYR_ASSERT(m_Size <= c_MaxAssetPathDataSize);
+		TYR_ASSERT(m_Size <= c_MaxAssetPathStrSize);
 		strcpy_s(m_Data, m_Size, data);	
 	}
 

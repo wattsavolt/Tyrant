@@ -3,7 +3,7 @@
 #include "Core.h"
 #include "RendererMacros.h"
 #include "RenderUpdate/RenderUpdate.h"
-#include "DataTypes/DataTypes.h"
+#include "RenderDataTypes/RenderDataTypes.h"
 #include "Shaders/ShaderTypes.h"
 #include "RendererConfig.h"
 #include "RenderAPI/CommandList.h"

@@ -4,6 +4,8 @@
 
 namespace tyr
 {
+    // Ensure size is 16 bytes
+    #pragma pack(push, 1)
     struct Guid
     {
         uint data1;
@@ -11,5 +13,5 @@ namespace tyr
         uint16 data3;
         uint8 data4[8];
     };
-
+    #pragma pack(pop)
 }

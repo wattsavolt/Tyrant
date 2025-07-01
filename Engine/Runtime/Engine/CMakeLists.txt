@@ -58,11 +58,15 @@ add_common_properties(TyrantEngine)
 
 # Includes
 target_include_directories(TyrantEngine PUBLIC
-	$<BUILD_INTERFACE:${TYR_THIRD_PARTY_INCLUDE_DIR}>
+	$<BUILD_INTERFACE:${TYR_THIRD_PARTY_HEADER_LIBS_DIR}>
 	$<BUILD_INTERFACE:${TYR_RUNTIME_DIR}/Engine>
 	$<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/Generated/Engine>
 	$<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/include/Engine>)
-	
+
+if (TYR_EDITOR_MODE)	
+	## NVTT
+	target_include_directories(TyrantEngine PRIVATE "${TYR_THIRD_PARTY_COMPILED_LIBS_DIR}/nvtt/include")
+endif()
 
 # Defines
 target_compile_definitions(TyrantEngine PRIVATE 
@@ -77,11 +81,10 @@ target_link_libraries(TyrantEngine PUBLIC TyrantCore)
 
 target_link_libraries(TyrantEngine PUBLIC TyrantRenderer)
 
-## External lib: NVTT
-#target_link_libraries(TyrantEngine PRIVATE ${nvtt_LIBRARIES})	
-
-## External lib: Snappy
-#target_link_libraries(TyrantEngine PRIVATE ${snappy_LIBRARIES})
+if (TYR_EDITOR_MODE)	
+	# NVTT
+	target_link_libraries(TyrantEngine PRIVATE ${TYR_THIRD_PARTY_COMPILED_LIBS_DIR}/nvtt/lib/${TYR_ARCHITECTURE}/nvtt30205${CMAKE_IMPORT_LIBRARY_SUFFIX})	
+endif()
 
 if(LINUX)
 	## External lib: X11, LibUUID, LibICU

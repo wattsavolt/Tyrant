@@ -11,13 +11,13 @@ namespace tyr
 		template<typename ... Args>
 		static String FormatString(const String& format, Args ... args)
 		{
-			int size_s = std::snprintf(nullptr, 0, format.c_str(), args ...) + 1; // Extra space for '\0'
-			if (size_s <= 0)
+			const int sizeS = std::snprintf(nullptr, 0, format.c_str(), args ...) + 1; // Extra space for '\0'
+			if (sizeS <= 0)
 			{
 				return "";
 			}
-			size_t size = static_cast<size_t>(size_s);
-			auto buf = std::make_unique<char[]>(size);
+			const size_t size = static_cast<size_t>(sizeS);
+			char* buf = std::make_unique<char[]>(size);
 			std::snprintf(buf.get(), size, format.c_str(), args ...);
 			return String(buf.get(), buf.get() + size - 1); // We don't want the '\0' inside
 		}
@@ -83,8 +83,6 @@ namespace tyr
 		static String UTF32ToUTF8(const U32String& input);
 
 		static String ANSIToUTF8(const String& input);
-
-		static String GetFileNameWithoutExtension(const String& input);
 	};
 	
 }

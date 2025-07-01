@@ -86,6 +86,6 @@ install(
 
 install_tyr_target(TyrantCore)
 
-copy_explicit_thirdparty_binaries(TyrantCore)
+copy_thirdparty_binaries(TyrantCore)
 
 

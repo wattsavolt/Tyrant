@@ -2,64 +2,86 @@
 
 #include "Base/Base.h"
 #include "String/StringTypes.h"
+#include "Hashing.h"
 #include "Reflection/PrivateReflection.h"
 
 namespace tyr
 {
-    struct Guid;
-    class TYR_CORE_EXPORT Id64
+    template<typename T, T offsetBasis, T prime>
+    class Identifier
     {
     public:
-        Id64();
-        Id64(const char* input);
-        Id64(const String& input);
-        Id64(const Guid& guid);
-        Id64(uint64 hash);
+        Identifier() : m_Hash(0) {}
 
-        uint64 GetHash() const { return m_Hash; }
+        Identifier(const char* str)
+        {
+            m_Hash = FNV1aHash<T, offsetBasis, prime>(str);
+        }
 
-        bool operator== (const Id64& other) const
+        Identifier(const String& str)
+            : Identifier(str.c_str())
+        {
+        }
+
+        Identifier(const Guid& guid)
+        {
+            m_Hash = FNV1aHash<T, offsetBasis, prime>(guid);
+        }
+
+        Identifier(T hash)
+            : m_Hash(hash)
+        {
+        }
+
+        Identifier& operator=(const Identifier<T, offsetBasis, prime>& other)
+        {
+            if (this != &other)
+            {
+                m_Hash = other.m_Hash;
+            }
+            return *this;
+        }
+
+        Identifier& operator=(T hash)
+        {
+            m_Hash = hash;
+            return *this;
+        }
+
+        T GetHash() const { return m_Hash; }
+
+        bool operator== (const Identifier<T, offsetBasis, prime>& other) const
         {
             return m_Hash == other.m_Hash;
         }
 
-        bool operator< (const Id64& other) const
+        bool operator< (const Identifier<T, offsetBasis, prime> other) const
         {
             return m_Hash < other.m_Hash;
         }
 
-    private:
-        TYR_REFL_PRIVATE_ACCESS(Id64);
-        uint64 m_Hash;
-    };
-
-    class TYR_CORE_EXPORT Id32
-    {
-    public:
-        Id32();
-        Id32(const char* str);
-        Id32(const String& str);
-        Id32(const Guid& guid);
-        Id32(uint hash);
-
-        uint GetHash() const { return m_Hash; }
-
-        bool operator== (const Id32& other) const
+        // Compare with T directly
+        bool operator== (T hash) const
         {
-            return m_Hash == other.m_Hash;
+            return m_Hash == hash;
         }
 
-        bool operator< (const Id32& other) const
+        bool operator!= (T hash) const
         {
-            return m_Hash < other.m_Hash;
+            return m_Hash != hash;
         }
 
     private:
         TYR_REFL_PRIVATE_ACCESS(Id32);
-        uint m_Hash;
+        TYR_REFL_PRIVATE_ACCESS(Id64);
+        T m_Hash;
     };
 
-    typedef Id64 AssetID;
+    using Id32 = Identifier<uint, c_FNVOffsetBasis32, c_FNVPrime32>;
+
+    using Id64 = Identifier<uint64, c_FNVOffsetBasis64, c_FNVPrime64>;
+
+    using AssetID = Id64;
 }
 
 namespace std

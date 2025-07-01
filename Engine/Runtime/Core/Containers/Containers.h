@@ -13,6 +13,7 @@
 #include <unordered_set>
 #include <array>
 
+#include "FixedArray.h"
 #include "Array.h"
 #include "LocalArray.h"
 #include "FixedHashMap.h"
@@ -54,8 +55,5 @@ namespace tyr
 
 	template <typename K, typename V, typename H, typename C = std::equal_to<K>>
 	using HashMultiMap = std::unordered_multimap<K, V, H, C>;
-
-	template<typename T, std::size_t N>
-	using FixedArray = std::array<T, N>;
 }
 

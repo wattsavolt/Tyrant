@@ -67,6 +67,67 @@ namespace tyr
 		// Returns the pixel size for the specified format in bytes
 		static uint GetTexelFormatSize(PixelFormat format);
 
+		static float SRGBToLinear(float f);
+
+		static float LinearToSRGB(float f);
+
+		template <typename T>
+		static float ConvertFromSRGBtoLinear(T value)
+		{
+			if constexpr (std::is_same_v<T, uint8_t>)
+			{
+				constexpr float oneOver255 = 1.0f / 255.0f;
+				float f = value * oneOver255;
+				return SRGBToLinear(f);
+			}
+			else if constexpr (std::is_same_v<T, float>)
+			{
+				return SRGBToLinear(value);
+			}
+			else
+			{
+				TYR_STATIC_ASSERT((std::is_same_v<T, void>), "ConvertFromSRGBtoLinear<T>: Unsupported type.");
+				return 0.0f; 
+			}
+		}
+
+		template <typename T>
+		static T ConvertFromLinearToSRGB(float value)
+		{
+			if constexpr (std::is_same_v<T, uint8_t>)
+			{
+				const float s = LinearToSRGB(value);
+				return static_cast<uint8_t>(std::clamp(s, 0.0f, 1.0f) * 255.0f + 0.5f);
+			}
+			else if constexpr (std::is_same_v<T, float>)
+			{
+				return LinearToSRGB(value);
+			}
+			else
+			{
+				TYR_STATIC_ASSERT((std::is_same_v<T, void>), "ConvertFromLinearToSRGB<T>: Unsupported type.");
+				return T{}; 
+			}
+		}
+
+		template <typename T>
+		static constexpr T GetMaxPixelValue()
+		{
+			if constexpr (std::is_same_v<T, uint8_t>)
+			{
+				return 255;
+			}
+			else if constexpr (std::is_same_v<T, float>)
+			{
+				return 1.0f;
+			}
+			else
+			{
+				TYR_STATIC_ASSERT((std::is_same_v<T, void>), "GetMaxPixelValue<T> not implemented for this type.");
+				return T{}; 
+			}
+		}
+
 	private:
 		SRef<Image> m_Image;
 		SRef<ImageView> m_ImageView;
@@ -85,9 +146,9 @@ namespace std
 	template <>
 	struct hash<tyr::TextureInfo>
 	{
-		size_t operator()(const tyr::TextureInfo& id) const noexcept
+		size_t operator()(const tyr::TextureInfo& info) const noexcept
 		{
-			return std::hash<tyr::uint64>{}(id.GetID());
+			return std::hash<tyr::uint64>{}(info.GetID());
 		}
 	};
 }

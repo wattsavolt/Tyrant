@@ -233,13 +233,13 @@ function(set_shader_config srcs)
 	endforeach()
 endfunction()
 
-function(copy_explicit_thirdparty_binaries targetName)
-	file(GLOB_RECURSE BIN_PATHS RELATIVE ${TYR_THIRD_PARTY_EXPLICIT_DIR} "${TYR_THIRD_PARTY_EXPLICIT_DIR}/*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+function(copy_thirdparty_binaries targetName)
+	file(GLOB_RECURSE BIN_PATHS RELATIVE ${TYR_THIRD_PARTY_COMPILED_LIBS_DIR} "${TYR_THIRD_PARTY_COMPILED_LIBS_DIR}/*${CMAKE_SHARED_LIBRARY_SUFFIX}")
 	# message("BIN PATHS: ${BIN_PATHS}")
 	foreach(CUR_PATH ${BIN_PATHS})	
 		get_filename_component(FILENAME ${CUR_PATH} NAME)
 
-		set(SRC ${TYR_THIRD_PARTY_EXPLICIT_DIR}/${CUR_PATH})
+		set(SRC ${TYR_THIRD_PARTY_COMPILED_LIBS_DIR}/${CUR_PATH})
 		
 		# Note: $<CONFIG> is only known at compile time and not at configuration time.
 

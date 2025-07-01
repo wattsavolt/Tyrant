@@ -196,11 +196,4 @@ namespace tyr
         }
         return output;
     }
-
-    String StringUtil::GetFileNameWithoutExtension(const String& input)
-    {
-        TYR_ASSERT(input != ".");
-        size_t lastindex = input.find_last_of(".");
-        return input.substr(0, lastindex);
-    }
 }

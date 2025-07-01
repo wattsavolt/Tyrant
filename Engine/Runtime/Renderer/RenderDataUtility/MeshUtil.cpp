@@ -1,5 +1,5 @@
 #include "MeshUtil.h"
-#include "DataTypes/Vertex.h"
+#include "RenderDataTypes/Vertex.h"
 #include "Memory/StackAllocation.h"
 
 namespace tyr

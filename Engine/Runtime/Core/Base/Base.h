@@ -4,6 +4,7 @@
 #include "Primitives.h"
 
 #include <filesystem>
+#include <optional>
 
 // C limits
 #include <float.h>
@@ -15,6 +16,8 @@ extern "C" {
 #include <cstdarg>
 
 }
+
+namespace fs = std::filesystem;
 
 #if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
 #  undef min
@@ -62,7 +65,13 @@ extern "C" {
 
 #define TYR_STATIC_ASSERT(v, m) static_assert(v, m)
 
-#define TYR_MAX_PATH 260
+#define TYR_MAX_FILENAME 63
+// Account for null character
+#define TYR_MAX_FILENAME_STR_SIZE TYR_MAX_FILENAME + 1
+
+#define TYR_MAX_PATH 255
+// Account for null character
+#define TYR_MAX_PATH_STR_SIZE TYR_MAX_PATH + 1 
 
 namespace tyr
 {

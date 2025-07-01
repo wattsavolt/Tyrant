@@ -54,6 +54,8 @@ namespace tyr
 
 		static void SetFilePosition(FileHandle handle, size_t position);
 
+		static void SetFilePositionToEnd(FileHandle handle);
+
 		static size_t GetFilePosition(FileHandle handle);
 
 		static bool IsEOF(FileHandle handle);

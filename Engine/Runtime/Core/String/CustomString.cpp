@@ -1,5 +1,3 @@
-
-
 #include "CustomString.h"
 #include "Memory/Memory.h"
 #include <cstring>

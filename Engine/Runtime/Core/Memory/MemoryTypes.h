@@ -57,6 +57,11 @@ namespace tyr
 	public:
         AtomicRefCountedObject() : m_RefCount(0) {}
 
+        virtual ~AtomicRefCountedObject()
+        {
+            TYR_ASSERT(m_RefCount == 0);
+        }
+
 		// Should not be called directly
 		void AddRef() override
 		{
@@ -69,13 +74,7 @@ namespace tyr
 			// fetch_sub returns the ref count before the subtraction occurs
 			const uint refCount = m_RefCount.fetch_sub(1, std::memory_order_acq_rel);
 			return refCount - 1;
-		}
-
-	protected:
-		virtual ~AtomicRefCountedObject()
-		{
-			TYR_ASSERT(m_RefCount == 0);
-		}
+		}	
 
 	private:
 		std::atomic<uint> m_RefCount;
@@ -85,6 +84,11 @@ namespace tyr
 	{
 	public:
 		SingleThreadedRefCountedObject() : m_RefCount(0) {}
+
+        virtual ~SingleThreadedRefCountedObject()
+        {
+            TYR_ASSERT(m_RefCount == 0);
+        }
 
 		// Should not be called directly
 		void AddRef() override
@@ -97,13 +101,7 @@ namespace tyr
 		{
 			return --m_RefCount;
 		}
-
-	protected:
-		virtual ~SingleThreadedRefCountedObject()
-		{
-			TYR_ASSERT(m_RefCount == 0);
-		}
-
+		
 	private:
 		uint m_RefCount;
 	};

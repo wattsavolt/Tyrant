@@ -105,7 +105,7 @@ namespace tyr
 	{
 		const ShaderCompileArguments& compileArgs = m_Desc.compileArgs;
 		const String filePath = compileArgs.shaderDirPath + compileArgs.fileName;
-		const String fileNameWithoutExt = StringUtil::GetFileNameWithoutExtension(compileArgs.fileName);
+		const String fileNameWithoutExt = PathUtil::GetFileNameWithoutExtension(compileArgs.fileName);
 		const String binaryDirPath = Platform::c_BinaryDirectory + "/" + m_Desc.binaryDirPath;
 		const ShaderBinaryLanguage binaryLanguage = GetShaderBinaryLanguage();
 		const String shaderExt = GetShaderBinaryExtension(binaryLanguage);
@@ -266,7 +266,7 @@ namespace tyr
 	void Shader::LoadBinaryFile()
 	{
 		const String binaryDirPath = Platform::c_BinaryDirectory + "/" + m_Desc.binaryDirPath;
-		const String fileNameWithoutExt = StringUtil::GetFileNameWithoutExtension(m_Desc.compileArgs.fileName);
+		const String fileNameWithoutExt = PathUtil::GetFileNameWithoutExtension(m_Desc.compileArgs.fileName);
 		const String shaderExt = GetShaderBinaryExtension(GetShaderBinaryLanguage());
 		const String shaderBinFilePath = binaryDirPath + "/" + fileNameWithoutExt + shaderExt;
 		m_ByteCodeSize = FileStream::ReadAllFile(shaderBinFilePath.c_str(), m_ByteCode);

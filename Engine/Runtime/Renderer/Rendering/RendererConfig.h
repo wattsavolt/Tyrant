@@ -5,7 +5,7 @@
 #include "RendererMacros.h"
 #include "Core.h"
 #include "RenderAPI/RenderAPI.h"
-#include "DataTypes/DataTypes.h"
+#include "RenderDataTypes/RenderDataTypes.h"
 
 namespace tyr
 {

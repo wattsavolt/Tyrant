@@ -16,7 +16,8 @@ namespace tyr
     { \
         type##MetaClass() \
         { \
-            TypeInfo& info = TypeRegistry::Instance().AddType(#type); \
+            const String typeName = GetTypeName<type>(); \
+            TypeInfo& info = TypeRegistry::Instance().AddType(typeName.c_str()); \
             info.size = sizeof(type); \
             info.alignment = alignof(type); \
             info.version = typeVersion; \

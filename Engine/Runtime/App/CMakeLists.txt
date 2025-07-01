@@ -74,7 +74,6 @@ install(
 	PATTERN "Private" EXCLUDE
 )
 
-
 install_tyr_target(TyrantApp)
 
 

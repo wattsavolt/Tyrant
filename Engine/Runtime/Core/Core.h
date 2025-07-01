@@ -4,6 +4,7 @@
 #include "String/StringTypes.h"
 #include "Containers/Containers.h"
 #include "Utility/Utility.h"
+#include "Utility/PathUtil.h"
 #include "Utility/INonCopyable.h"
 #include "Memory/Memory.h"
 #include "String/StringUtil.h"

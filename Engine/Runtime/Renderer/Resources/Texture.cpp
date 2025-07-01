@@ -1,11 +1,26 @@
-
 #include "Texture.h"
 #include "RenderAPI/Buffer.h"
 #include "RenderAPI/Device.h"
 #include "TransferBuffer.h"
+#include "Core.h"
 
 namespace tyr
 {
+	TYR_REFL_CLASS_START(PixelFormat, 0);
+	TYR_REFL_CLASS_END();
+
+	TYR_REFL_CLASS_START(ImageType, 0);
+	TYR_REFL_CLASS_END();
+
+	TYR_REFL_CLASS_START(TextureInfo, 0);
+		TYR_REFL_FIELD(&TextureInfo::width, "Width", true, true, true);
+		TYR_REFL_FIELD(&TextureInfo::height, "Height", true, true, true);
+		TYR_REFL_FIELD(&TextureInfo::depth, "Depth", true, true, true);
+		TYR_REFL_FIELD(&TextureInfo::format, "Format", true, true, true);
+		TYR_REFL_FIELD(&TextureInfo::type, "Type", true, true, true);
+		TYR_REFL_FIELD(&TextureInfo::mipLevelCount, "MipCount", true, true, true);
+	TYR_REFL_CLASS_END();
+
 	Texture::Texture(Device& device, const TextureDesc& desc)
 		: RenderResource(device)
 	{
@@ -139,5 +154,23 @@ namespace tyr
 
 		TYR_ASSERT(false);
 		return 0;
+	}
+
+	float Texture::SRGBToLinear(float srgb)
+	{
+		if (srgb <= 0.04045f)
+		{
+			return srgb / 12.92f;
+		}
+		return powf((srgb + 0.055f) / 1.055f, 2.4f);
+	}
+
+	float Texture::LinearToSRGB(float linear)
+	{
+		if (linear <= 0.0031308f)
+		{
+			return linear * 12.92f;
+		}
+		return 1.055f * powf(linear, 1.0f / 2.4f) - 0.055f;
 	}
 }

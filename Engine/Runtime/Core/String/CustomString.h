@@ -17,7 +17,7 @@ namespace tyr
 		bool operator==(const CString& val);
 		bool operator==(const char* data);
 
-		size_t Size() const { return m_Size; }
+		size_t Size() const { return m_Size - 1; }
 
 	private:
 		void Copy(const char* data);

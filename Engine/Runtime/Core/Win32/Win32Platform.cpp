@@ -142,6 +142,12 @@ namespace tyr
 		TYR_ASSERT(newPos != INVALID_SET_FILE_POINTER && GetLastError() == NO_ERROR);
 	}
 
+	void Platform::SetFilePositionToEnd(FileHandle handle)
+	{
+		const DWORD newPos = SetFilePointer(handle, 0, NULL, FILE_END);
+		TYR_ASSERT(newPos != INVALID_SET_FILE_POINTER && GetLastError() == NO_ERROR);
+	}
+
 	size_t Platform::GetFilePosition(FileHandle handle)
 	{
 		const DWORD pos = SetFilePointer(handle, 0, NULL, FILE_CURRENT);

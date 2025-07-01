@@ -6,7 +6,7 @@
 #include "Math/Quaternion.h"
 #include "Math/Matrix4.h"
 #include "RenderAPI/RenderAPITypes.h"
-#include "DataTypes/DataTypes.h"
+#include "RenderDataTypes/RenderDataTypes.h"
 
 namespace tyr
 {
@@ -43,7 +43,7 @@ namespace tyr
 	struct SceneData
 	{
 		Array<RigidMeshInstance> rigidMeshInstances;
-		Array<SkeletalModelInstance> skeletalModelInstances;
+		Array<SkeletalMeshInstance> skeletalModelInstances;
 		DirectionalLight dirLights[c_MaxDirectionalLights];
 		uint dirLightCount;
 		PointLight pointLights[c_MaxPointLights];

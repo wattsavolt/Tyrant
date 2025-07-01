@@ -17,9 +17,6 @@ namespace tyr
 	TYR_REFL_CLASS_START(uint64, 0);
 	TYR_REFL_CLASS_END();
 
-	TYR_REFL_CLASS_START(size_t, 0);
-	TYR_REFL_CLASS_END();
-
 	TYR_REFL_CLASS_START(float, 0);
 	TYR_REFL_CLASS_END();
 }

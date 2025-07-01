@@ -16,7 +16,7 @@ endif()
 
 
 # Private third-party includes and libraries
-set(PRIVATE_INC_DIRS "${TYR_THIRD_PARTY_EXPLICIT_DIR}/DirectXShaderCompiler/inc")
+set(PRIVATE_INC_DIRS "${TYR_THIRD_PARTY_HEADER_LIBS_DIR}/DirectXShaderCompiler/inc")
 set(PRIVATE_LIBS "")
 
 if(WIN32)

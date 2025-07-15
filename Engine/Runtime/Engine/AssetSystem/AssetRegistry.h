@@ -22,6 +22,8 @@ namespace tyr
 	public:
 		static AssetRegistry& Instance();
 
+		void Load();
+		void Save();
 		void AddAsset(AssetID assetID, const char* assetPath, AssetID* refAssetID = nullptr);
 		void AddAssetReference(AssetID assetID, AssetID referenceID);
 		void UpdateAssetPath(AssetID assetID, const char* assetPath);
@@ -34,7 +36,11 @@ namespace tyr
 		const AssetData& GetAssetData(AssetID assetID) const;
 
 	private:
+		static constexpr const char* c_AssetRegistryPath = "/AssetRegistry/AssetRegistry.bin";
+
 		AssetRegistry();
+
+		friend class Engine;
 
 		AssetRegistryFile m_RegistryFile;
 		mutable Mutex m_Mutex;

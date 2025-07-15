@@ -28,7 +28,7 @@ namespace tyr
 		static bool s_Instantiated;
 		bool m_Initialized;
 		Ref<RenderAPI> m_RenderAPI;
-		URef<SceneRenderer> m_SceneRenderer;
+		SceneRenderer* m_SceneRenderer;
 	};
 	
 }

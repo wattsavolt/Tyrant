@@ -576,7 +576,7 @@ namespace tyr
 		m_ExecuteDesc.waitDstPipelineStages.Add(PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
 	}
 
-	void SceneRenderer::CreateBufferBindingUpdate(BufferBindingUpdate& bindingUpdate, SRef<BufferView>& bufferView, uint descriptorIndex, uint bindingIndex)
+	void SceneRenderer::CreateBufferBindingUpdate(BufferBindingUpdate& bindingUpdate, ORef<BufferView>& bufferView, uint descriptorIndex, uint bindingIndex)
 	{
 		BufferBindingInfo bindingInfo;
 		bindingInfo.bufferView = bufferView;

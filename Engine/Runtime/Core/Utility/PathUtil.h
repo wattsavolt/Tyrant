@@ -63,5 +63,8 @@ namespace tyr
                 }
             }
         }
+
+        // Creates all the directories in the file path if they do not exists
+        static void CreateDirectoriesInFilePath(const char* filePath);
 	};
 }

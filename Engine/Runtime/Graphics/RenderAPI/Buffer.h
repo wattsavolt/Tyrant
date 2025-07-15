@@ -56,7 +56,7 @@ namespace tyr
 
 	struct BufferViewDesc
 	{
-		SRef<Buffer> buffer;
+		ORef<Buffer> buffer;
 		size_t offset;
 		size_t size;
 	};

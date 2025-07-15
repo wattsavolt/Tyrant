@@ -35,11 +35,11 @@ namespace tyr
             return true;
         }
 
-        std::optional<T> Read() const
+        Optional<T> Read() const
         {
             const size_t slot = m_ReadIndex & (Capacity - 1);
 
-            if (!Slots[slot].ready.load(std::memory_order_acquire))
+            if (!m_Slots[slot].ready.load(std::memory_order_acquire))
             {
                 return std::nullopt;
             }

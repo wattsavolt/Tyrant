@@ -36,12 +36,12 @@ namespace tyr
 		// Writes the data to the upload buffer if using one and gpu buffer otherwise.
 		void Write(const void* data, size_t offset, size_t size);
 
-		SRef<Buffer>& GetBuffer() { return m_Buffer; }
+		ORef<Buffer>& GetBuffer() { return m_Buffer; }
 		const Buffer* GetBufferRawPtr() const { return m_Buffer.Get(); }
 		Buffer* GetBufferRawPtr() { return m_Buffer.Get(); }
 		void* GetBufferNativePtr() const { return m_Buffer->GetNativePtr(); }
 		
 	private:
-		SRef<Buffer> m_Buffer;
+		ORef<Buffer> m_Buffer;
 	};
 }

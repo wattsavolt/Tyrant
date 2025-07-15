@@ -20,7 +20,7 @@ namespace tyr
 		PixelFormat format;
 		SampleCount sampleCount;
 		ImageUsage usage;
-		ImageLayout layout;
+		ImageLayout layout = IMAGE_LAYOUT_GENERAL;
 		MemoryProperty memoryProperty;
 		// Handle to an externally created image required for swapchain images
 		Handle externalImage = nullptr;
@@ -112,7 +112,7 @@ namespace tyr
 #if TYR_DEBUG
 		String debugName;
 #endif
-		SRef<Image> image;
+		ORef<Image> image;
 		SubresourceRange subresourceRange;
 		ImageType viewType;
 		// Specifies whether this image view points at a swap chain image

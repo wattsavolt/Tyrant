@@ -20,12 +20,6 @@ namespace tyr
 	struct IsArray<Array<T>> : std::true_type {};
 
 	template<typename T>
-	struct IsList : std::false_type {};
-
-	template<typename T>
-	struct IsList<List<T>> : std::true_type {};
-
-	template<typename T>
 	struct IsHashMap : std::false_type {};
 
 	template<typename K, typename V, typename H>

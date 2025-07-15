@@ -1,8 +1,8 @@
-
 #pragma once
 
 #include "Allocation.h"
 #include "Utility/Utility.h"
+#include "Containers/Array.h"
 
 namespace tyr
 {
@@ -76,14 +76,14 @@ namespace tyr
 		return data;
 	}
 
-	/// Destructs and deallocates last allocated entry currently located on the stack.
+	/// Destructs object
 	template<class T>
 	void FrameDelete(T* data)
 	{
 		data->~T();
 	}
 
-	/// Destructs an array of objects and deallocates last allocated entry currently located on stack.
+	/// Destructs an array of objects
 	template<class T>
 	void FrameDelete(T* data, uint count)
 	{
@@ -170,6 +170,9 @@ namespace tyr
 			FrameFreeAligned(ptr);
 		}
 	};
+
+	template <typename T, typename A>
+	using FrameArray = Array<T, FrameAllocator>;
 }
 
 

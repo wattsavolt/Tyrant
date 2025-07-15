@@ -13,7 +13,7 @@ namespace tyr
 	
 	}
 
-	void TransferPass::CreateRenderGraphDependencies(RGVector<RenderGraphDependencyInput>& inputs, RGVector<RenderGraphDependencyOutput>& outputs)
+	void TransferPass::CreateRenderGraphDependencies(RGArray<RenderGraphDependencyInput>& inputs, RGArray<RenderGraphDependencyOutput>& outputs)
 	{
 
 	}

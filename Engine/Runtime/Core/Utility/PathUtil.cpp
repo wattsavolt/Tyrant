@@ -31,4 +31,12 @@ namespace tyr
         size_t lastindex = input.find_last_of(".");
         return input.substr(0, lastindex);
     }
+
+    void PathUtil::CreateDirectoriesForFilePath(const char* filePath)
+    {
+        fs::path fsPath = filePath;
+
+        // Create all directories in the path
+        fs::create_directories(fsPath.parent_path());
+    }
 }

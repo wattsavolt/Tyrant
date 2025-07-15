@@ -56,4 +56,21 @@ namespace tyr
 			return -c_HalfPi;
 		}
 	}
+
+	uint Math::NextPowerOfTwo(uint v)
+	{
+		v--;
+		v |= v >> 1;
+		v |= v >> 2;
+		v |= v >> 4;
+		v |= v >> 8;
+		v |= v >> 16;
+		v++;
+
+		// mask = 0 if v != 0, else all bits set if v == 0
+		const uint mask = (uint)(-(v == 0));
+
+		// if v == 0, return 1; else return v
+		return (v & ~mask) | (1 & mask);
+	}
 }

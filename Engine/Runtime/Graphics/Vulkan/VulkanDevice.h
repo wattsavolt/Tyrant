@@ -68,10 +68,10 @@ namespace tyr
 		Ref<CommandAllocator> CreateCommandAllocator(const CommandAllocatorDesc& desc) override;
 		Ref<CommandList> CreateCommandList(const CommandListDesc& desc) override;
 		Ref<AccelerationStructure> CreateAccelerationStructure(const AccelerationStructureDesc& desc) override;
-		SRef<Buffer> CreateBuffer(const BufferDesc& desc) override;
-		SRef<BufferView> CreateBufferView(const BufferViewDesc& desc) override;
-		SRef<Image> CreateImage(const ImageDesc& desc) override;
-		SRef<ImageView> CreateImageView(const ImageViewDesc& desc) override;
+		ORef<Buffer> CreateBuffer(const BufferDesc& desc) override;
+		ORef<BufferView> CreateBufferView(const BufferViewDesc& desc) override;
+		ORef<Image> CreateImage(const ImageDesc& desc) override;
+		ORef<ImageView> CreateImageView(const ImageViewDesc& desc) override;
 		Ref<Sampler> CreateSampler(const SamplerDesc& desc) override;
 		Ref<Shader> CreateShader(const ShaderDesc& desc) override;
 		Ref<DescriptorPool> CreateDescriptorPool(const DescriptorPoolDesc& desc, const char* debugName) override;

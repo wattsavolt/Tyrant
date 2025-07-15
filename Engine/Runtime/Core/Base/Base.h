@@ -6,6 +6,8 @@
 #include <filesystem>
 #include <optional>
 
+#include <initializer_list>
+
 // C limits
 #include <float.h>
 
@@ -77,6 +79,9 @@ namespace tyr
 {
     typedef void* Handle;
     typedef Handle FileHandle;
+
+    template <typename T>
+    using Optional = std::optional<T>;
 }
 
 

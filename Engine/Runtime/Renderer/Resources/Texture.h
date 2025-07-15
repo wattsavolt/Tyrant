@@ -51,9 +51,9 @@ namespace tyr
 
 		static Ref<Texture> Create(Device& device, const TextureDesc& desc);
 
-		SRef<Image>& GetImage() { return m_Image; }
+		ORef<Image>& GetImage() { return m_Image; }
 
-		SRef<ImageView>& GetImageView() { return m_ImageView; }
+		ORef<ImageView>& GetImageView() { return m_ImageView; }
 
 		ImageLayout GetImageLayout() const { return m_ImageLayout; }
 
@@ -129,8 +129,8 @@ namespace tyr
 		}
 
 	private:
-		SRef<Image> m_Image;
-		SRef<ImageView> m_ImageView;
+		ORef<Image> m_Image;
+		ORef<ImageView> m_ImageView;
 		// Current layout tracked by the render graph 
 		friend class RenderGraph;
 		ImageLayout m_ImageLayout;

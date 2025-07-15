@@ -1,29 +1,33 @@
-
 #pragma once
 
-#include "Memory/Allocation.h"
-#include "Utility/Utility.h"
-#include "Containers/Containers.h"
+#include "Containers/Array.h"
 
 namespace tyr
 {
-	/// A render graph allocator which uses a scratch allocator per thread  
-	/// Should only be used on the render thread
+	template <uint N>
+	class ScratchAllocatorPool;
+
+	/// A render graph allocator which uses a scratch allocator pool  
+	/// Should only be used by the render graph
 	class RenderGraphAllocator
 	{
 	public:
+		static constexpr uint c_AllocatorCount = 2;
+
 		static void Create(uint blockSize = 1024 * 1024);
 
 		static uint8* Alloc(uint amount);
 
 		static uint8* AllocAligned(uint amount, uint alignment);
 
-		static void Reset();
+		// Switch to the next allocator
+		static void NextFrame();
 
 		static void Destroy();
 
 	private:
-		static class ScratchAllocator* s_Allocator;
+		static ScratchAllocatorPool<c_AllocatorCount>* s_ScratchAllocatorPool;
+		static bool s_Initialized;
 	};
 
 	inline void* RenderGraphAlloc(uint count)
@@ -173,26 +177,8 @@ namespace tyr
 		}
 	};
 
-	template <typename T, typename A = StdAllocator<T, RenderGraphAllocator>>
-	using RGVector = std::vector<T, A>;
-
-	template <typename T, typename A = StdAllocator<T, RenderGraphAllocator>>
-	using RGStack = std::stack<T, std::deque<T, A>>;
-
-	template <typename T, typename A = StdAllocator<T, RenderGraphAllocator>>
-	using RGQueue = std::queue<T, std::deque<T, A>>;
-
-	template <typename T, typename P = std::less<T>, typename A = StdAllocator<T, RenderGraphAllocator>>
-	using RGSet = std::set <T, P, A>;
-
-	template <typename K, typename V, typename P = std::less<K>, typename A = StdAllocator<std::pair<const K, V>, RenderGraphAllocator>>
-	using RGMap = std::map <K, V, P, A>;
-
-	template <typename T, typename H = std::hash<T>, typename C = std::equal_to<T>, typename A = StdAllocator<T, RenderGraphAllocator>>
-	using RGUnorderedSet = std::unordered_set <T, H, C, A>;
-
-	template <typename K, typename V, typename H = std::hash<K>, typename C = std::equal_to<K>, typename A = StdAllocator<std::pair<const K, V>, RenderGraphAllocator>>
-	using RGUnorderedMap = std::unordered_map <K, V, H, C, A>;
+	template<typename T>
+	using RGArray = Array<T, RenderGraphAllocator>;
 }
 
 

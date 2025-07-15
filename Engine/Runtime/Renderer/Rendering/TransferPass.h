@@ -13,7 +13,7 @@ namespace tyr
 		TransferPass();
 		~TransferPass();
 
-		void CreateRenderGraphDependencies(RGVector<RenderGraphDependencyInput>& inputs, RGVector<RenderGraphDependencyOutput>& outputs) override;
+		void CreateRenderGraphDependencies(RGArray<RenderGraphDependencyInput>& inputs, RGArray<RenderGraphDependencyOutput>& outputs) override;
 	};
 	
 }

@@ -264,7 +264,7 @@ namespace tyr
         void Serialize(BinaryStream& stream, const void* object) const override
         {
             const HashMap<K, V>& map = *(static_cast<const HashMap<K, V>*>(object));
-            Serializer::Instance().Serialize<size_t>(stream, map.size());
+            Serializer::Instance().Serialize<uint>(stream, map.Size());
             for (const auto& pair : map)
             {
                 Serializer::Instance().Serialize<K>(stream, pair.first);
@@ -275,11 +275,11 @@ namespace tyr
         void Deserialize(BinaryStream& stream, void* object) const override
         {
             HashMap<K, V>& map = *(static_cast<HashMap<K, V>*>(object));
-            map.clear();
-            size_t size;
-            Serializer::Instance().Deserialize<size_t>(stream, size);
-            map.reserve(size);
-            for (size_t i = 0; i < size; ++i)
+            map.Clear();
+            uint size;
+            Serializer::Instance().Deserialize<uint>(stream, size);
+            map.Reserve(size);
+            for (uint i = 0; i < size; ++i)
             {
                 K key;
                 V value;

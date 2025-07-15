@@ -51,9 +51,9 @@ namespace tyr
 		
 		const SwapChainDesc& GetDesc() const { return m_Desc; }
 
-		const Array<SRef<Image>>& GetImages() const { return m_Images; }
+		const Array<ORef<Image>>& GetImages() const { return m_Images; }
 
-		const Array<SRef<ImageView>>& GetImageViews() const { return m_ImageViews; }
+		const Array<ORef<ImageView>>& GetImageViews() const { return m_ImageViews; }
 
 		const uint GetWidth() const { return m_Width; }
 
@@ -64,8 +64,8 @@ namespace tyr
 
 		Device& m_Device;
 		SwapChainDesc m_Desc;
-		Array<SRef<Image>> m_Images;
-		Array<SRef<ImageView>> m_ImageViews;
+		Array<ORef<Image>> m_Images;
+		Array<ORef<ImageView>> m_ImageViews;
 		BarrierAccess m_RenderingWriteAccess;
 		BarrierAccess m_RenderingReadAccess;
 		ImageLayout m_RenderingLayout;

@@ -13,7 +13,7 @@ namespace tyr
 	
 	}
 
-	void GeometryPass::CreateRenderGraphDependencies(RGVector<RenderGraphDependencyInput>& inputs, RGVector<RenderGraphDependencyOutput>& outputs)
+	void GeometryPass::CreateRenderGraphDependencies(RGArray<RenderGraphDependencyInput>& inputs, RGArray<RenderGraphDependencyOutput>& outputs)
 	{
 		const SceneData& sceneData = m_Scene->GetSceneData();
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Base/Base.h"
 #include "Memory/Allocation.h"
 
 namespace tyr

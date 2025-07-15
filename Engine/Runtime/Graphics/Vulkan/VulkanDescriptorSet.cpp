@@ -132,7 +132,7 @@ namespace tyr
 				for (uint j = 0; j < bindingInfoCount; ++j)
 				{
 					const BufferBindingInfo& bindingInfo = bufferUpdate.bufferBindingInfos[j];
-					const SRef<BufferView>& bufferView = bindingInfo.bufferView;
+					const ORef<BufferView>& bufferView = bindingInfo.bufferView;
 					const BufferViewDesc& viewDesc = bufferView->GetDesc();
 					const VulkanBuffer* buffer = viewDesc.buffer.GetAs<VulkanBuffer>();
 					vkBufferInfos[j].buffer = buffer->GetBuffer();

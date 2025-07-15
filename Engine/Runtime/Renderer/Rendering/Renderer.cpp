@@ -29,7 +29,7 @@ namespace tyr
 		m_RenderAPI = GraphicsManager::CreateRenderAPI(rendererConfig.renderAPICreateConfig);
 		m_RenderAPI->Initialize(rendererConfig.renderAPIConfig);
 
-		m_SceneRenderer = MakeURef<SceneRenderer>(rendererConfig, m_RenderAPI);
+		m_SceneRenderer = new SceneRenderer(rendererConfig, m_RenderAPI);
 
 		surfaceWidth = m_RenderAPI->GetSwapChain()->GetWidth();
 		surfaceHeight = m_RenderAPI->GetSwapChain()->GetHeight();
@@ -42,7 +42,7 @@ namespace tyr
 		TYR_ASSERT(m_Initialized);
 
 		m_SceneRenderer->WaitForCompletion();
-		m_SceneRenderer.reset(nullptr);
+		TYR_SAFE_DELETE(m_SceneRenderer);
 		m_RenderAPI->Shutdown();
 
 		m_Initialized = false;

@@ -1,4 +1,5 @@
 #pragma once
+
 #include "EngineMacros.h"
 #include "Core.h"
 #include "Resources/Texture.h"
@@ -14,7 +15,7 @@ namespace tyr
 		uint dataSize;
 	};
 
-	struct TextureAsset : public SingleThreadedRefCountedObject
+	struct TextureAsset 
 	{
 		AssetID id;
 		TextureInfo info;

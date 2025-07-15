@@ -21,7 +21,7 @@ namespace tyr
 		SceneID GetSceneId() const { return m_SceneId; }
 
 		// Called by the render graph builder every time the render graph is built.
-		virtual void CreateRenderGraphDependencies(RGVector<RenderGraphDependencyInput>& inputs, RGVector<RenderGraphDependencyOutput>& outputs) {};
+		virtual void CreateRenderGraphDependencies(RGArray<RenderGraphDependencyInput>& inputs, RGArray<RenderGraphDependencyOutput>& outputs) {};
 
 	protected:
 		// Used by the rendergraph to organize nodes based on the scene.

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include "SIMD.h"
 
 namespace tyr
 {
@@ -136,6 +137,9 @@ namespace tyr
 		{
 			return fabs(b - a) <= tolerance;
 		}
+
+		// Returns v if it is already a power of 2
+		static uint NextPowerOfTwo(uint v);
 
 		static constexpr float c_ApproxOne = 0.99999994f;
 		static constexpr float c_Infinity = std::numeric_limits<float>::infinity();

@@ -71,10 +71,10 @@ namespace tyr
 		virtual Ref<CommandAllocator> CreateCommandAllocator(const CommandAllocatorDesc& desc) = 0;
 		virtual Ref<CommandList> CreateCommandList(const CommandListDesc& desc) = 0;
 		virtual Ref<AccelerationStructure> CreateAccelerationStructure(const AccelerationStructureDesc& desc) = 0;
-		virtual SRef<Buffer> CreateBuffer(const BufferDesc& desc) = 0;
-		virtual SRef<BufferView> CreateBufferView(const BufferViewDesc& desc) = 0;
-		virtual SRef<Image> CreateImage(const ImageDesc& desc) = 0;
-		virtual SRef<ImageView> CreateImageView(const ImageViewDesc& desc) = 0;
+		virtual ORef<Buffer> CreateBuffer(const BufferDesc& desc) = 0;
+		virtual ORef<BufferView> CreateBufferView(const BufferViewDesc& desc) = 0;
+		virtual ORef<Image> CreateImage(const ImageDesc& desc) = 0;
+		virtual ORef<ImageView> CreateImageView(const ImageViewDesc& desc) = 0;
 		virtual Ref<Sampler> CreateSampler(const SamplerDesc& desc) = 0;
 		virtual Ref<Shader> CreateShader(const ShaderDesc& desc) = 0;
 		virtual Ref<DescriptorPool> CreateDescriptorPool(const DescriptorPoolDesc& desc, const char* debugName = "") = 0;

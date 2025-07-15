@@ -21,7 +21,9 @@ namespace tyr
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 		VK_KHR_MAINTENANCE1_EXTENSION_NAME,
 		VK_KHR_MAINTENANCE2_EXTENSION_NAME,
+		VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
 		//VK_EXT_MESH_SHADER_EXTENSION_NAME,
+		//VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME,
 #ifdef TYR_USE_DYNAMIC_RENDERING
 		VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME
 #endif
@@ -200,27 +202,33 @@ namespace tyr
 		deviceInfo.enabledLayerCount = 0;
 		deviceInfo.ppEnabledLayerNames = nullptr;
 
-		VkPhysicalDeviceTimelineSemaphoreFeatures timelineFeatures{};
-		timelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
-		timelineFeatures.pNext = nullptr;
+		VkPhysicalDeviceVulkan13Features vulkanPhysicalDevice13Features{};
+		vulkanPhysicalDevice13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+		vulkanPhysicalDevice13Features.pNext = nullptr;
 
-		VkPhysicalDeviceVulkan13Features vulkanPhysicalDeviceFeatures{};
-		vulkanPhysicalDeviceFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-		vulkanPhysicalDeviceFeatures.pNext = &timelineFeatures;
-
+		VkPhysicalDeviceVulkan12Features vulkanPhysicalDevice12Features{};
+		vulkanPhysicalDevice12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+		vulkanPhysicalDevice12Features.pNext = &vulkanPhysicalDevice13Features;
+		
 		VkPhysicalDeviceFeatures2 physDevFeatures;
 		physDevFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-		physDevFeatures.pNext = &vulkanPhysicalDeviceFeatures;
+		physDevFeatures.pNext = &vulkanPhysicalDevice12Features;
 		vkGetPhysicalDeviceFeatures2(device, &physDevFeatures);
 
-		if (!vulkanPhysicalDeviceFeatures.synchronization2)
+		if (!vulkanPhysicalDevice12Features.descriptorIndexing)
+		{
+			TYR_ASSERT(false);
+			TYR_LOG_FATAL("Descriptor indexing is not supported by the GPU.");
+		}
+
+		if (!vulkanPhysicalDevice13Features.synchronization2)
 		{
 			TYR_ASSERT(false);
 			TYR_LOG_FATAL("Synchronization2 is not supported by the GPU.");
 		}
 		
 #ifdef TYR_USE_DYNAMIC_RENDERING
-		if (!vulkanPhysicalDeviceFeatures.dynamicRendering)
+		if (!vulkanPhysicalDevice13Features.dynamicRendering)
 		{
 			TYR_ASSERT(false);
 			TYR_LOG_FATAL("Dynamic rendering is not supported by the GPU.");
@@ -229,13 +237,13 @@ namespace tyr
 		vulkanPhysicalDeviceFeatures.dynamicRendering = VK_FALSE;
 #endif	
 
-		if (!timelineFeatures.timelineSemaphore) 
+		if (!vulkanPhysicalDevice12Features.timelineSemaphore)
 		{
 			TYR_ASSERT(false);
 			TYR_LOG_FATAL("Timeline semaphores are not supported by the GPU.");
 		}
 
-		deviceInfo.pNext = &vulkanPhysicalDeviceFeatures;
+		deviceInfo.pNext = &vulkanPhysicalDevice12Features;
 
 		TYR_GASSERT(vkCreateDevice(device, &deviceInfo, g_VulkanAllocationCallbacks, &m_LogicalDevice));
 
@@ -406,48 +414,48 @@ namespace tyr
 		return MakeRef<VulkanAccelerationStructure>(*this, desc);
 	}
 
-	SRef<Buffer> VulkanDevice::CreateBuffer(const BufferDesc& desc)
+	ORef<Buffer> VulkanDevice::CreateBuffer(const BufferDesc& desc)
 	{
 		URef<ThreadResourcePools>& threadResourcePools = ThreadResourcePools::Instance();
 		if (threadResourcePools)
 		{
 			static RefCountedObjectDeleter deleter = std::bind(&ThreadResourcePools::DeleteBuffer, threadResourcePools.get(), std::placeholders::_1);
-			return MakeSRef<VulkanBuffer>(deleter, *this, desc);
+			return MakeORef<VulkanBuffer>(deleter, *this, desc);
 		}
-		return MakeSRef<VulkanBuffer>(nullptr, *this, desc);
+		return MakeORef<VulkanBuffer>(nullptr, *this, desc);
 	}
 
-	SRef<BufferView> VulkanDevice::CreateBufferView(const BufferViewDesc& desc)
+	ORef<BufferView> VulkanDevice::CreateBufferView(const BufferViewDesc& desc)
 	{
 		URef<ThreadResourcePools>& threadResourcePools = ThreadResourcePools::Instance();
 		if (threadResourcePools)
 		{
 			static RefCountedObjectDeleter deleter = std::bind(&ThreadResourcePools::DeleteBufferView, threadResourcePools.get(), std::placeholders::_1);
-			return MakeSRef<VulkanBufferView>(deleter, *this, desc);
+			return MakeORef<VulkanBufferView>(deleter, *this, desc);
 		}
-		return MakeSRef<VulkanBufferView>(nullptr, *this, desc);
+		return MakeORef<VulkanBufferView>(nullptr, *this, desc);
 	}
 
-	SRef<Image> VulkanDevice::CreateImage(const ImageDesc& desc)
+	ORef<Image> VulkanDevice::CreateImage(const ImageDesc& desc)
 	{
 		URef<ThreadResourcePools>& threadResourcePools = ThreadResourcePools::Instance();
 		if (threadResourcePools)
 		{
 			static RefCountedObjectDeleter deleter = std::bind(&ThreadResourcePools::DeleteImage, threadResourcePools.get(), std::placeholders::_1);
-			return MakeSRef<VulkanImage>(deleter, *this, desc);
+			return MakeORef<VulkanImage>(deleter, *this, desc);
 		}
-		return MakeSRef<VulkanImage>(nullptr, *this, desc);
+		return MakeORef<VulkanImage>(nullptr, *this, desc);
 	}
 
-	SRef<ImageView> VulkanDevice::CreateImageView(const ImageViewDesc& desc)
+	ORef<ImageView> VulkanDevice::CreateImageView(const ImageViewDesc& desc)
 	{
 		URef<ThreadResourcePools>& threadResourcePools = ThreadResourcePools::Instance();
 		if (threadResourcePools)
 		{
 			static RefCountedObjectDeleter deleter = std::bind(&ThreadResourcePools::DeleteImageView, threadResourcePools.get(), std::placeholders::_1);
-			return MakeSRef<VulkanImageView>(deleter, *this, desc);
+			return MakeORef<VulkanImageView>(deleter, *this, desc);
 		}
-		return MakeSRef<VulkanImageView>(nullptr, *this, desc);
+		return MakeORef<VulkanImageView>(nullptr, *this, desc);
 	}
 
 	Ref<Sampler> VulkanDevice::CreateSampler(const SamplerDesc& desc)

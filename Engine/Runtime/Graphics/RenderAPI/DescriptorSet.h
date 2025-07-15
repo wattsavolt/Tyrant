@@ -83,7 +83,7 @@ namespace tyr
 	// Can be multiple per binding slot (ie. array of buffers)
 	struct BufferBindingInfo
 	{
-		SRef<BufferView> bufferView;
+		ORef<BufferView> bufferView;
 	};
 
 	struct BufferBindingUpdate : BindingUpdate
@@ -94,7 +94,7 @@ namespace tyr
 	// Can be multiple per binding slot (ie. array of images)
 	struct ImageBindingInfo
 	{
-		SRef<ImageView> imageView;
+		ORef<ImageView> imageView;
 		Ref<Sampler> sampler;
 	};
 

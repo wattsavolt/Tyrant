@@ -55,7 +55,7 @@ namespace tyr
 		void AddRenderBarriers();
 		void CreateCommandAllocators();
 		void CreateCommandLists();
-		void CreateBufferBindingUpdate(BufferBindingUpdate& bindingUpdate, SRef<BufferView>& bufferView, uint descriptorIndex, uint bindingIndex);
+		void CreateBufferBindingUpdate(BufferBindingUpdate& bindingUpdate, ORef<BufferView>& bufferView, uint descriptorIndex, uint bindingIndex);
 
 		static bool s_Instantiated;
 

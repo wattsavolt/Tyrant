@@ -3,11 +3,10 @@
 namespace tyr
 {
 	ScratchAllocator::ScratchAllocator(uint blockSize)
-		: m_BlockSize(0)
+		: m_MinBlockSize(blockSize)
 		, m_CurBlock(nullptr)
-		, m_TotalBytesAllocated(0)
 	{
-
+		TYR_ASSERT(blockSize > 0);
 	}
 
 	ScratchAllocator::~ScratchAllocator()
@@ -33,10 +32,6 @@ namespace tyr
 		{
 			AllocBlock(amount);
 		}
-
-#if TYR_DEBUG
-		m_TotalBytesAllocated += amount;
-#endif
 
 		return m_CurBlock->Alloc(amount);
 	}
@@ -70,10 +65,6 @@ namespace tyr
 
 		amount += alignOffset;
 
-#if TYR_DEBUG
-		m_TotalBytesAllocated += amount;
-#endif
-
 		uint8* data = m_CurBlock->Alloc(amount);
 		// The data will begin after the offset as it may be padded to have 16 byte alignment
 		return data + alignOffset;
@@ -81,13 +72,13 @@ namespace tyr
 
 	void ScratchAllocator::AllocBlock(uint amount)
 	{
-		uint blockSize = m_BlockSize;
+		uint blockSize = m_MinBlockSize;
 		if (amount > blockSize)
 		{
 			blockSize = amount;
 		}
 
-		uint alignOffset = 16 - (sizeof(Block) & (16 - 1));
+		const uint alignOffset = 16 - (sizeof(Block) & (16 - 1));
 
 		uint8* data = reinterpret_cast<uint8*>(AllocAligned16(blockSize + sizeof(Block) + alignOffset));
 		Block* block = new (data) Block(blockSize);
@@ -112,14 +103,15 @@ namespace tyr
 			const uint numBlocks = static_cast<uint>(m_Blocks.Size());
 			if (numBlocks > 1)
 			{
-				// Combine all the blocks into one
 				uint totalSize = 0;
+				// Combine all the blocks into one
 				for (uint i = 0; i < numBlocks; ++i)
 				{
 					totalSize += m_Blocks[i]->m_Size;
 					FreeBlock(m_Blocks[i]);
 				}
 				m_Blocks.Clear();
+
 				AllocBlock(totalSize);
 			}
 			else
@@ -128,8 +120,15 @@ namespace tyr
 				m_CurBlock->Clear();
 			}
 		}
-#if TYR_DEBUG
-		m_TotalBytesAllocated = 0;
-#endif
+	}
+
+	uint ScratchAllocator::GetTotalSize() const
+	{
+		uint totalSize = 0;
+		for (const Block* block : m_Blocks)
+		{
+			totalSize += block->m_Size;
+		}
+		return totalSize;
 	}
 }

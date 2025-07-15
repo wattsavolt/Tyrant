@@ -109,10 +109,10 @@ namespace tyr
 	using RefCountedObjectDeleter = std::function<void(RefCountedObject*)>;
 
     template<typename T>
-    class SharedRef final
+    class ObjectRef final
     {
         // Allow private member access to SRefs of base and derived types
-        template<typename> friend class SharedRef;
+        template<typename> friend class ObjectRef;
 
     public:
         void Reset(T* ptr = nullptr)
@@ -127,13 +127,13 @@ namespace tyr
             m_Ptr = ptr;
         }
 
-        SharedRef()
+        ObjectRef()
         {
             TYR_STATIC_ASSERT((std::is_base_of_v<RefCountedObject, T>), "T must derive from RefCountedObject");
             m_Deleter = [](RefCountedObject* obj) { delete obj; };
         }
 
-        SharedRef(T* ptr, RefCountedObjectDeleter deleter = nullptr)
+        ObjectRef(T* ptr, RefCountedObjectDeleter deleter = nullptr)
             : m_Ptr(ptr)
         {
             TYR_STATIC_ASSERT((std::is_base_of_v<RefCountedObject, T>), "T must derive from RefCountedObject");
@@ -151,7 +151,7 @@ namespace tyr
             }
         }
 
-        SharedRef(const SharedRef& other)
+        ObjectRef(const ObjectRef& other)
             : m_Ptr(other.m_Ptr), m_Deleter(other.m_Deleter)
         {
             if (m_Ptr)
@@ -160,7 +160,7 @@ namespace tyr
             }
         }
 
-        SharedRef(SharedRef&& other) noexcept
+        ObjectRef(ObjectRef&& other) noexcept
             : m_Ptr(other.m_Ptr), m_Deleter(std::move(other.m_Deleter))
         {
             other.m_Ptr = nullptr;
@@ -168,7 +168,7 @@ namespace tyr
 
         // Conversion constructor
         template<typename U, typename = std::enable_if_t<std::is_base_of_v<T, U>>>
-        SharedRef(const SharedRef<U>& other)
+        ObjectRef(const ObjectRef<U>& other)
             : m_Ptr(other.m_Ptr)
             , m_Deleter(other.m_Deleter)
         {
@@ -178,12 +178,12 @@ namespace tyr
             }
         }
 
-        ~SharedRef()
+        ~ObjectRef()
         {
             Reset();
         }
 
-        SharedRef& operator=(const SharedRef& other)
+        ObjectRef& operator=(const ObjectRef& other)
         {
             if (this != &other)
             {
@@ -197,7 +197,7 @@ namespace tyr
             return *this;
         }
 
-        SharedRef& operator=(SharedRef&& other) noexcept
+        ObjectRef& operator=(ObjectRef&& other) noexcept
         {
             if (this != &other)
             {
@@ -210,7 +210,7 @@ namespace tyr
 
         // Conversion assignment operator
         template<typename U, typename = std::enable_if_t<std::is_base_of_v<T, U>>>
-        SharedRef<T>& operator=(const SharedRef<U>& other)
+        ObjectRef<T>& operator=(const ObjectRef<U>& other)
         {
             if (m_Ptr != other.m_Ptr)
             {
@@ -265,12 +265,12 @@ namespace tyr
             return m_Ptr != nullptr;
         }
 
-        bool operator==(const SharedRef& other) const
+        bool operator==(const ObjectRef& other) const
         {
             return m_Ptr == other.m_Ptr;
         }
 
-        bool operator!=(const SharedRef& other) const
+        bool operator!=(const ObjectRef& other) const
         {
             return !(*this == other);
         }
@@ -281,12 +281,12 @@ namespace tyr
     };
 
     template<typename T>
-    using SRef = SharedRef<T>;
+    using ORef = ObjectRef<T>;
 
     template<typename T, typename... Args>
-    constexpr SRef<T> MakeSRef(RefCountedObjectDeleter deleter, Args&&... args)
+    constexpr ORef<T> MakeORef(RefCountedObjectDeleter deleter, Args&&... args)
     {
-        return SRef(new T(std::forward<Args>(args)...));
+        return ORef(new T(std::forward<Args>(args)...));
     }
 }
 

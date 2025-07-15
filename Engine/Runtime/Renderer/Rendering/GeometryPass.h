@@ -20,7 +20,7 @@ namespace tyr
 		GeometryPass(GeometryPassParams params);
 		~GeometryPass();
 
-		void CreateRenderGraphDependencies(RGVector<RenderGraphDependencyInput>& inputs, RGVector<RenderGraphDependencyOutput>& outputs);
+		void CreateRenderGraphDependencies(RGArray<RenderGraphDependencyInput>& inputs, RGArray<RenderGraphDependencyOutput>& outputs);
 
 	private:
 		Ref<GraphicsPipeline> m_Pipeline;

@@ -30,9 +30,9 @@ namespace tyr
 
 	struct RenderingAttachmentInfo
 	{
-		SRef<ImageView> imageView;
+		ORef<ImageView> imageView;
 		ImageLayout imageLayout;
-		SRef<ImageView> resolveImageView;
+		ORef<ImageView> resolveImageView;
 		ImageLayout resolveImageLayout = ImageLayout::IMAGE_LAYOUT_UNKNOWN;
 		ResolveMode resolveMode;
 		AttachmentLoadOp loadOp;
@@ -79,8 +79,8 @@ namespace tyr
 		virtual void Begin(CommandBufferUsage usage) = 0;
 		virtual void End() = 0;
 		virtual void Reset(bool releaseResources) = 0;
-		virtual void ClearColourImage(SRef<Image>& image, ImageLayout layout, const ClearColourValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount) = 0;
-		virtual void ClearDepthStencilImage(SRef<Image>& image, ImageLayout layout, const ClearDepthStencilValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount) = 0;
+		virtual void ClearColourImage(ORef<Image>& image, ImageLayout layout, const ClearColourValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount) = 0;
+		virtual void ClearDepthStencilImage(ORef<Image>& image, ImageLayout layout, const ClearDepthStencilValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount) = 0;
 		virtual void BeginRendering(const RenderingInfo& renderingInfo) = 0;
 		virtual void EndRendering() = 0;
 		// TODO: If phones are supported, add wrapper functions for vkCmdBeginRenderPass and vkCmdEndRenderPass for render passes
@@ -88,11 +88,11 @@ namespace tyr
 			const ImageBarrier* imageBarriers = nullptr, uint imageBarrierCount = 0u,
 			const PipelineBarrier* pipelineBarriers = nullptr, uint pipelineBarrierCount = 0u,
 			Dependency dependency = DEPENDENCY_UNKNOWN) = 0;
-		virtual void CopyBuffer(const SRef<Buffer>& srcBuffer, const SRef<Buffer>& dstBuffer, const BufferCopyInfo* copyInfos, uint copyInfoCount) = 0;
-		virtual void CopyBuffer(const SRef<Buffer>& srcBuffer, const SRef<Buffer>& dstBuffer) = 0;
-		virtual void CopyBufferToImage(const SRef<Buffer>& buffer, const SRef<Image>& image, ImageLayout targetLayout, const BufferImageCopyInfo* regions, uint regionCount) = 0;
-		virtual void CopyImage(const SRef<Image>& srcImage, ImageLayout srcLayout, const SRef<Image>& dstImage, ImageLayout dstLayout, const ImageCopyInfo* regions, uint regionCount) = 0;
-		virtual void CopyImageToBuffer(const SRef<Image>& image, const SRef<Buffer>& buffer, ImageLayout currentLayout, const BufferImageCopyInfo* regions, uint regionCount) = 0;
+		virtual void CopyBuffer(const ORef<Buffer>& srcBuffer, const ORef<Buffer>& dstBuffer, const BufferCopyInfo* copyInfos, uint copyInfoCount) = 0;
+		virtual void CopyBuffer(const ORef<Buffer>& srcBuffer, const ORef<Buffer>& dstBuffer) = 0;
+		virtual void CopyBufferToImage(const ORef<Buffer>& buffer, const ORef<Image>& image, ImageLayout targetLayout, const BufferImageCopyInfo* regions, uint regionCount) = 0;
+		virtual void CopyImage(const ORef<Image>& srcImage, ImageLayout srcLayout, const ORef<Image>& dstImage, ImageLayout dstLayout, const ImageCopyInfo* regions, uint regionCount) = 0;
+		virtual void CopyImageToBuffer(const ORef<Image>& image, const ORef<Buffer>& buffer, ImageLayout currentLayout, const BufferImageCopyInfo* regions, uint regionCount) = 0;
 		virtual void SetViewport(const Viewport* viewports, uint viewportCount) = 0;
 		virtual void SetScissor(const GraphicsRect* scissors, uint scissorCount) = 0;
 		virtual void BindPipeline(const Ref<Pipeline>& pipeline) = 0;
@@ -100,8 +100,8 @@ namespace tyr
 		virtual void BindVertexBuffers(const Buffer* const* vertexBuffers, uint bufferCount) = 0;
 		// Caller must ensure lifetime of buffer views passed exceeds the function call
 		virtual void BindVertexBuffers(const BufferView* const* vertexBufferViews, uint bufferViewCount) = 0;
-		virtual void BindIndexBuffer(const SRef<Buffer>& indexBuffer, size_t offset = 0) = 0;
-		virtual void BindIndexBuffer(const SRef<BufferView>& indexBufferView) = 0;
+		virtual void BindIndexBuffer(const ORef<Buffer>& indexBuffer, size_t offset = 0) = 0;
+		virtual void BindIndexBuffer(const ORef<BufferView>& indexBufferView) = 0;
 		virtual void BindDescriptorSetGroup(const Ref<DescriptorSetGroup>& group, const Ref<Pipeline>& pipeline) = 0;
 		virtual void DrawIndexed(uint indexCount, uint instanceCount, uint firstIndex, int vertexOffset, uint firstInstance) = 0;
 		virtual void Draw(uint vertexCount, uint instanceCount, uint firstVertex, uint firstInstance) = 0;

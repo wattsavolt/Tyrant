@@ -1,7 +1,7 @@
 #include "AssetRegistry.h"
 #include "Memory/Memory.h"
-#include "Reflection/Reflection.h"
-#include <cstring>
+#include "EngineConfig.h"
+#include "AssetUtil.h"
 
 namespace tyr
 {
@@ -17,7 +17,7 @@ namespace tyr
     AssetRegistry::AssetRegistry()
         : m_RegistryFile()
     {
-
+        
     }
 
     AssetRegistry& AssetRegistry::Instance()
@@ -26,10 +26,29 @@ namespace tyr
         return registry;
     }
 
+    void AssetRegistry::Load()
+    {
+        char absAssetRegistryPath[TYR_MAX_PATH_STR_SIZE];
+        AssetUtil::CreateFullPath(absAssetRegistryPath, c_AssetRegistryPath);
+        const fs::path fsPath = absAssetRegistryPath;
+        if (std::filesystem::exists(fsPath))
+        {
+            Serializer::Instance().DeserializeFromFile<AssetRegistryFile>(absAssetRegistryPath, m_RegistryFile);
+        }
+    }
+
+    void AssetRegistry::Save()
+    {
+        char absAssetRegistryPath[TYR_MAX_PATH_STR_SIZE];
+        AssetUtil::CreateFullPath(absAssetRegistryPath, c_AssetRegistryPath);
+        PathUtil::CreateDirectoriesInFilePath(absAssetRegistryPath);
+        Serializer::Instance().SerializeToFile<AssetRegistryFile>(absAssetRegistryPath, m_RegistryFile);
+    }
+
     void AssetRegistry::AddAsset(AssetID assetID, const char* assetPath, AssetID* refAssetID)
     {
         LockGuard guard(m_Mutex);
-        TYR_ASSERT(m_RegistryFile.assets.find(assetID) == m_RegistryFile.assets.end());
+        TYR_ASSERT(!m_RegistryFile.assets.Contains(assetID));
         AssetData& data = m_RegistryFile.assets[assetID];
         data.filePath = assetPath;
         data.references.Clear();
@@ -44,7 +63,7 @@ namespace tyr
     void AssetRegistry::AddAssetReference(AssetID assetID, AssetID referenceID)
     {
         LockGuard guard(m_Mutex);
-        TYR_ASSERT(m_RegistryFile.assets.find(assetID) != m_RegistryFile.assets.end());
+        TYR_ASSERT(m_RegistryFile.assets.Contains(assetID));
         AssetData& data = m_RegistryFile.assets[assetID];
         data.references.Add(referenceID);
     }
@@ -52,7 +71,7 @@ namespace tyr
     void AssetRegistry::UpdateAssetPath(AssetID assetID, const char* assetPath)
     {
         LockGuard guard(m_Mutex);
-        TYR_ASSERT(m_RegistryFile.assets.find(assetID) != m_RegistryFile.assets.end());
+        TYR_ASSERT(m_RegistryFile.assets.Contains(assetID));
         AssetData& data = m_RegistryFile.assets[assetID];
         data.filePath = assetPath;
     }
@@ -60,8 +79,8 @@ namespace tyr
     void AssetRegistry::RemoveAsset(AssetID assetID)
     {
         LockGuard guard(m_Mutex);
-        TYR_ASSERT(m_RegistryFile.assets.find(assetID) != m_RegistryFile.assets.end());
-        m_RegistryFile.assets.erase(assetID);
+        TYR_ASSERT(m_RegistryFile.assets.Contains(assetID));
+        m_RegistryFile.assets.Erase(assetID);
     }
 
     bool AssetRegistry::RemoveAssetIfExists(const char* assetPath)
@@ -71,7 +90,7 @@ namespace tyr
         {
             if (keyVal.second.filePath == assetPath)
             {
-                m_RegistryFile.assets.erase(keyVal.first);
+                m_RegistryFile.assets.Erase(keyVal.first);
                 return true;
             }
         }
@@ -107,7 +126,7 @@ namespace tyr
 
     const AssetData& AssetRegistry::GetAssetData(AssetID assetID) const
     {
-        TYR_ASSERT(m_RegistryFile.assets.find(assetID) != m_RegistryFile.assets.end());
-        return m_RegistryFile.assets.at(assetID);
+        TYR_ASSERT(m_RegistryFile.assets.Contains(assetID));
+        return *m_RegistryFile.assets.Find(assetID);
     }
 }

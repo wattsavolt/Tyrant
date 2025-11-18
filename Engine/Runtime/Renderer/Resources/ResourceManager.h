@@ -2,17 +2,13 @@
 
 #include "Core.h"
 #include "RendererMacros.h"
-#include "Resources/TransferBuffer.h"
+#include "Resources/RenderBuffer.h"
 
 namespace tyr
 {
-	class Buffer;
-	class Buffer;
-	class Image;
-
 	struct ResourceManagerConfig
 	{
-		uint transferBufferReserveCount = 1000u;
+		uint maxTransferBuffers = 100u;
 	};
 
 	class ResourceManager final : INonCopyable
@@ -22,13 +18,13 @@ namespace tyr
 	
 	
 	private:
-		friend class SceneRenderer;
+		friend class Renderer;
 
 		ResourceManager(const ResourceManagerConfig& config);
 		~ResourceManager();
 
 		ResourceManagerConfig m_Config;
-		Array<Ref<TransferBuffer>> m_TransferBuffers;
+		Array<RenderBuffer*> m_TransferBuffers;
 		
 		
 		static ResourceManager* s_Instance;

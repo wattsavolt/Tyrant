@@ -17,7 +17,7 @@ namespace tyr
 
 		Type GetStreamType() const override;
 
-		void Skip(size_t count) override;
+		virtual void Skip(size_t count) override;
 
 		void Seek(size_t pos) override;
 

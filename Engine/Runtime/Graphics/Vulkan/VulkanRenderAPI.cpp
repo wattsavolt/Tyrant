@@ -31,7 +31,7 @@ namespace tyr
 		CreateSurface();
 		SelectPhysicalDevice();
 		
-		m_Device = new VulkanDevice(m_Instance, m_PhysicalDevice, m_PhysicalDeviceIndex);
+		m_Device = new DeviceInternal(m_Instance, m_PhysicalDevice, m_PhysicalDeviceIndex);
 
 		// This may be created by the API user later.
 		SwapChainDesc swapChainDesc;
@@ -42,7 +42,7 @@ namespace tyr
 		swapChainDesc.vSyncEnabled = m_Config.vSyncEnabled;
 		swapChainDesc.useTripleBuffering = m_Config.useTripleBuffering;
 
-		m_SwapChain = new VulkanSwapChain(*static_cast<VulkanDevice*>(m_Device), m_Surface, swapChainDesc);
+		m_SwapChain = new VulkanSwapChain(*static_cast<DeviceInternal*>(m_Device), m_Surface, swapChainDesc);
 	}
 
 	void VulkanRenderAPI::ShutdownAPI()
@@ -64,7 +64,7 @@ namespace tyr
 	{
 		TYR_ASSERT(VulkanHelper::ValidationLayersSupported(c_ValidationLayers));
 
-#if TYR_DEBUG 
+#if !TYR_FINAL 
 		VulkanHelper::DisplayAvailableExtensions();
 #endif
 
@@ -99,7 +99,7 @@ namespace tyr
 		
 		TYR_GASSERT(vkCreateInstance(&createInfo, g_VulkanAllocationCallbacks, &m_Instance));
 
-#if TYR_DEBUG 
+#if !TYR_FINAL 
 		VulkanHelper::LoadInstanceExtensionFunctions(m_Instance);
 #endif
 	}
@@ -249,10 +249,10 @@ namespace tyr
 		Array<VkExtensionProperties> availableExtensions(extensionCount);
 		vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.Data());
 
-		size_t count = VulkanDevice::c_RequiredDeviceExtensions.Size();
+		size_t count = DeviceInternal::c_RequiredDeviceExtensions.Size();
 		for (const auto& extension : availableExtensions) 
 		{
-			for (const auto& de : VulkanDevice::c_RequiredDeviceExtensions)
+			for (const auto& de : DeviceInternal::c_RequiredDeviceExtensions)
 			{
 				if (strcmp(extension.extensionName, de) == 0)
 				{

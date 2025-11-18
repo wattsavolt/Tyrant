@@ -4,7 +4,7 @@
 
 namespace tyr
 {
-#if TYR_DEBUG == 1
+#if !TYR_FINAL == 1
 	const bool RenderAPI::m_ValidationLayersEnabled = true;
 #else
 	const bool RenderAPI::m_ValidationLayersEnabled = false;

@@ -9,33 +9,21 @@
 
 namespace tyr
 {
-	
 	// A render pass
 	class Pass : INonCopyable
 	{
 	public:
-		// The scene id passed can be invalid if this pass instance is needed by more than one scene
-		Pass(SceneID sceneId = Scene::c_InvalidID);
+		// The scene passed can be a nullptr for a pass that is not scene-specific ie. shared by a tw or more scenes
+		Pass(Scene* scene = nullptr);
 		virtual ~Pass();
 
-		SceneID GetSceneId() const { return m_SceneId; }
+		Scene* GetScene() const { return m_Scene; }
 
 		// Called by the render graph builder every time the render graph is built.
 		virtual void CreateRenderGraphDependencies(RGArray<RenderGraphDependencyInput>& inputs, RGArray<RenderGraphDependencyOutput>& outputs) {};
 
 	protected:
-		// Used by the rendergraph to organize nodes based on the scene.
-		SceneID m_SceneId;
-	};
-
-	// A pass that uses a graphics or compute shader
-	class ShaderPass : public Pass
-	{
-	public:
-		ShaderPass(Scene* scene);
-		virtual ~ShaderPass();
-
-	protected:
+		// Used by the rendergraph to organize nodes based on the scene id.
 		Scene* m_Scene;
 	};
 }

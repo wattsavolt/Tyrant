@@ -9,7 +9,7 @@ namespace tyr
 	public:
 		static AssetID CreateAssetID();
 		// Note: absFilePath must be an empty preallocated char array that does not contain the null character.
-		static void CreateFullPath(char absFilePath[], const char* relativePath, size_t absFilePathSize = TYR_MAX_PATH_STR_SIZE);
+		static void CreateFullPath(char absFilePath[], const char* relativePath, size_t absFilePathSize = TYR_MAX_PATH_TOTAL_SIZE);
 	};
 	
 }

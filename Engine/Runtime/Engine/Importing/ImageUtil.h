@@ -43,7 +43,7 @@ namespace tyr
             TYR_ASSERT(channelCount > 0 && channelCount <= c_MaxChannels);
             TYR_ASSERT(channelIdx < channelCount);
 
-            static constexpr T maxPixelValue = Texture::GetMaxPixelValue<T>();
+            static constexpr T maxPixelValue = TextureUtil::GetMaxPixelValue<T>();
             for (uint16 i = 0; i < texelCount; ++i)
             {
                 const uint offset = channelCount * i;
@@ -61,12 +61,12 @@ namespace tyr
             TYR_ASSERT(channelCount > 0 && channelCount <= c_MaxChannels);
             TYR_ASSERT(channelIdx < channelCount);
 
-            static constexpr T maxPixelValue = Texture::GetMaxPixelValue<T>();
+            static constexpr T maxPixelValue = TextureUtil::GetMaxPixelValue<T>();
             for (uint16 i = 0; i < texelCount; ++i)
             {
                 const uint index = channelCount * i + channelIdx;
-                const T linearVal = Texture::ConvertFromSRGBtoLinear<uint8>(image[index]);
-                image[index] = Texture::ConvertFromLinearToSRGB<uint8>(maxPixelValue - linearVal);
+                const T linearVal = TextureUtil::ConvertFromSRGBtoLinear<uint8>(image[index]);
+                image[index] = TextureUtil::ConvertFromLinearToSRGB<uint8>(maxPixelValue - linearVal);
             }
         }
 

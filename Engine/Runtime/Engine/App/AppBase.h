@@ -6,19 +6,23 @@
 namespace tyr
 {
 	class Engine;
-	class TYR_ENGINE_EXPORT AppBase : INonCopyable
+	class TYR_ENGINE_EXPORT AppBase 
 	{
 	public:
-		AppBase();
 		virtual ~AppBase() = default;
 
-	protected:
-		friend class Engine;
-		// All called from the engine only
-		virtual void Start();
-		virtual void Update(double deltaTime) = 0;
-		virtual void Stop();
+		virtual void Initialize() = 0;
 
+		// Called before engine shutdown
+		virtual void Shutdown() = 0;
+
+		// Called every frame by the engine
+		virtual void Update(float deltaTime) = 0;
+
+	protected:
+		AppBase();
+
+		friend class Engine;
 		Engine* m_Engine;
 	};
 	

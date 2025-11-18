@@ -8,13 +8,16 @@ namespace tyr
 		return registry;
 	}
 
-	TypeInfo& TypeRegistry::AddType(const char* name)
+	TypeInfo& TypeRegistry::AddType(const Id64& id)
 	{
-		const Id64 id(name);
 		TYR_ASSERT(!m_TypeMap.Contains(id));
 		TypeInfo& typeInfo = m_TypeMap[id];
-		typeInfo.name = name;
 		return typeInfo;
+	}
+
+	TypeInfo& TypeRegistry::AddType(const char* name)
+	{
+		return AddType(Id64(name));
 	}
 
 	const TypeInfo& TypeRegistry::GetType(const Id64& id) const

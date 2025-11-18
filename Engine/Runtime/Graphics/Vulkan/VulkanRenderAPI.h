@@ -13,17 +13,12 @@ namespace tyr
 		uint index;
 	};
 
-	class VulkanDevice;
+	class DeviceInternal;
 	class VulkanRenderAPI final : public RenderAPI
 	{
 	public:
 		VulkanRenderAPI();
 		~VulkanRenderAPI();
-
-		inline Matrix4 CreateShaderMatrix(const Matrix4& mat) const override
-		{
-			return mat;
-		}
 
 	protected:
 		void InitializeAPI() override;

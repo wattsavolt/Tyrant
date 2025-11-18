@@ -468,7 +468,7 @@ namespace tyr
 	{
 		switch (descriptorType)
 		{
-		case DescriptorType::Sampler:
+		case DescriptorType::SamplerHandle:
 			return VK_DESCRIPTOR_TYPE_SAMPLER;
 		case DescriptorType::CombinedImageSampler:
 			return VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;

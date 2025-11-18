@@ -1,7 +1,6 @@
 #include "Texture.h"
 #include "RenderAPI/Buffer.h"
 #include "RenderAPI/Device.h"
-#include "TransferBuffer.h"
 #include "Core.h"
 
 namespace tyr
@@ -21,23 +20,14 @@ namespace tyr
 		TYR_REFL_FIELD(&TextureInfo::mipLevelCount, "MipCount", true, true, true);
 	TYR_REFL_CLASS_END();
 
-	Texture::Texture(Device& device, const TextureDesc& desc)
-		: RenderResource(device)
+	void TextureUtil::CreateTexture(Texture& texture, Device& device, const TextureDesc& desc)
 	{
-		Recreate(desc);
-	}
-
-	void Texture::Recreate(const TextureDesc& desc)
-	{
-		m_IsCubemap = desc.info.type == ImageType::Cubemap || desc.info.type == ImageType::CubemapArray;
-		TYR_ASSERT(!m_IsCubemap || desc.arrayLayerCount % 6 == 0);
-
-		m_IsDepthTexture = desc.info.format == PF_D16_UNORM || desc.info.format == PF_D24_UNORM_S8_UINT
-			|| desc.info.format == PF_D32_SFLOAT || desc.info.format == PF_D32_FLOAT_S8_UINT;
+		const bool isCubemap = desc.info.type == ImageType::Cubemap || desc.info.type == ImageType::CubemapArray;
+		TYR_ASSERT(!isCubemap || desc.arrayLayerCount % 6 == 0);
 
 		ImageDesc imageDesc;
-#if TYR_DEBUG
-		imageDesc.debugName = String(desc.debugName) + "_Image";;
+#if !TYR_FINAL
+		imageDesc.debugName = desc.debugName;
 #endif
 		imageDesc.type = desc.info.type;
 		imageDesc.format = desc.info.format;
@@ -50,51 +40,38 @@ namespace tyr
 		imageDesc.usage = desc.usage;
 		imageDesc.layout = desc.layout;
 		imageDesc.memoryProperty = MemoryProperty::MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-		m_Image = m_Device.CreateImage(imageDesc);
+		texture.image = device.CreateImage(imageDesc);
 
-		m_ImageSize = m_Image->GetSizeAllocated();
+		texture.imageLayout = desc.layout;
 
-		m_ImageLayout = desc.layout;
+		const bool isDepthTexture = desc.info.format == PF_D16_UNORM || desc.info.format == PF_D24_UNORM_S8_UINT
+			|| desc.info.format == PF_D32_SFLOAT || desc.info.format == PF_D32_FLOAT_S8_UINT;
 
 		ImageViewDesc viewDesc;
-#if TYR_DEBUG
-		viewDesc.debugName = String(desc.debugName) + "_ImageView";
+#if !TYR_FINAL
+		viewDesc.debugName.Set(desc.debugName.CStr(), "_View");
 #endif
-		viewDesc.image = m_Image;
+		viewDesc.image = texture.image;
 		viewDesc.isSwapChainView = false;
 		viewDesc.viewType = desc.info.type;
-		viewDesc.subresourceRange.aspect = m_IsDepthTexture ? SUBRESOURCE_ASPECT_DEPTH_BIT : SUBRESOURCE_ASPECT_COLOUR_BIT;
+		viewDesc.subresourceRange.aspect = isDepthTexture ? SUBRESOURCE_ASPECT_DEPTH_BIT : SUBRESOURCE_ASPECT_COLOUR_BIT;
 		viewDesc.subresourceRange.baseMipLevel = 0;
 		viewDesc.subresourceRange.mipLevelCount = desc.info.mipLevelCount;
 		viewDesc.subresourceRange.baseArrayLayer = 0;
 		viewDesc.subresourceRange.arrayLayerCount = desc.arrayLayerCount;
 
-		m_ImageView = m_Device.CreateImageView(viewDesc);
+		texture.imageView = device.CreateImageView(viewDesc);
 
-		m_AccessState = BARRIER_ACCESS_NONE;
+		texture.sampler = desc.sampler;
+	}
+	
+	void TextureUtil::DeleteTexture(Texture& texture, Device& device)
+	{
+		device.DeleteImageView(texture.imageView);
+		device.DeleteImage(texture.image);
 	}
 
-	Ref<Texture> Texture::Create(Device& device, const TextureDesc& desc)
-	{
-		return MakeRef<Texture>(device, desc);
-	}
-
-	/*void Texture::CreateTransferBuffer(const TextureDesc& desc)
-	{
-		TransferBufferDesc bufferDesc;
-#if TYR_DEBUG 
-		bufferDesc.debugName = String(desc.imageDesc.debugName) + "_TransferBuffer";
-#endif
-		bufferDesc.size = desc.imageDesc.size;
-		bufferDesc.data = desc.imageDesc.data;
-		bufferDesc.imageWidth = desc.imageDesc.width;
-		bufferDesc.imageHeight = desc.imageDesc.height;
-		bufferDesc.pixelSize = GetTexelFormatSize(desc.imageDesc.format);
-
-		m_TransferBuffer = TransferBuffer::Create(m_Device, bufferDesc);
-	}*/
-
-	uint Texture::GetTexelFormatSize(PixelFormat format)
+	uint TextureUtil::GetTexelFormatSize(PixelFormat format)
 	{
 		switch (format)
 		{
@@ -156,7 +133,7 @@ namespace tyr
 		return 0;
 	}
 
-	float Texture::SRGBToLinear(float srgb)
+	float TextureUtil::SRGBToLinear(float srgb)
 	{
 		if (srgb <= 0.04045f)
 		{
@@ -165,7 +142,7 @@ namespace tyr
 		return powf((srgb + 0.055f) / 1.055f, 2.4f);
 	}
 
-	float Texture::LinearToSRGB(float linear)
+	float TextureUtil::LinearToSRGB(float linear)
 	{
 		if (linear <= 0.0031308f)
 		{

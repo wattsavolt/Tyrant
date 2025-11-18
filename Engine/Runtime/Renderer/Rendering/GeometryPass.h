@@ -1,19 +1,17 @@
 #pragma once
 
 #include "Pass.h"
+#include "RenderAPI/Pipeline.h"
 
 namespace tyr
 {
-	
 	struct GeometryPassParams
 	{
 		Scene* scene;
 	};
 
-	class GraphicsPipeline;
-
 	// A render pass
-	class GeometryPass final : public ShaderPass
+	class GeometryPass final : public Pass
 	{
 	public:
 		// The scene passed can be nullptr if this pass instance is needed by more than one scene
@@ -23,9 +21,8 @@ namespace tyr
 		void CreateRenderGraphDependencies(RGArray<RenderGraphDependencyInput>& inputs, RGArray<RenderGraphDependencyOutput>& outputs);
 
 	private:
-		Ref<GraphicsPipeline> m_Pipeline;
+		GraphicsPipelineHandle m_Pipeline;
 		Scene* m_Scene;
-		
 	};
 	
 }

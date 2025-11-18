@@ -1,7 +1,8 @@
 /// Copyright (c) 2023 Aidan Clear 
 
 #include "Editor.h"
-#include "Engine.h"
+#include "World/WorldModule.h"
+#include "World/WorldManager.h"
 #include "World/World.h"
 #include "Window/Window.h"
 #include "Math/Vector2.h"
@@ -19,30 +20,30 @@ namespace tyr
 		
 	}
 
-	void Editor::Start()
+	void Editor::Initialize()
 	{
-		AppBase::Start();
+		WorldModule* worldModule;
+		TYR_GET_MODULE(WorldModule, worldModule);
+		m_WorldManager = worldModule->GetWorldManager();
 
-		const WindowProperties& windowProperties = m_Engine->GetWindowProperties();
 		// Default viewport
 		WorldParams worldParams{};
 
-		const uint camWidth = m_Engine->GetSurfaceWidth();
-		const uint camHeight = m_Engine->GetSurfaceHeight();
-		m_Camera = MakeURef<Camera>(Vector3(0, 0 ,0), Vector3::c_Up, Vector3::c_Forward, 90,
-			camWidth, camHeight, 1.0f, 2000);
+		m_Camera = MakeURef<Camera>(Vector3(0, 0 ,0), Vector3::c_Up, Vector3::c_Forward, 90, 1.0f, 2000);
 
 		worldParams.camera = m_Camera.get();
-		m_Engine->AddWorld(worldParams);
+		m_LevelEditorWorld = m_WorldManager->AddWorld(worldParams);
 	}
 
-	void Editor::Update(double deltaTime)
+	void Editor::Update(float deltaTime)
 	{
 		
 	}
 
-	void Editor::Stop()
+	void Editor::Shutdown()
 	{
-		AppBase::Stop();
+		m_WorldManager->RemoveWorld(m_LevelEditorWorld);
+		m_LevelEditorWorld = nullptr;
+		m_WorldManager = nullptr;
 	}
 }

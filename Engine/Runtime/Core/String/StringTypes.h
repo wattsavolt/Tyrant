@@ -2,6 +2,9 @@
 
 #include <string>
 #include <sstream>
+#include "LocalString.h"
+#include "Path.h"
+#include "Name.h"
 
 namespace tyr
 {

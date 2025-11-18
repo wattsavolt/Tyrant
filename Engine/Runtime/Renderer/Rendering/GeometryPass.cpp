@@ -3,7 +3,7 @@
 namespace tyr
 {
 	GeometryPass::GeometryPass(GeometryPassParams params)
-		: ShaderPass(params.scene)
+		: Pass(params.scene)
 	{
 	
 	}
@@ -15,7 +15,7 @@ namespace tyr
 
 	void GeometryPass::CreateRenderGraphDependencies(RGArray<RenderGraphDependencyInput>& inputs, RGArray<RenderGraphDependencyOutput>& outputs)
 	{
-		const SceneData& sceneData = m_Scene->GetSceneData();
+		
 
 	}
 }

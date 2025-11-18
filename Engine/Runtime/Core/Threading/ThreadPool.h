@@ -3,34 +3,24 @@
 #include "Base/Base.h"
 #include "Containers/Containers.h"
 #include "Threading.h"
-#include "Utility/INonCopyable.h"
+#include "Base/INonCopyable.h"
 
 namespace tyr
 {
-    class ThreadTask 
-    {
-    public:
-        ThreadTask() = default;;
-        virtual ~ThreadTask() = default;
-
-    protected:
-        friend class PooledThread;
-        virtual void Run() = 0;
-    };
-
     // Configuration struct for thread pool
     struct ThreadPoolConfig
     {
         uint threadCount = static_cast<uint>(Thread::hardware_concurrency());
     };
 
+    struct Task;
     class PooledThread final : public INonCopyable
     {
     public:
         PooledThread();
         ~PooledThread();
 
-        void Start(ThreadTask* task);
+        void Start(Task* task);
         void Wait();
         bool IsAvailable();
 
@@ -41,7 +31,7 @@ namespace tyr
         Mutex m_Mutex;
         ConditionVariable m_CV;
 
-        ThreadTask* m_Task;
+        Task* m_Task;
         std::atomic<bool> m_Stop = false;
         bool m_IsRunningTask = false;
     };

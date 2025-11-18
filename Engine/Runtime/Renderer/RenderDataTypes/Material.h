@@ -16,24 +16,34 @@ namespace tyr
 		Custom
 	};
 
-	// PBR material used by the renderer 
-	// Bump Map - RGB for normal and A for height
-	// Ambient Occlusion / Roughness / Metallic - R = ambient occlusion, G = roughness, C = metallic
-	struct Material
+	struct MaterialConstants
 	{
 		static constexpr uint8 c_MaxTextures = 6;
 		static constexpr uint8 c_PbrAlbedoIndex = 0;
 		static constexpr uint8 c_PbrNormalHeightIndex = 1;
 		static constexpr uint8 c_PbrAoRoughnessMetallicIndex = 2;
+	};
 
-		AssetID id;
+	struct MaterialDesc
+	{
+		uint index;
+		MaterialType type;
+		LocalArray<Texture*, MaterialConstants::c_MaxTextures> textures;
+	};
+
+	// PBR material used by the renderer 
+	// Bump Map - RGB for normal and A for height
+	// Ambient Occlusion / Roughness / Metallic - R = ambient occlusion, G = roughness, C = metallic
+	struct Material
+	{
+		// Index in materual buffer in the shader
+		uint index;
 		// PBR:
 		// Texture 0 - albedo  
 		// Texture 1 - RGB for normal and A for height 
 		// Texture 2 = R = ambient occlusion, G = roughness, B = metallic 
 		MaterialType type;
-		uint8 textureCount;
-		Texture* textures[c_MaxTextures];
+		LocalArray<Texture*, MaterialConstants::c_MaxTextures> textures;
 		// TODO : Allow custom non built-in shaders later
 	};
 }

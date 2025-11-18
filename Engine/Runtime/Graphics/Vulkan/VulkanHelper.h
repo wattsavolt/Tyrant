@@ -1,9 +1,7 @@
-
-
 #pragma once
 
 #include "VulkanCommon.h"
-
+#include "Containers/Array.h"
 
 namespace tyr
 {

@@ -37,8 +37,6 @@ namespace tyr
 		void Initialize(const RenderAPIConfig& config);
 		void Shutdown();
 
-		virtual inline Matrix4 CreateShaderMatrix(const Matrix4& mat) const = 0;
-
 		Device* GetDevice() { return m_Device; }
 
 		SwapChain* GetSwapChain() { return m_SwapChain; }

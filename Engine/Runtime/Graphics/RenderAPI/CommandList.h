@@ -5,69 +5,52 @@
 #include "RenderAPITypes.h"
 #include "Image.h"
 #include "Geometry/GeometryTypes.h"
+#include "Device.h"
 
 namespace tyr
 {
-	class CommandAllocator;
-	class CommandList;
-	class Fence;
-	class Semaphore;
-	class Event;
-	class Buffer;
-	class Buffer;
-	class BufferView;
-	class Pipeline;
-	class DescriptorSetGroup;
-	class ImageView;
-	struct BufferCopyInfo;
-	struct BufferImageCopyInfo;
-	struct ImageCopyInfo;
-	struct PipelineBarrier;
-	struct BufferBarrier;
-	struct ImageBarrier;
-	struct Viewport;
-	struct GraphicsRect;
-
 	struct RenderingAttachmentInfo
 	{
-		ORef<ImageView> imageView;
-		ImageLayout imageLayout;
-		ORef<ImageView> resolveImageView;
-		ImageLayout resolveImageLayout = ImageLayout::IMAGE_LAYOUT_UNKNOWN;
+		ClearValue clearValue;
+		ImageViewHandle imageView;
+		ImageViewHandle resolveImageView;
 		ResolveMode resolveMode;
+		ImageLayout imageLayout;
+		ImageLayout resolveImageLayout = ImageLayout::IMAGE_LAYOUT_UNKNOWN;
 		AttachmentLoadOp loadOp;
 		AttachmentStoreOp storeOp;
-		ClearValue clearValue;
 	};
 
 	struct RenderingInfo
 	{
+		static constexpr uint8 c_MaxColourAttachments = 4;
+
 		RenderingInfoFlags flags = RENDERING_INFO_NONE;
 		GraphicsRect renderArea;
 		uint layerCount;
 		uint viewMask;
-		Array<RenderingAttachmentInfo>	colourAttachments;
-		// Optional
-		URef<RenderingAttachmentInfo> depthAttachment;
-		// Optional
-		URef<RenderingAttachmentInfo> stencilAttachment;
+		LocalArray<RenderingAttachmentInfo, c_MaxColourAttachments>	colourAttachments;
+		RenderingAttachmentInfo depthAttachment;
+		RenderingAttachmentInfo stencilAttachment;
+		bool hasDepthAttachment = false;
+		bool hasStencilAttachment = false;
 	};
 
 	struct CommandListDesc
 	{
-		String debugName; 
+		LocalString<30> debugName; 
 		CommandListType type = CommandListType::Primary;
-		Ref<CommandAllocator> allocator;
+		CommandAllocator* allocator;
 	};
 
 	struct CommndListExecuteDesc
 	{
-		Array<Ref<CommandList>> commandLists;
-		Array<Ref<Semaphore>> waitSemaphores;
-		Array<Ref<Semaphore>> signalSemaphores;
-		Array<PipelineStage> waitDstPipelineStages;
-		Array<uint64> waitValues;
-		Array<uint64> signalValues;
+		LocalArray<CommandList*, 6> commandLists;
+		LocalArray<SemaphoreHandle, 10> waitSemaphores;
+		LocalArray<SemaphoreHandle, 10> signalSemaphores;
+		LocalArray<PipelineStage, 10> waitDstPipelineStages;
+		LocalArray<uint64, 10> waitValues;
+		LocalArray<uint64, 10> signalValues;
 	};
 
 	/// Class repesenting a command buffer 
@@ -76,38 +59,42 @@ namespace tyr
 	public:
 		CommandList(const CommandListDesc& desc);
 		virtual ~CommandList() = default;
-		virtual void Begin(CommandBufferUsage usage) = 0;
-		virtual void End() = 0;
-		virtual void Reset(bool releaseResources) = 0;
-		virtual void ClearColourImage(ORef<Image>& image, ImageLayout layout, const ClearColourValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount) = 0;
-		virtual void ClearDepthStencilImage(ORef<Image>& image, ImageLayout layout, const ClearDepthStencilValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount) = 0;
-		virtual void BeginRendering(const RenderingInfo& renderingInfo) = 0;
-		virtual void EndRendering() = 0;
+		void Begin(CommandBufferUsage usage);
+		void End();
+		void Reset(bool releaseResources);
+		void ClearColourImage(ImageHandle image, ImageLayout layout, const ClearColourValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount);
+		void ClearDepthStencilImage(ImageHandle image, ImageLayout layout, const ClearDepthStencilValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount);
+		void BeginRendering(const RenderingInfo& renderingInfo);
+		void EndRendering();
 		// TODO: If phones are supported, add wrapper functions for vkCmdBeginRenderPass and vkCmdEndRenderPass for render passes
-		virtual void AddBarriers(const BufferBarrier* bufferBarriers, uint bufferBarrierCount,
-			const ImageBarrier* imageBarriers = nullptr, uint imageBarrierCount = 0u,
-			const PipelineBarrier* pipelineBarriers = nullptr, uint pipelineBarrierCount = 0u,
-			Dependency dependency = DEPENDENCY_UNKNOWN) = 0;
-		virtual void CopyBuffer(const ORef<Buffer>& srcBuffer, const ORef<Buffer>& dstBuffer, const BufferCopyInfo* copyInfos, uint copyInfoCount) = 0;
-		virtual void CopyBuffer(const ORef<Buffer>& srcBuffer, const ORef<Buffer>& dstBuffer) = 0;
-		virtual void CopyBufferToImage(const ORef<Buffer>& buffer, const ORef<Image>& image, ImageLayout targetLayout, const BufferImageCopyInfo* regions, uint regionCount) = 0;
-		virtual void CopyImage(const ORef<Image>& srcImage, ImageLayout srcLayout, const ORef<Image>& dstImage, ImageLayout dstLayout, const ImageCopyInfo* regions, uint regionCount) = 0;
-		virtual void CopyImageToBuffer(const ORef<Image>& image, const ORef<Buffer>& buffer, ImageLayout currentLayout, const BufferImageCopyInfo* regions, uint regionCount) = 0;
-		virtual void SetViewport(const Viewport* viewports, uint viewportCount) = 0;
-		virtual void SetScissor(const GraphicsRect* scissors, uint scissorCount) = 0;
-		virtual void BindPipeline(const Ref<Pipeline>& pipeline) = 0;
+		void AddBarriers(const BufferBarrier* bufferBarriers, uint bufferBarrierCount,
+			const ImageBarrier* imageBarriers = nullptr, uint imageBarrierCounts = 0,
+			const PipelineBarrier* pipelineBarriers = nullptr, uint pipelineBarrierCounts = 0,
+			Dependency dependency = DEPENDENCY_UNKNOWN);
+		void CopyBuffer(BufferHandle srcBuffer, BufferHandle dstBuffer, const BufferCopyInfo* copyInfos, uint copyInfoCount);
+		void CopyBuffer(BufferHandle srcBuffer, BufferHandle dstBuffer);
+		void CopyBufferToImage(BufferHandle buffer, ImageHandle image, ImageLayout targetLayout, const BufferImageCopyInfo* regions, uint regionCount);
+		void CopyImage(ImageHandle srcImage, ImageLayout srcLayout, ImageHandle dstImage, ImageLayout dstLayout, const ImageCopyInfo* regions, uint regionCount);
+		void CopyImageToBuffer(ImageHandle image, BufferHandle buffer, ImageLayout currentLayout, const BufferImageCopyInfo* regions, uint regionCount);
+		void SetViewport(const Viewport* viewports, uint viewportCount);
+		void SetScissor(const GraphicsRect* scissors, uint scissorCount);
+		void BindGraphicsPipeline(GraphicsPipelineHandle pipeline);
+		void BindComputePipeline(ComputePipelineHandle pipeline);
+		void BindRayTracingPipeline(RayTracingPipelineHandle pipeline);
 		// Caller must ensure lifetime of buffers passed exceeds the function call
-		virtual void BindVertexBuffers(const Buffer* const* vertexBuffers, uint bufferCount) = 0;
+		void BindVertexBuffers(const BufferHandle* vertexBuffers, uint bufferCount);
 		// Caller must ensure lifetime of buffer views passed exceeds the function call
-		virtual void BindVertexBuffers(const BufferView* const* vertexBufferViews, uint bufferViewCount) = 0;
-		virtual void BindIndexBuffer(const ORef<Buffer>& indexBuffer, size_t offset = 0) = 0;
-		virtual void BindIndexBuffer(const ORef<BufferView>& indexBufferView) = 0;
-		virtual void BindDescriptorSetGroup(const Ref<DescriptorSetGroup>& group, const Ref<Pipeline>& pipeline) = 0;
-		virtual void DrawIndexed(uint indexCount, uint instanceCount, uint firstIndex, int vertexOffset, uint firstInstance) = 0;
-		virtual void Draw(uint vertexCount, uint instanceCount, uint firstVertex, uint firstInstance) = 0;
-		virtual void DrawMeshTasks(uint groupCountX, uint groupCountY, uint groupCountZ) = 0;
-		virtual void Dispatch(uint groupCountX, uint groupCountY, uint groupCountZ) = 0;
-		virtual void Execute(const CommndListExecuteDesc* executeDescs, uint executeDescCount, uint queueIndex = 0u, const Ref<Fence>& fence = nullptr) = 0;
+		void BindVertexBuffers(const BufferViewHandle* vertexBufferViews, uint bufferViewCount);
+		void BindIndexBuffer(BufferHandle indexBuffer, size_t offset);
+		void BindIndexBuffer(BufferViewHandle indexBufferView);
+		void BindDescriptorSet(DescriptorSetGroupHandle group, GraphicsPipelineHandle pipeline);
+		void BindDescriptorSet(DescriptorSetGroupHandle group, ComputePipelineHandle pipeline);
+		void BindDescriptorSet(DescriptorSetGroupHandle group, RayTracingPipelineHandle pipeline);
+		void DrawIndexed(uint indexCount, uint instanceCount, uint firstIndex, int vertexOffset, uint firstInstance);
+		void Draw(uint vertexCount, uint instanceCount, uint firstVertex, uint firstInstance);
+		void DrawMeshTasks(uint groupCountX, uint groupCountY, uint groupCountZ);
+		void Dispatch(uint groupCountX, uint groupCountY, uint groupCountZ);
+		void Execute(const CommndListExecuteDesc* executeDescs, uint executeDescCount, uint queueIndexu, FenceHandle fence);
 
 		const CommandListDesc& GetDesc() const { return m_Desc; }
 		CommandQueueType GetQueueType() const { return m_QueueType; }

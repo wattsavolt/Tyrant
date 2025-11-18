@@ -1,21 +1,20 @@
-
-
 #pragma once
 
-#include "VulkanDevice.h"
 #include "RenderAPI/SwapChain.h"
+#include "VulkanCommon.h"
 
 namespace tyr
 {
+	class DeviceInternal;
 	class VulkanSwapChain : public SwapChain
 	{
 	public:
-		VulkanSwapChain(VulkanDevice& device, VkSurfaceKHR surface, const SwapChainDesc& desc, VulkanSwapChain* oldSwapChain = nullptr);
+		VulkanSwapChain(DeviceInternal& device, VkSurfaceKHR surface, const SwapChainDesc& desc, VulkanSwapChain* oldSwapChain = nullptr);
 		~VulkanSwapChain();
 
-		uint AcquireNextImage(Ref<Semaphore>& semaphore) override;
+		uint AcquireNextImage(SemaphoreHandle semaphore) override;
 
-		void Present(const Ref<CommandList>& commandList, const Ref<Semaphore>& semaphore, uint imageIndex, uint queueIndex = 0u) override;
+		void Present(const CommandList* commandList, SemaphoreHandle semaphore, uint imageIndex, uint queueIndex = 0u) override;
 
 		VkDevice GetLogicalDevice() const { return m_LogicalDevice; }
 

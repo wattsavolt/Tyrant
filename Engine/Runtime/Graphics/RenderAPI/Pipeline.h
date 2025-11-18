@@ -4,13 +4,17 @@
 
 #include "GraphicsBase.h"
 #include "RenderAPITypes.h"
-#include "DescriptorSet.h"
+#include "DescriptorSetGroup.h"
 #include "Geometry/GeometryTypes.h"
 #include "Image.h"
+#include "ShaderModule.h"
 
 namespace tyr
 {
-	class Shader;
+	using RenderPassHandle = ResourceHandle;
+	struct GraphicsPipelineHandle : public ResourceHandle {};
+	struct ComputePipelineHandle : public ResourceHandle {};
+	struct RayTracingPipelineHandle : public ResourceHandle {};
 
 	struct VertexInputBindingDesc
 	{
@@ -78,19 +82,6 @@ namespace tyr
 		LocalArray<SubpassDesc, 6> subpasses;
 		LocalArray<SubpassDependencyDesc, 10> dependencies;
 	};
-
-	class RenderPass
-	{
-	public:
-		RenderPass(const RenderPassDesc& desc);
-		virtual ~RenderPass() = default;
-
-		const RenderPassDesc& GetDesc() const { return m_Desc; }
-
-	protected:
-		RenderPassDesc m_Desc;
-	};
-
 
 	// To simplify, this maps to VkPipelineColorBlendAttachmentState and not VkPipelineColorBlendStateCreateInfo for Vulkan  
 	// as there should only be a need for one attachment.
@@ -160,7 +151,7 @@ namespace tyr
 
 	struct PipelineLayoutDesc
 	{
-		LocalArray<Ref<DescriptorSetLayout>, 10> descriptorSetLayouts;
+		LocalArray<DescriptorSetLayoutHandle, 10> descriptorSetLayouts;
 		// Not supported in HLSL
 		LocalArray<PushConstantRange, 5> pushConstantRanges;
 	};
@@ -177,6 +168,9 @@ namespace tyr
 
 	struct GraphicsPipelineDesc
 	{
+		static constexpr uint8 c_MaxDynamicStates = 9;
+		static constexpr uint8 c_MaxShaders = 7;
+
 		VertexInputStateDesc vertexInputStateDesc;
 		PrimitiveTopology topology;
 		BlendStateDesc blendStateDesc;
@@ -189,72 +183,21 @@ namespace tyr
 		Ref<RenderPass> renderPass;
 		uint subpassIndex;
 #endif
-		LocalArray<DynamicState, 9> dynamicStates;
+		LocalArray<DynamicState, c_MaxDynamicStates> dynamicStates;
 		PipelineLayoutDesc pipelineLayoutDesc;
-		LocalArray<Ref<Shader>, 7> shaders;
+		LocalArray<ShaderModuleHandle, c_MaxShaders> shaders;
 	};
 
 	struct ComputePipelineDesc
 	{
 		PipelineLayoutDesc pipelineLayoutDesc;
-		Ref<Shader> shader;
+		ShaderModuleHandle shader;
 	};
 
-	// TODO: Fill this in when adding ray tracing support.
+	// TODO: Finish this when adding ray tracing support.
 	struct RayTracingPipelineDesc
 	{
 		PipelineLayoutDesc pipelineLayoutDesc;
-		LocalArray<Ref<Shader>, 7> shaders;
-	};
-
-	class TYR_GRAPHICS_EXPORT Pipeline
-	{
-	public:
-		Pipeline() = default;
-		virtual ~Pipeline() = default;
-
-		virtual PipelineType GetPipelineType() const = 0;
-	};
-
-	class TYR_GRAPHICS_EXPORT GraphicsPipeline : public Pipeline
-	{
-	public:
-		GraphicsPipeline(const GraphicsPipelineDesc& desc);
-		virtual ~GraphicsPipeline() = default;
-		
-		PipelineType GetPipelineType() const override { return PipelineType::Graphics; } 
-
-		const GraphicsPipelineDesc& GetDesc() const { return m_Desc; }
-
-	protected:
-		GraphicsPipelineDesc m_Desc;
-	};
-
-	class TYR_GRAPHICS_EXPORT ComputePipeline : public Pipeline
-	{
-	public:
-		ComputePipeline(const ComputePipelineDesc& desc);
-		virtual ~ComputePipeline() = default;
-
-		PipelineType GetPipelineType() const override { return PipelineType::Compute; }
-
-		const ComputePipelineDesc& GetDesc() const { return m_Desc; }
-
-	protected:
-		ComputePipelineDesc m_Desc;
-	};
-
-	class TYR_GRAPHICS_EXPORT RayTracingPipeline : public Pipeline
-	{
-	public:
-		RayTracingPipeline(const RayTracingPipelineDesc& desc);
-		virtual ~RayTracingPipeline() = default;
-
-		PipelineType GetPipelineType() const override { return PipelineType::RayTracing; }
-
-		const RayTracingPipelineDesc& GetDesc() const { return m_Desc; }
-
-	protected:
-		RayTracingPipelineDesc m_Desc;
+		LocalArray<ShaderModuleHandle, 7> shaders;
 	};
 }

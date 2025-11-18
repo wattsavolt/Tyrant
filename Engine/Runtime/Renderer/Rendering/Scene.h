@@ -10,75 +10,54 @@
 
 namespace tyr
 {
-	typedef int8 SceneID;
-
-	enum class SceneType : uint
+	struct SceneCamera
 	{
-		App = 0,
-		WorldEditor,
-		GUI,
-		Viewer
+		Vector3 position;
+		Vector3 forward;
+		Vector3 up;
+		// Field of view in degrees
+		float fov;
+		float nearZ;
+		float farZ;
 	};
 
-	enum class SceneActionType
+	struct SceneView
 	{
-		None = 0,
-		Add,
-		Update,
-		Remove
-	};
-
-	struct SceneAction
-	{
-		SceneActionType action;
-		Matrix4 viewProj;
 		SceneViewArea viewArea;
-		Vector3 cameraPosition;
+		SceneCamera camera;
 	};
 
 	constexpr uint c_MaxDirectionalLights = 3;
 	constexpr uint c_MaxPointLights = 20;
 	constexpr uint c_MaxSpotLights = 10;
 
-	struct SceneData
+	struct SceneContent
 	{
 		Array<RigidMeshInstance> rigidMeshInstances;
 		Array<SkeletalMeshInstance> skeletalModelInstances;
-		DirectionalLight dirLights[c_MaxDirectionalLights];
-		uint dirLightCount;
-		PointLight pointLights[c_MaxPointLights];
-		uint pointLightCount;
-		SpotLight spotLights[c_MaxSpotLights];
-		uint spotLightCount;
+		LocalArray<DirectionalLight, c_MaxDirectionalLights> dirLights;
+		LocalArray<PointLight, c_MaxPointLights> pointLights;
+		LocalArray<SpotLight, c_MaxSpotLights> spotLights;
 	};
 
-	class Scene final
+	struct Scene
 	{
-	public:
-		Scene(SceneType type, SceneID sceneId, bool active = true);
-		~Scene();
-
-		SceneData const& GetSceneData() const { return m_SceneData; }
-
-		SceneType GetType() const { return m_Type; }
-
-		SceneID GetId() const { return m_Id; }
-
-		void SetVisible(bool visible) { m_Visible = visible; }
-
-		bool IsVisible() const { return m_Visible; };
-
-		static constexpr uint c_MaxScenes = 4;
-
-		static constexpr SceneID c_InvalidID = -1;
-
-	private:
-		friend class SceneRenderer;
-
-		SceneType m_Type;
-		SceneID m_Id;
-		SceneData m_SceneData;
-		bool m_Visible;
+#if TYR_EDITOR
+		static constexpr uint8 c_MaxScenes = 4;
+#else
+		static constexpr uint8 c_MaxScenes = 1;
+#endif
+		uint8 id;
+		bool active;
+		bool visible;
+		const char* name;
+		SceneView view;
+		SceneContent content;
 	};
-	
+
+	struct SceneFrame
+	{
+		bool visible = true;
+		SceneView view;
+	};
 }

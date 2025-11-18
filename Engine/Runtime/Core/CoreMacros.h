@@ -95,7 +95,7 @@
 // Windows Settings
 #if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
 // Win32 compilers use _DEBUG for specifying debug builds.
-// for MinGW, we set DEBUG
+// For MinGW, DEBUG is used
 #	if defined(_DEBUG) || defined(DEBUG)
 #		define TYR_DEBUG 1
 #	else
@@ -124,4 +124,15 @@
 #		define TYR_CORE_EXPORT TYR_EXPORT
 #else
 #		define TYR_CORE_EXPORT TYR_IMPORT
+#endif
+
+// Windows Force Inline
+#if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
+#  define TYR_FORCEINLINE __forceinline
+// Linux/Mac Force Inline
+#elif TYR_PLATFORM == TYR_PLATFORM_LINUX || TYR_PLATFORM == TYR_PLATFORM_OSX
+#  define TYR_FORCEINLINE inline __attribute__((always_inline))
+#else
+// Fallback
+#  define TYR_FORCEINLINE inline
 #endif

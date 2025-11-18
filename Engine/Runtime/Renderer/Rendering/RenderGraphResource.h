@@ -7,8 +7,7 @@
 #include "RenderAPI/Buffer.h"
 #include "RenderAPI/Image.h"
 #include "Resources/RenderResource.h"
-#include "Resources/TransferBuffer.h"
-#include "Resources/GpuBuffer.h"
+#include "Resources/RenderBuffer.h"
 #include "Resources/Texture.h"
 
 namespace tyr
@@ -16,7 +15,7 @@ namespace tyr
 	enum class RenderGraphResourceType : uint8
 	{
 		TransferBuffer,
-		GpuBuffer,
+		RenderBuffer,
 		Texture,
 		Attachment
 	};

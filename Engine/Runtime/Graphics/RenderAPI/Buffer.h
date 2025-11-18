@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "GraphicsBase.h"
@@ -6,10 +5,13 @@
 
 namespace tyr
 {
+	struct BufferHandle : public ResourceHandle {};
+	struct BufferViewHandle : public ResourceHandle {};
+
 	struct BufferDesc
 	{
-#if TYR_DEBUG
-		String debugName;
+#if !TYR_FINAL
+		GDebugString debugName;
 #endif
 		BufferUsage usage = BUFFER_USAGE_UNKNOWN;
 		MemoryProperty memoryProperty;
@@ -30,46 +32,13 @@ namespace tyr
 		size_t size;
 	};
 
-	/// Class repesenting a buffer in vulkan and a heap in D3D12
-	class TYR_GRAPHICS_EXPORT Buffer : public AtomicRefCountedObject
-	{
-	public:
-		Buffer(const BufferDesc& desc);
-		virtual ~Buffer() = default;
-
-		///  Functions for CPU accessible buffer only - start ///
-		virtual uint8* Map() const = 0;
-		virtual void Unmap() = 0;
-		virtual void Write(const void* data, size_t offset, size_t size) = 0;
-		virtual void Read(void* data, size_t offset, size_t size) = 0;
-
-		const BufferDesc& GetDesc() const { return m_Desc; }
-		virtual Handle GetNativePtr() const = 0;
-
-		// Returns the size allocated for the buffer in bytes.
-		size_t GetSizeAllocated() const { return m_SizeAllocated; };
-
-	protected:
-		BufferDesc m_Desc;
-		size_t m_SizeAllocated;
-	};
-
 	struct BufferViewDesc
 	{
-		ORef<Buffer> buffer;
+#if !TYR_FINAL
+		GDebugString debugName;
+#endif
+		BufferHandle buffer;
 		size_t offset;
 		size_t size;
-	};
-
-	/// Class repesenting a CPU or GPU buffer view
-	class TYR_GRAPHICS_EXPORT BufferView : public AtomicRefCountedObject
-	{
-	public:
-		BufferView(const BufferViewDesc& desc);
-		virtual ~BufferView() = default;
-
-		const BufferViewDesc& GetDesc() const { return m_Desc; }
-	protected:
-		BufferViewDesc m_Desc;
 	};
 }

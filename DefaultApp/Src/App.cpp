@@ -24,18 +24,17 @@ App::~App()
 		
 }
 
-void App::Start()
+void App::Initialize()
 {
-	AppBase::Start();
-
+	m_Engine = Engine::Instance();
 }
 
-void App::Update(double deltaTime)
+void App::Update(float deltaTime)
 {
 		
 }
 
-void App::Stop()
+void App::Shutdown()
 {
-	AppBase::Stop();
+	m_Engine = nullptr;
 }

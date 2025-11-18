@@ -2,7 +2,6 @@
 
 #include "Core.h"
 #include "EngineMacros.h"
-#include "AssetPath.h"
 
 namespace tyr
 {

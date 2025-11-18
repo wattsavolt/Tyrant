@@ -2,6 +2,7 @@
 
 #include "GraphicsBase.h"
 #include "Math/Vector2I.h"
+#include "Math/Vector3I.h"
 
 namespace tyr
 {
@@ -319,7 +320,7 @@ namespace tyr
 		RayTracing
 	};
 
-	enum class AttachmentLoadOp 
+	enum class AttachmentLoadOp : uint8
 	{
 		Load,
 		Clear,
@@ -327,7 +328,7 @@ namespace tyr
 		None
 	};
 
-	enum class AttachmentStoreOp 
+	enum class AttachmentStoreOp : uint8
 	{
 		Store,
 		DontCare,
@@ -447,7 +448,7 @@ namespace tyr
 
 	enum class DescriptorType : uint
 	{
-		Sampler = 0,
+		SamplerHandle = 0,
 		CombinedImageSampler,
 		SampledTwice,
 		StorageImage,
@@ -484,19 +485,19 @@ namespace tyr
 		Clockwise
 	};
 
-	enum class SharingMode 
+	enum class SharingMode : uint8
 	{
 		Exclusive = 0,
 		Concurrent
 	};
 
-	enum class CommandListType
+	enum class CommandListType : uint8
 	{
 		Primary,
 		Secondary
 	};
 
-	enum class SemaphoreType
+	enum class SemaphoreType : uint8
 	{
 		Binary,
 		Timeline
@@ -568,6 +569,18 @@ namespace tyr
 	{
 		Vector2I offset;
 		Extents2 extents;
+	};
+
+	static constexpr uint16 c_InvalidGraphicsResourceID = UINT16_MAX;
+
+	struct ResourceHandle
+	{
+		uint16 id = c_InvalidGraphicsResourceID;
+
+		operator bool() const
+		{
+			return id != c_InvalidGraphicsResourceID;
+		}
 	};
 }
 

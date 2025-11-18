@@ -12,6 +12,7 @@ namespace tyr
 	public:
 		static TypeRegistry& Instance();
 
+		TypeInfo& AddType(const Id64& id);
 		TypeInfo& AddType(const char* name);
 		const TypeInfo& GetType(const Id64& id) const;
 		const TypeInfo& GetType(const char* name) const;

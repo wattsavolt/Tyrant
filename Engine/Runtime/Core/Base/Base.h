@@ -2,6 +2,7 @@
 
 #include "CoreMacros.h"
 #include "Primitives.h"
+#include "INonCopyable.h"
 
 #include <filesystem>
 #include <optional>
@@ -69,11 +70,11 @@ extern "C" {
 
 #define TYR_MAX_FILENAME 63
 // Account for null character
-#define TYR_MAX_FILENAME_STR_SIZE TYR_MAX_FILENAME + 1
+#define TYR_MAX_FILENAME_TOTAL_SIZE TYR_MAX_FILENAME + 1
 
 #define TYR_MAX_PATH 255
 // Account for null character
-#define TYR_MAX_PATH_STR_SIZE TYR_MAX_PATH + 1 
+#define TYR_MAX_PATH_TOTAL_SIZE TYR_MAX_PATH + 1 
 
 namespace tyr
 {

@@ -1,5 +1,5 @@
 #include "AssetUtil.h"
-#include "EngineConfig.h"
+#include "BuildConfig.h"
 #include <cstring>
 
 namespace tyr

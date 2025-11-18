@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ThreadPool.h"
+#include "Task.h"
 
 namespace tyr
 {
@@ -26,7 +27,7 @@ namespace tyr
     {
         while (true)
         {
-            ThreadTask* task = nullptr;
+            Task* task = nullptr;
             {
                 Lock lock(m_Mutex);
                 // Wait unlocks the mutex while waiting
@@ -54,7 +55,7 @@ namespace tyr
         }
     }
 
-    void PooledThread::Start(ThreadTask* task)
+    void PooledThread::Start(Task* task)
     {
         {
             Lock lock(m_Mutex);

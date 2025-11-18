@@ -8,8 +8,8 @@ namespace tyr
     class LocalArray final
     {
     private:
-        T m_Data[C];
         uint m_Size;
+        T m_Data[C];
 
         void InsertElements(uint index, uint count)
         {

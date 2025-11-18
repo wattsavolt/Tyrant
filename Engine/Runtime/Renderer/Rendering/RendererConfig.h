@@ -6,6 +6,7 @@
 #include "Core.h"
 #include "RenderAPI/RenderAPI.h"
 #include "RenderDataTypes/RenderDataTypes.h"
+#include "Shader/ShaderCreator.h"
 
 namespace tyr
 {
@@ -13,8 +14,7 @@ namespace tyr
 	{
 		RenderAPICreateConfig renderAPICreateConfig;
 		RenderAPIConfig renderAPIConfig;
-		String shaderDir;
-		String shaderIncludeDir;
+		ShaderCreatorConfig shaderConfig;
 		bool voxelRendering = false;
 	};
 }

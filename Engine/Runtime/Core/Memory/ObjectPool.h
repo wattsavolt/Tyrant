@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Base/Base.h"
 #include "Containers/Array.h"
 #include "Threading/Threading.h"
 
@@ -9,10 +10,11 @@ namespace tyr
     class ObjectPool final
     {
     public:
-        ObjectPool(uint maxObjects)
+        ObjectPool(uint16 maxObjects)
             : m_MaxObjects(maxObjects)
         {
             m_Pool = AllocN<T>(maxObjects);
+            m_FreeSpaces.Reserve(m_MaxObjects);
         }
 
         ~ObjectPool()
@@ -25,7 +27,7 @@ namespace tyr
         T* Create(Args&&... args) 
         {
             TYR_ASSERT(m_ObjectCount < m_MaxObjects);
-            uint index;
+            uint16 index;
             if (!m_FreeSpaces.IsEmpty()) 
             {
                 index = m_FreeSpaces.Back();
@@ -41,25 +43,28 @@ namespace tyr
             return object;
         }
 
-        template<class ...Args>
-        T* CreateSafe(Args&&... args)
-        {
-            LockGuard guard(m_Mutex);
-            return Create(std::forward<Args>(args)...);
-        }
-
-        uint GetIndex(const T* object) const
+        uint16 GetIndex(const T* object) const
         {
             TYR_ASSERT(object != nullptr && m_ObjectCount > 0);
             return object - m_Pool;
         }
 
-        const T* GetObject(uint index) const
+        const T* GetObject(uint16 index) const
         {
             return m_Pool[index];
         }
 
-        T* GetObject(uint index)
+        T* GetObject(uint16 index)
+        {
+            return m_Pool[index];
+        }
+
+        const T& GetObjectRef(uint16 index) const
+        {
+            return m_Pool[index];
+        }
+
+        T& GetObjectRef(uint16 index)
         {
             return m_Pool[index];
         }
@@ -67,36 +72,23 @@ namespace tyr
         void Delete(T* object)
         {
             TYR_ASSERT(object != nullptr && m_ObjectCount > 0);
-            const uint index = object - m_Pool;
+            const uint16 index = object - m_Pool;
             m_FreeSpaces.Add(index);
             object->~T();
             m_ObjectCount--;
         }
 
-        void Delete(uint index)
+        void Delete(uint16 index)
         {
             Delete(GetObject(index));
         }
 
-        void DeleteSafe(T* object)
-        {
-            LockGuard guard(m_Mutex);
-            Delete(object);
-        }
-
-        void DeleteSafe(uint index)
-        {
-            LockGuard guard(m_Mutex);
-            Delete(index);
-        }
-
     private:
         T* m_Pool;
-        Array<uint> m_FreeSpaces;
-        uint m_Pos = 0;
-        uint m_ObjectCount = 0;
-        const uint m_MaxObjects;
-        Mutex m_Mutex;
+        Array<uint16> m_FreeSpaces;
+        uint16 m_Pos = 0;
+        uint16 m_ObjectCount = 0;
+        const uint16 m_MaxObjects;
     };
 }
 

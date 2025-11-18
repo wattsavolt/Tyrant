@@ -1,47 +1,28 @@
 #pragma once
 
 #include "RenderAPI/Image.h"
-#include "VulkanDevice.h"
+#include "VulkanCommon.h"
 
 namespace tyr
 {
-	class VulkanImage final : public Image
+	struct Image
 	{
-	public:
-		VulkanImage(VulkanDevice& device, const ImageDesc& desc);
-		~VulkanImage();
-
-		VkImage GetImage() const { return m_Image; }
-
-	private:
-		VulkanDevice& m_Device;	
-		VkImage m_Image;
-		VmaAllocation m_Allocation;
+		VkImage image;
+		VmaAllocation allocation;
+		VkFormat format;
+		VkImageUsageFlags usage;
+		VkMemoryPropertyFlagBits memoryProperty;
+		bool isExternal = false;
 	};
 
-	class VulkanImageView final : public ImageView
+	struct ImageView
 	{
-	public:
-		VulkanImageView(VulkanDevice& device, const ImageViewDesc& desc);
-		~VulkanImageView();
-
-		VkImageView GetImageView() const { return m_ImageView; }
-
-	private:
-		VulkanDevice& m_Device;
-		VkImageView m_ImageView;
+		VkImageView imageView;
+		ImageHandle image;
 	};
 
-	class VulkanSampler final : public Sampler
+	struct Sampler
 	{
-	public:
-		VulkanSampler(VulkanDevice& device, const SamplerDesc& desc);
-		~VulkanSampler();
-
-		VkSampler GetSampler() const { return m_Sampler; }
-
-	private:
-		VulkanDevice& m_Device;
-		VkSampler m_Sampler;
+		VkSampler sampler;
 	};
 }

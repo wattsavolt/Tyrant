@@ -9,8 +9,8 @@ public:
 	App();
 	~App();
 
-	void Start() override;
-	void Update(double deltaTime) override;
-	void Stop() override;
+	void Initialize() override;
+	void Update(float deltaTime) override;
+	void Shutdown() override;
 };
 	

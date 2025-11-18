@@ -1,9 +1,15 @@
 #include "Engine.h"
 #include "App/AppBase.h"
 #include "Window/Window.h"
+#include "Window/WindowModule.h"
 #include "Input/InputManager.h"
-#include "Rendering/Renderer.h"
-#include "EngineConfig.h"
+#include "Input/InputModule.h"
+#include "AssetSystem/AssetManager.h"
+#include "AssetSystem/AssetModule.h"
+#include "World/WorldManager.h"
+#include "World/WorldModule.h"
+#include "RendererModule.h"
+#include "BuildConfig.h"
 #include "World/Camera.h"
 #include "Time/Timer.h"
 #include "Math/Vector2.h"
@@ -11,20 +17,11 @@
 
 namespace tyr
 {
-	Engine* Engine::s_Instance = nullptr;
-
-	Engine::Engine(const EngineProperties& properties)
-		: m_Properties(properties)
-		, m_Initialized(false)
-		, m_Running(false)
-		, m_App(nullptr)
+	Engine::Engine()
+		: m_Initialized(false)
 		, m_LastFrameTime(0)
-		, m_SurfaceWidth(0)
-		, m_SurfaceHeight(0)
-		, m_WorldCount(0)
 	{
-		TYR_ASSERT(!s_Instance);
-		s_Instance = this;
+
 	}
 
 	Engine::~Engine()
@@ -33,181 +30,59 @@ namespace tyr
 		{
 			Shutdown();
 		}
-
-		s_Instance = nullptr;
 	}
 
-	void Engine::Initialize(const EngineParams& engineParams)
+	void Engine::Initialize(AppModuleRegistrationCallback appModuleRegistrationCallback)
 	{
 		TYR_ASSERT(!m_Initialized);
-
-		m_App = engineParams.app;
-
-		// Load project related properties from file later
-		// Resource path should be taken from the app
-		WindowProperties windowProperties;
-		windowProperties.showFlag = engineParams.windowShowFlag;
-		windowProperties.name = engineParams.appName;
-		Window::GetMaxResolution(windowProperties.width, windowProperties.height);
-
-		m_MainWindow = CreateURef(Window::Create());
-		m_MainWindow->Initialize(windowProperties);
-
-		m_InputManager = CreateURef(InputManager::Create());
-		m_InputManager->Initialize();
 		
-		m_Renderer = MakeURef<Renderer>();
-		RendererConfig rendererConfig;
-		rendererConfig.renderAPIConfig.windowHandle = m_MainWindow->GetHandle();
-		rendererConfig.renderAPIConfig.appName = engineParams.appName;
-		rendererConfig.renderAPICreateConfig.backend = RenderAPIBackend::Vulkan;
+		TYR_REGISTER_MODULE(WindowModule);
+		TYR_REGISTER_MODULE(RendererModule);
+		TYR_REGISTER_MODULE(InputModule);
+		TYR_REGISTER_MODULE(AssetModule);
+		TYR_REGISTER_MODULE(WorldModule);
 
-#if TYR_IS_FINAL
-		rendererConfig.shaderDir = Platform::GetBinaryDirectory() + "/Shaders/";
-#else
-		rendererConfig.shaderDir = c_EngineShadersDir;
-#endif
-		rendererConfig.shaderIncludeDir = rendererConfig.shaderDir;
+		// Register any app modules
+		if (appModuleRegistrationCallback)
+		{
+			appModuleRegistrationCallback();
+		}
 
-		m_Renderer->Initialize(rendererConfig, m_SurfaceWidth, m_SurfaceHeight);
+		ModuleManager::Instance().InitializeModules();
 
-		Device* device = m_Renderer->GetDevice();
-		
-		ThreadResourcePoolsDesc poolsDesc;
-		poolsDesc.bufferCount = 200;
-		poolsDesc.bufferViewCount = poolsDesc.bufferCount;
-		poolsDesc.imageCount = m_Properties.maxTextures;
-		poolsDesc.imageViewCount = poolsDesc.imageCount;
-
-		device->CreateThreadResourcePools(poolsDesc);
-		
 		m_Initialized = true;
 	}
 
 	void Engine::Run()
 	{
-		TYR_ASSERT(m_Initialized && !m_Running);
+		TYR_ASSERT(m_Initialized);
 
-		m_Running = true;
-
+		WindowModule* windowModule;
+		TYR_GET_MODULE(WindowModule, windowModule);
+		Window* primaryWindow = windowModule->GetPrimaryWindow();
 		Timer timer;
 
-		m_App->Start();
-
-		bool quitMsgReceived;
-		while (m_Running)
+		while (primaryWindow->IsActive())
 		{
 			// Time since the timer started
 			const double currentTime = timer.GetMillisecondsPrecise();
-			if (m_InputManager->HandleNextMessage(quitMsgReceived))
-			{
-				if (quitMsgReceived)
-				{
-					break;
-				}
-				continue;
-			}
-			
-			const double deltaTime = currentTime - m_LastFrameTime;
 
-			m_App->Update(deltaTime);
+			const float deltaTime = static_cast<float>(currentTime - m_LastFrameTime);
 
-			for (uint i = 0; i < Scene::c_MaxScenes; ++i)
-			{
-				if (m_Worlds[i].IsInitialized())
-				{
-					if (!m_Worlds[i].IsFirstFrame())
-					{
-						m_RenderUpdateData.sceneActions[i].action = SceneActionType::Update;
-					}
-					else
-					{
-						m_RenderUpdateData.sceneActions[i].action = SceneActionType::Add;
-						m_Worlds[i].SetIsFirstFrame(false);
-					}
-					
-					m_RenderUpdateData.sceneActions[i].viewArea = m_Worlds[i].GetViewArea();
-					m_RenderUpdateData.sceneActions[i].cameraPosition = m_Worlds[i].GetCamera()->GetPosition();
-					m_RenderUpdateData.sceneActions[i].viewProj = m_Worlds[i].GetCamera()->GetViewProjection();
-				}
-			}
-
-			m_Renderer->Render(deltaTime, m_RenderUpdateData);
+			ModuleManager::Instance().UpdateModules(deltaTime);
 
 			m_LastFrameTime = currentTime;
-		}
-	}
 
-	void Engine::Stop()
-	{
-		TYR_ASSERT(m_Running);
-		m_App->Stop();
-		m_Running = false;
-		m_RenderUpdateData = {};
+			primaryWindow->PollEvents();
+		}
 	}
 
 	void Engine::Shutdown()
 	{
 		TYR_ASSERT(m_Initialized);
 
-		if (m_Running)
-		{
-			Stop();
-		}
-
-		m_Renderer->Shutdown();
-
-		RemoveWorlds();
+		ModuleManager::Instance().ShutdownModules();
 
 		m_Initialized = false;
-	}
-
-	bool Engine::IsInitialized()
-	{
-		return m_Initialized;
-	}
-
-	bool Engine::IsRunning()
-	{
-		return m_Running;
-	}
-
-	uint Engine::AddWorld(const WorldParams& params)
-	{
-		for (uint i = 0; i < Scene::c_MaxScenes; ++i)
-		{
-			if (!m_Worlds[i].IsInitialized())
-			{
-				m_Worlds[i].Initialize((WorldID)i, params);
-				m_WorldCount++;
-				return i;
-			}
-		}
-		TYR_ASSERT(false);
-		return UINT32_MAX;
-	}
-
-	void Engine::RemoveWorld(uint index)
-	{
-		TYR_ASSERT(index >= 0 && index < Scene::c_MaxScenes);
-		if (m_Worlds[index].IsInitialized())
-		{
-			m_RenderUpdateData.sceneActions[index].action = SceneActionType::Remove;
-			m_Worlds[index].Shutdown();
-			m_WorldCount--;
-		}
-	}
-
-	void Engine::RemoveWorlds()
-	{
-		for (uint i = 0; i < Scene::c_MaxScenes; ++i)
-		{
-			RemoveWorld(i);
-		}
-	}
-
-	const WindowProperties& Engine::GetWindowProperties() const
-	{
-		return m_MainWindow->GetProperties();;
 	}
 }

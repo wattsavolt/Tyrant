@@ -3,33 +3,33 @@
 #include "Base/Base.h"
 #include "RendererMacros.h"
 #include "RenderAPI/RenderAPITypes.h"
-#include <atomic>
 
 namespace tyr
 {
-	class Device;
-	
-	typedef uint64 ResourceID;
+	using ResourceID = uint64;
 
 	/// Base class for a graphics resource.
-	class TYR_RENDERER_EXPORT RenderResource
+	struct RenderResource
 	{
-	public:
-		RenderResource(Device& device);
-		virtual ~RenderResource();
+		static ResourceID s_NextID;
 
-		uint64 GetID() const { return m_ID; }
+		static TYR_FORCEINLINE ResourceID GenerateID()
+		{
+			return s_NextID++;
+		}
 
-		// Updatelater to support one per buffer view
-		BarrierAccess GetAccessState(uint index = 0) const { return m_AccessState; }
+		void Reset()
+		{
+			id = GenerateID();
+			accessState = BARRIER_ACCESS_NONE;
+		}
 
-	protected:
-		Device& m_Device;
-		ResourceID m_ID;
-		BarrierAccess m_AccessState;
+		RenderResource()
+		{
+			Reset();
+		}
 
-	private:
-		friend class RenderGraph;
-		static std::atomic<ResourceID> s_NextID;
+		ResourceID id;
+		BarrierAccess accessState;
 	};
 }

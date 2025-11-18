@@ -5,7 +5,7 @@
 #include "Math/Quaternion.h"
 #include "Math/Matrix4.h"
 #include "Material.h"
-#include "Resources/GpuBuffer.h"
+#include "Resources/RenderBuffer.h"
 #include "RenderDataTypesCommon.h"
 
 namespace tyr
@@ -13,8 +13,7 @@ namespace tyr
 	struct RigidMeshInstance
 	{
 		// Accessor for the mesh instance data in the shader
-		RenderDataAccessor renderDataAccessor;
-		AssetID meshID;
+		uint meshIndex;
 		Matrix4 transform;
 		// The material is not part of rigid mesh as it may be overwritten
 		Material* material;

@@ -1,59 +1,23 @@
-
 #pragma once
 
 #include "RenderAPI/Sync.h"
-#include "VulkanDevice.h"
+#include "VulkanCommon.h"
 
 namespace tyr
 {
-	class VulkanFence final : public Fence
+	struct Fence
 	{
-	public:
-		VulkanFence(VulkanDevice& device, const FenceDesc& desc);
-		~VulkanFence();
-
-		void Reset() override;
-		bool GetStatus() const override;
-		bool Wait() override;
-
-		VkFence GetFence() const { return m_Fence; }
-
-	private:
-		VkFence m_Fence;
-		VulkanDevice& m_Device;
+		VkFence fence;
 	};
 
-	class VulkanSemaphore final : public Semaphore
+	struct Semaphore
 	{
-	public:
-		VulkanSemaphore(VulkanDevice& device, const SemaphoreDesc& desc);
-		~VulkanSemaphore();
-
-		void Signal(uint64 value) override;
-		uint64 GetValue() const override;
-		bool Wait(uint64 value, uint64 timeout) override;
-
-		VkSemaphore GetSemaphore() const { return m_Semaphore; }
-
-	private:
-		VkSemaphore m_Semaphore;
-		VulkanDevice& m_Device;
+		VkSemaphore semaphore;
+		SemaphoreType type;
 	};
 
-	class VulkanEvent final : public Event
+	struct Event
 	{
-	public:
-		VulkanEvent(VulkanDevice& device, const EventDesc& desc);
-		~VulkanEvent();
-
-		bool Set() override;
-		void Reset() override;
-		bool IsSet() const override;
-
-		VkEvent GetEvent() const { return m_Event; }
-
-	private:
-		VkEvent m_Event;
-		VulkanDevice& m_Device;
+		VkEvent event;
 	};
 }

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Base/base.h"
-#include "Utility/INonCopyable.h"
+#include "Base/INonCopyable.h"
 #include "String/StringTypes.h"
 
 namespace tyr

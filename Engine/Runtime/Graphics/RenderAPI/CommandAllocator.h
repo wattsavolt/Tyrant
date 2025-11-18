@@ -3,17 +3,18 @@
 
 #include "GraphicsBase.h"
 #include "RenderAPITypes.h"
+#include "Core.h"
 
 namespace tyr
 {
 	struct CommandAllocatorDesc
 	{
-		const char* debugName = "";
+		LocalString<20> debugName = "";
 		CommandAllocatorCreateFlags flags = CommandAllocatorCreateFlags::COMMAND_ALLOC_CREATE_RESET_COMMAND_BUFFER_BIT;
 		CommandQueueType queueType = CommandQueueType::CQ_GRAPHICS;
 	};
 
-	/// Class repesenting a command queue 
+	/// Class repesenting a command allocator 
 	class TYR_GRAPHICS_EXPORT CommandAllocator
 	{
 	public:

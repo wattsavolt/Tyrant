@@ -14,6 +14,10 @@ namespace tyr
     class ArraySerializer;
     template<typename K, typename V>
     class HashMapSerializer;
+    template<uint N>
+    class LocalStringSerializer;
+    template<typename T, T offsetBasis, T prime>
+    class IdentifierSerializer;
 
     template <typename T>
     constexpr const CustomObjectSerializer* GetBuiltInCustomObjectSerializer()
@@ -21,19 +25,31 @@ namespace tyr
         if constexpr (IsLocalArray<T>::value)
         {
             using ElementType = typename LocalArrayTraits<T>::elementType;
-            const uint C = LocalArrayTraits<T>::capacity;
-            return LocalArraySerializer<ElementType, C>::Instance();
+            const uint capacity = LocalArrayTraits<T>::c_Capacity;
+            return &LocalArraySerializer<ElementType, capacity>::Instance();
         }
         else if constexpr (IsArray<T>::value)
         {
             using ElementType = typename ArrayTraits<T>::elementType;
-            return ArraySerializer<ElementType>::Instance();
+            return &ArraySerializer<ElementType>::Instance();
         }
         else if constexpr (IsHashMap<T>::value)
         {
             using KeyType = typename HashMapTraits<T>::keyType;
             using ValueType = typename HashMapTraits<T>::valueType;
-            return HashMapSerializer<KeyType, ValueType>::Instance();
+            return &HashMapSerializer<KeyType, ValueType>::Instance();
+        }
+        else if constexpr (IsLocalString<T>::value)
+        {
+            const uint n = LocalStringTraits<T>::c_MaxSize;
+            return &LocalStringSerializer<n>::Instance();
+        }
+        else if constexpr (IsIdentifier<T>::value)
+        {
+            using HashType = typename IdentifierTraits<T>::hashType;
+            const HashType offsetBasis  = IdentifierTraits<T>::c_OffsetBasis;
+            const HashType prime = IdentifierTraits<T>::c_Prime;
+            return &IdentifierSerializer<HashType, offsetBasis, prime>::Instance();
         }
         return nullptr;
     }
@@ -55,13 +71,13 @@ namespace tyr
         ~Serializer() = default;
 
         template<typename T>
-        void Serialize(BinaryStream& stream, const T& data)
+        void Serialize(BufferedFileStream& stream, const T& data)
         {
             if constexpr (IsLocalArray<T>::value)
             {
                 using ElementType = typename LocalArrayTraits<T>::elementType;
-                const uint C = LocalArrayTraits<T>::capacity;
-                LocalArraySerializer<ElementType, C>::Instance().Serialize(stream, &data);
+                const uint capacity = LocalArrayTraits<T>::c_Capacity;
+                LocalArraySerializer<ElementType, capacity>::Instance().Serialize(stream, &data);
             }
             else if constexpr (IsArray<T>::value)
             {
@@ -74,19 +90,31 @@ namespace tyr
                 using ValueType = typename HashMapTraits<T>::valueType;
                 HashMapSerializer<KeyType, ValueType>::Instance().Serialize(stream, &data);
             }
+            else if constexpr (IsLocalString<T>::value)
+            {
+                const uint n = LocalStringTraits<T>::c_MaxSize;
+                LocalStringSerializer<n>::Instance().Serialize(stream, &data);
+            }
+            else if constexpr (IsIdentifier<T>::value)
+            {
+                using HashType = typename IdentifierTraits<T>::hashType;
+                const HashType offsetBasis = IdentifierTraits<T>::c_OffsetBasis;
+                const HashType prime = IdentifierTraits<T>::c_Prime;
+                IdentifierSerializer<HashType, offsetBasis, prime>::Instance().Serialize(stream, &data);;
+            }
             // One-dimensional arrays only supported currently
             else if constexpr (std::is_array<T>())
             { 
                 using ElementType = typename CArrayTraits<T>::elementType;
-                const String typeName = GetTypeName<ElementType>();
-                const uint count = static_cast<uint>(CArrayTraits<T>::capacity);
-                const TypeInfo& typeInfo = TypeRegistry::Instance().GetType(typeName.c_str());
+                const Id64 typeID = GetTypeID<ElementType>();
+                const uint count = static_cast<uint>(CArrayTraits<T>::c_Capacity);
+                const TypeInfo& typeInfo = TypeRegistry::Instance().GetType(typeID);
                 SerializeCArray(stream, reinterpret_cast<const uint8*>(&data), count, typeInfo);
             }
             else if constexpr (std::is_class<T>::value)
             {
-                const String typeName = GetTypeName<T>();
-                const TypeInfo& typeInfo = TypeRegistry::Instance().GetType(typeName.c_str());
+                const Id64 typeID = GetTypeID<T>();
+                const TypeInfo& typeInfo = TypeRegistry::Instance().GetType(typeID);
                 SerializeObject(stream, reinterpret_cast<const uint8*>(&data), typeInfo);
             }
             else
@@ -96,13 +124,13 @@ namespace tyr
         }
 
         template<typename T>
-        void Deserialize(BinaryStream& stream, T& data)
+        void Deserialize(BufferedFileStream& stream, T& data)
         {
             if constexpr (IsLocalArray<T>::value)
             {
                 using ElementType = typename LocalArrayTraits<T>::elementType;
-                const uint C = LocalArrayTraits<T>::capacity;
-                LocalArraySerializer<ElementType, C>::Instance().Deserialize(stream, &data);
+                const uint capacity = LocalArrayTraits<T>::c_Capacity;
+                LocalArraySerializer<ElementType, capacity>::Instance().Deserialize(stream, &data);
             }
             else if constexpr (IsArray<T>::value)
             {
@@ -115,19 +143,31 @@ namespace tyr
                 using ValueType = typename HashMapTraits<T>::valueType;
                 HashMapSerializer<KeyType, ValueType>::Instance().Deserialize(stream, &data);
             }
+            else if constexpr (IsLocalString<T>::value)
+            {
+                const uint n = LocalStringTraits<T>::c_MaxSize;
+                LocalStringSerializer<n>::Instance().Deserialize(stream, &data);
+            }
+            else if constexpr (IsIdentifier<T>::value)
+            {
+                using HashType = typename IdentifierTraits<T>::hashType;
+                const HashType offsetBasis = IdentifierTraits<T>::c_OffsetBasis;
+                const HashType prime = IdentifierTraits<T>::c_Prime;
+                IdentifierSerializer<HashType, offsetBasis, prime>::Instance().Deserialize(stream, &data);
+            }
             // One-dimensional arrays only supported currently
             else if constexpr (std::is_array<T>())
             {
                 using ElementType = typename CArrayTraits<T>::elementType;
-                const String typeName = GetTypeName<ElementType>();
-                const uint count = static_cast<uint>(CArrayTraits<T>::capacity);
-                const TypeInfo& typeInfo = TypeRegistry::Instance().GetType(typeName.c_str());
+                const Id64 typeID = GetTypeID<ElementType>();
+                const uint count = static_cast<uint>(CArrayTraits<T>::c_Capacity);
+                const TypeInfo& typeInfo = TypeRegistry::Instance().GetType(typeID);
                 DeserializeCArray(stream, reinterpret_cast<uint8*>(&data), count, typeInfo);
             }
             else if constexpr (std::is_class<T>::value)
             {
-                const String typeName = GetTypeName<T>();
-                const TypeInfo& typeInfo = TypeRegistry::Instance().GetType(typeName.c_str());
+                const Id64 typeID = GetTypeID<T>();
+                const TypeInfo& typeInfo = TypeRegistry::Instance().GetType(typeID);
                 DeserializeObject(stream, reinterpret_cast<uint8*>(&data), typeInfo);
             }
             else
@@ -159,16 +199,18 @@ namespace tyr
     private:
         Serializer(bool serializeNonFinal);
 
-        void SerializeVersion(BinaryStream& stream, int version);
-        void SerializeField(BinaryStream& stream, const uint8* data, const Field& field);
-        void SerializeCArray(BinaryStream& stream, const uint8* data, uint count, const TypeInfo& typeInfo);
-        void SerializeObject(BinaryStream& stream, const uint8* data, const TypeInfo& typeInfo);
-        void SerializeValue(BinaryStream& stream, const uint8* data, const TypeInfo& typeInfo);
-        int DeserializeVersion(BinaryStream& stream);
-        void DeserializeField(BinaryStream& stream, uint8* data, const Field& field);
-        void DeserializeCArray(BinaryStream& stream, uint8* data, const TypeInfo& typeInfo);
-        void DeserializeObject(BinaryStream& stream, uint8* data, const TypeInfo& typeInfo);
-        void DeserializeValue(BinaryStream& stream, uint8* data, const TypeInfo& typeInfo);
+        // Unused currently and might be removed
+        void SerializeVersion(BufferedFileStream& stream, int version);
+        void SerializeField(BufferedFileStream& stream, const uint8* data, const Field& field);
+        void SerializeCArray(BufferedFileStream& stream, const uint8* data, uint count, const TypeInfo& typeInfo);
+        void SerializeObject(BufferedFileStream& stream, const uint8* data, const TypeInfo& typeInfo);
+        void SerializeValue(BufferedFileStream& stream, const uint8* data, const TypeInfo& typeInfo);
+        // Unused currently and might be removed
+        int DeserializeVersion(BufferedFileStream& stream);
+        void DeserializeField(BufferedFileStream& stream, uint8* data, const Field& field);
+        void DeserializeCArray(BufferedFileStream& stream, uint8* data, const TypeInfo& typeInfo);
+        void DeserializeObject(BufferedFileStream& stream, uint8* data, const TypeInfo& typeInfo);
+        void DeserializeValue(BufferedFileStream& stream, uint8* data, const TypeInfo& typeInfo);
 
         // Should editor-only / debug fields be included
         // Note: The editor will only load in types that include non-final fields
@@ -180,8 +222,8 @@ namespace tyr
     class CustomObjectSerializer
     {
     public:
-        virtual void Serialize(BinaryStream& stream, const void* Object) const = 0;
-        virtual void Deserialize(BinaryStream& stream, void* Object) const = 0;
+        virtual void Serialize(BufferedFileStream& stream, const void* Object) const = 0;
+        virtual void Deserialize(BufferedFileStream& stream, void* Object) const = 0;
 
     protected:
         virtual ~CustomObjectSerializer() = default;
@@ -191,7 +233,7 @@ namespace tyr
     class LocalrraySerializer : public CustomObjectSerializer
     {
     public:
-        void Serialize(BinaryStream& stream, const void* object) const override
+        void Serialize(BufferedFileStream& stream, const void* object) const override
         {
             const LocalArray<T, C>& arr = *(static_cast<const LocalArray<T, C>*>(object));
             Serializer::Instance().Serialize<uint>(stream, arr.Size());
@@ -201,7 +243,7 @@ namespace tyr
             }
         }
 
-        void Deserialize(BinaryStream& stream, void* object) const override
+        void Deserialize(BufferedFileStream& stream, void* object) const override
         {
             LocalArray<T, C>& arr = *(static_cast<LocalArray<T, C>*>(object));
             arr.Clear();
@@ -214,10 +256,10 @@ namespace tyr
             }
         }
 
-        static const ArraySerializer<T>* Instance()
+        static const LocalArraySerializer<T, C>& Instance()
         {
-            static ArraySerializer<T> serializer;
-            return &serializer;
+            static LocalArraySerializer<T, C> serializer;
+            return serializer;
         }
     };
 
@@ -225,7 +267,7 @@ namespace tyr
     class ArraySerializer : public CustomObjectSerializer
     {
     public:
-        void Serialize(BinaryStream& stream, const void* object) const override
+        void Serialize(BufferedFileStream& stream, const void* object) const override
         {
             const Array<T>& arr = *(static_cast<const Array<T>*>(object));
             Serializer::Instance().Serialize<uint>(stream, arr.Size());
@@ -235,7 +277,7 @@ namespace tyr
             }     
         }
 
-        void Deserialize(BinaryStream& stream, void* object) const override
+        void Deserialize(BufferedFileStream& stream, void* object) const override
         {
             Array<T>& arr = *(static_cast<Array<T>*>(object));
             arr.Clear();
@@ -250,10 +292,10 @@ namespace tyr
             }
         }
 
-        static const ArraySerializer<T>* Instance()
+        static const ArraySerializer<T>& Instance()
         {
             static ArraySerializer<T> serializer;
-            return &serializer;
+            return serializer;
         }
     };
 
@@ -261,7 +303,7 @@ namespace tyr
     class HashMapSerializer : public CustomObjectSerializer
     {
     public:
-        void Serialize(BinaryStream& stream, const void* object) const override
+        void Serialize(BufferedFileStream& stream, const void* object) const override
         {
             const HashMap<K, V>& map = *(static_cast<const HashMap<K, V>*>(object));
             Serializer::Instance().Serialize<uint>(stream, map.Size());
@@ -272,7 +314,7 @@ namespace tyr
             }
         }
 
-        void Deserialize(BinaryStream& stream, void* object) const override
+        void Deserialize(BufferedFileStream& stream, void* object) const override
         {
             HashMap<K, V>& map = *(static_cast<HashMap<K, V>*>(object));
             map.Clear();
@@ -289,10 +331,65 @@ namespace tyr
             }
         }
 
-        static const HashMapSerializer<K, V>* Instance()
+        static const HashMapSerializer<K, V>& Instance()
         {
             static HashMapSerializer<K, V> serializer;
-            return &serializer;
+            return serializer;
+        }
+    };
+
+    template<uint N>
+    class LocalStringSerializer : public CustomObjectSerializer
+    {
+    public:
+        void Serialize(BufferedFileStream& stream, const void* object) const override
+        {
+            const LocalString<N>& str = *(static_cast<const LocalString<N>*>(object));
+            Serializer::Instance().Serialize<uint>(stream, str.Size());
+            stream.Write(str.CStr(), str.Size());
+        }
+
+        void Deserialize(BufferedFileStream& stream, void* object) const override
+        {
+            LocalString<N>& str = *(static_cast<LocalString<N>*>(object));
+            str.Reset();
+            uint size;
+            Serializer::Instance().Deserialize<uint>(stream, size);
+            char data[LocalString<N>::c_Capacity];
+            stream.Read(data, size);
+            data[size] = '\0';
+            str = data;
+        }
+
+        static const LocalStringSerializer<N>& Instance()
+        {
+            static LocalStringSerializer<N> serializer;
+            return serializer;
+        }
+    };
+
+    template<typename T, T offsetBasis, T prime>
+    class IdentifierSerializer : public CustomObjectSerializer
+    {
+    public:
+        void Serialize(BufferedFileStream& stream, const void* object) const override
+        {
+            const Identifier<T, offsetBasis, prime>& id = *(static_cast<const Identifier<T, offsetBasis, prime>*>(object));
+            Serializer::Instance().Serialize<T>(stream, id.GetHash());
+        }
+
+        void Deserialize(BufferedFileStream& stream, void* object) const override
+        {
+            Identifier<T, offsetBasis, prime>& id = *(static_cast<Identifier<T, offsetBasis, prime>*>(object));
+            T hash;
+            Serializer::Instance().Deserialize<T>(stream, hash);
+            id = hash;
+        }
+
+        static const IdentifierSerializer<T, offsetBasis, prime>& Instance()
+        {
+            static IdentifierSerializer<T, offsetBasis, prime> serializer;
+            return serializer;
         }
     };
 }

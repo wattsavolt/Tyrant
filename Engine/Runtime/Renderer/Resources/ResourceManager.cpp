@@ -14,7 +14,7 @@ namespace tyr
 		TYR_ASSERT(s_Instance == nullptr);
 		s_Instance = this;
 
-		m_TransferBuffers.Reserve(config.transferBufferReserveCount);
+		m_TransferBuffers.Reserve(config.maxTransferBuffers);
 	}
 
 	ResourceManager::~ResourceManager()

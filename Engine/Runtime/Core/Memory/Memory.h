@@ -1,9 +1,11 @@
 #pragma once
 
+#include "MemoryTypes.h"
 #include "Allocation.h"
 #include "MemoryOverrides.h"
 #include "StackAllocation.h"
-#include "MemoryTypes.h"
+#include "Memory/LocalObjectPool.h"
+#include "Memory/ObjectPool.h"
 
 namespace tyr
 {

@@ -2,7 +2,6 @@
 #pragma once
 
 #include <memory>
-#include <functional>
 #include "Base/Base.h"
 #include "Memory/Allocation.h"
 
@@ -50,6 +49,11 @@ namespace tyr
 		virtual void AddRef() = 0;
 
 		virtual uint RemoveRef() = 0;
+
+        virtual void Release()
+        {
+            delete this;
+        }
 	};
 
 	class AtomicRefCountedObject : public RefCountedObject
@@ -106,12 +110,10 @@ namespace tyr
 		uint m_RefCount;
 	};
 
-	using RefCountedObjectDeleter = std::function<void(RefCountedObject*)>;
-
     template<typename T>
     class ObjectRef final
     {
-        // Allow private member access to SRefs of base and derived types
+        // Allow private member access to ORefs of base and derived types
         template<typename> friend class ObjectRef;
 
     public:
@@ -119,9 +121,9 @@ namespace tyr
         {
             if (m_Ptr)
             {
-                if (m_Ptr->RemoveRef() == 0 && m_Deleter)
+                if (m_Ptr->RemoveRef() == 0)
                 {
-                    m_Deleter(m_Ptr);
+                    static_cast<RefCountedObject*>(m_Ptr)->Release();
                 }
             }
             m_Ptr = ptr;
@@ -130,29 +132,20 @@ namespace tyr
         ObjectRef()
         {
             TYR_STATIC_ASSERT((std::is_base_of_v<RefCountedObject, T>), "T must derive from RefCountedObject");
-            m_Deleter = [](RefCountedObject* obj) { delete obj; };
         }
 
-        ObjectRef(T* ptr, RefCountedObjectDeleter deleter = nullptr)
+        ObjectRef(T* ptr)
             : m_Ptr(ptr)
         {
             TYR_STATIC_ASSERT((std::is_base_of_v<RefCountedObject, T>), "T must derive from RefCountedObject");
             if (m_Ptr)
             {
                 m_Ptr->AddRef();
-                if (m_Deleter)
-                {
-                    m_Deleter = std::move(deleter);
-                }
-                else
-                {
-                    m_Deleter = [](RefCountedObject* obj) { delete obj; };
-                }
             }
         }
 
         ObjectRef(const ObjectRef& other)
-            : m_Ptr(other.m_Ptr), m_Deleter(other.m_Deleter)
+            : m_Ptr(other.m_Ptr)
         {
             if (m_Ptr)
             {
@@ -161,7 +154,7 @@ namespace tyr
         }
 
         ObjectRef(ObjectRef&& other) noexcept
-            : m_Ptr(other.m_Ptr), m_Deleter(std::move(other.m_Deleter))
+            : m_Ptr(other.m_Ptr)
         {
             other.m_Ptr = nullptr;
         }
@@ -170,7 +163,6 @@ namespace tyr
         template<typename U, typename = std::enable_if_t<std::is_base_of_v<T, U>>>
         ObjectRef(const ObjectRef<U>& other)
             : m_Ptr(other.m_Ptr)
-            , m_Deleter(other.m_Deleter)
         {
             if (m_Ptr)
             {
@@ -188,7 +180,6 @@ namespace tyr
             if (this != &other)
             {
                 Reset(other.m_Ptr);
-                m_Deleter = other.m_Deleter;
                 if (m_Ptr)
                 {
                     m_Ptr->AddRef();
@@ -202,7 +193,6 @@ namespace tyr
             if (this != &other)
             {
                 Reset(other.m_Ptr);
-                m_Deleter = std::move(other.m_Deleter);
                 other.m_Ptr = nullptr;
             }
             return *this;
@@ -215,7 +205,6 @@ namespace tyr
             if (m_Ptr != other.m_Ptr)
             {
                 Reset(other.m_Ptr);
-                m_Deleter = other.m_Deleter;
                 if (m_Ptr)
                 {
                     m_Ptr->AddRef();
@@ -277,14 +266,13 @@ namespace tyr
 
     private:
         T* m_Ptr = nullptr;
-        RefCountedObjectDeleter m_Deleter;
     };
 
     template<typename T>
     using ORef = ObjectRef<T>;
 
     template<typename T, typename... Args>
-    constexpr ORef<T> MakeORef(RefCountedObjectDeleter deleter, Args&&... args)
+    constexpr ORef<T> MakeORef(Args&&... args)
     {
         return ORef(new T(std::forward<Args>(args)...));
     }

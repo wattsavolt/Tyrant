@@ -8,7 +8,8 @@ namespace tyr
 	class TYR_ENGINE_EXPORT AssetManager final
 	{
 	public:
-		
+		AssetManager() = default;
+		void Update(float deltaTime);
 	};
 	
 }

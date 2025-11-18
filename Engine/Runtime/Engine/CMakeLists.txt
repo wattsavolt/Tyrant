@@ -60,7 +60,6 @@ add_common_properties(TyrantEngine)
 target_include_directories(TyrantEngine PUBLIC
 	$<BUILD_INTERFACE:${TYR_THIRD_PARTY_HEADER_LIBS_DIR}>
 	$<BUILD_INTERFACE:${TYR_RUNTIME_DIR}/Engine>
-	$<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/Generated/Engine>
 	$<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/include/Engine>)
 
 if (TYR_EDITOR_MODE)	

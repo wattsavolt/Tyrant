@@ -1,5 +1,3 @@
-
-
 #include "VulkanHelper.h"
 #include "Core.h"
 #include "VulkanExtensions.h"
@@ -127,7 +125,7 @@ namespace tyr
 		createInfo.hwnd = static_cast<HWND>(windowHandle);
 		createInfo.hinstance = GetModuleHandle(nullptr);
 
-		if (VULKAN_ERROR(vkCreateWin32SurfaceKHR(instance, &createInfo, g_VulkanAllocationCallbacks, surface)))
+		if (TYR_VULKAN_ERROR(vkCreateWin32SurfaceKHR(instance, &createInfo, g_VulkanAllocationCallbacks, surface)))
 		{
 			TYR_LOG_FATAL("Failed to create Win32 window surface!");
 		}

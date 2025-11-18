@@ -8,7 +8,7 @@
 #include "Math/Quaternion.h"
 #include "Material.h"
 #include "Vertex.h"
-#include "Resources/GpuBuffer.h"
+#include "Resources/RenderBuffer.h"
 #include "RenderDataTypesCommon.h"
 
 namespace tyr

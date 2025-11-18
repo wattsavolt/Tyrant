@@ -18,7 +18,19 @@ namespace tyr
     constexpr T FNV1aHash(const char* const input)
     {
         T hash = offsetBasis;
-        for (int i = 0; input[i] != '\0'; ++i)
+        for (uint i = 0; input[i] != '\0'; ++i)
+        {
+            hash = (hash ^ T(input[i])) * prime;
+        }
+        return hash;
+    }
+
+    // Handy for a substring
+    template<typename T, T offsetBasis, T prime>
+    constexpr T FNV1aHash(const char* const input, uint size)
+    {
+        T hash = offsetBasis;
+        for (uint i = 0; i < size; ++i)
         {
             hash = (hash ^ T(input[i])) * prime;
         }

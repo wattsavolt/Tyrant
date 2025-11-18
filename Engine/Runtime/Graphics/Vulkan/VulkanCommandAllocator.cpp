@@ -2,10 +2,11 @@
 
 #include "VulkanCommandAllocator.h"
 #include "VulkanUtility.h"
+#include "VulkanDevice.h"
 
 namespace tyr
 {
-	VulkanCommandAllocator::VulkanCommandAllocator(VulkanDevice& device, const CommandAllocatorDesc& desc)
+	VulkanCommandAllocator::VulkanCommandAllocator(DeviceInternal& device, const CommandAllocatorDesc& desc)
 		: CommandAllocator(desc)
 		, m_Device(device)
 	{
@@ -16,7 +17,7 @@ namespace tyr
 		ci.queueFamilyIndex = device.GetQueueFamilyIndex(desc.queueType);
 
 		TYR_GASSERT(vkCreateCommandPool(device.GetLogicalDevice(), &ci, g_VulkanAllocationCallbacks, &m_CommandPool));
-		VulkanUtility::SetDebugName(device.GetLogicalDevice(), desc.debugName, VK_OBJECT_TYPE_COMMAND_POOL, reinterpret_cast<uint64>(m_CommandPool));
+		VulkanUtility::SetDebugName(device.GetLogicalDevice(), desc.debugName.CStr(), VK_OBJECT_TYPE_COMMAND_POOL, reinterpret_cast<uint64>(m_CommandPool));
 	}
 
 	VulkanCommandAllocator::~VulkanCommandAllocator()

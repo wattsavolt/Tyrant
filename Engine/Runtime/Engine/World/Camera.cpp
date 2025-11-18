@@ -11,18 +11,14 @@ namespace tyr
 		m_Up = Vector3::c_Up;
 		m_Forward = Vector3::c_Forward;
 		m_Fov = 90;
-		m_Width = 1920;
-		m_Height = 1080;
 		m_NearZ = 1;
 		m_FarZ = 2000;
-
-		BuildProjection();
 	}
 
-	Camera::Camera(const Vector3& position, const Vector3& up, const Vector3& forward, float fov, float width, float height, float nearZ, float farZ)
-		: m_Position(position), m_Up(up), m_Forward(forward), m_Fov(fov), m_Width(width), m_Height(height), m_NearZ(nearZ), m_FarZ(farZ)
+	Camera::Camera(const Vector3& position, const Vector3& up, const Vector3& forward, float fov, float nearZ, float farZ)
+		: m_Position(position), m_Up(up), m_Forward(forward), m_Fov(fov), m_NearZ(nearZ), m_FarZ(farZ)
 	{
-		BuildProjection();
+		
 	}
 
 	Camera::~Camera()
@@ -104,12 +100,6 @@ namespace tyr
 		}
 
 		m_Up = up;
-	}
-
-	void Camera::BuildProjection()
-	{
-		// Do reverse-z for greater floating-point precision
-		m_Projection = Matrix4::CreatePerspective(m_Fov, m_Width / m_Height, m_FarZ, m_NearZ);
 	}
 }
 

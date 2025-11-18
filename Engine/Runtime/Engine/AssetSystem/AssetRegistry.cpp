@@ -1,6 +1,6 @@
 #include "AssetRegistry.h"
 #include "Memory/Memory.h"
-#include "EngineConfig.h"
+#include "BuildConfig.h"
 #include "AssetUtil.h"
 
 namespace tyr
@@ -28,7 +28,7 @@ namespace tyr
 
     void AssetRegistry::Load()
     {
-        char absAssetRegistryPath[TYR_MAX_PATH_STR_SIZE];
+        char absAssetRegistryPath[TYR_MAX_PATH_TOTAL_SIZE];
         AssetUtil::CreateFullPath(absAssetRegistryPath, c_AssetRegistryPath);
         const fs::path fsPath = absAssetRegistryPath;
         if (std::filesystem::exists(fsPath))
@@ -39,7 +39,7 @@ namespace tyr
 
     void AssetRegistry::Save()
     {
-        char absAssetRegistryPath[TYR_MAX_PATH_STR_SIZE];
+        char absAssetRegistryPath[TYR_MAX_PATH_TOTAL_SIZE];
         AssetUtil::CreateFullPath(absAssetRegistryPath, c_AssetRegistryPath);
         PathUtil::CreateDirectoriesInFilePath(absAssetRegistryPath);
         Serializer::Instance().SerializeToFile<AssetRegistryFile>(absAssetRegistryPath, m_RegistryFile);

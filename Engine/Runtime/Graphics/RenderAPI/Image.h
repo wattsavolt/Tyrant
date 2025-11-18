@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "RenderAPITypes.h"
@@ -6,11 +5,15 @@
 
 namespace tyr
 {
+	struct ImageHandle : public ResourceHandle {};
+	struct ImageViewHandle : public ResourceHandle {};
+	struct SamplerHandle : public ResourceHandle {};
+
 	struct ImageDesc
 	{
-#if TYR_DEBUG
-		String debugName;
-#endif
+		TYR_DECLARE_GDEBUGSTRING(debugName);
+		// Handle to an externally created image required for swapchain images
+		Handle externalImage = nullptr;
 		uint width;
 		uint height;
 		uint depth;
@@ -22,8 +25,6 @@ namespace tyr
 		ImageUsage usage;
 		ImageLayout layout = IMAGE_LAYOUT_GENERAL;
 		MemoryProperty memoryProperty;
-		// Handle to an externally created image required for swapchain images
-		Handle externalImage = nullptr;
 	};
 
 	struct SubresourceRange
@@ -53,7 +54,7 @@ namespace tyr
 	struct ClearDepthStencilValue
 	{
 		float depth;
-		uint32_t stencil;
+		uint stencil;
 	};
 
 	union ClearValue
@@ -81,60 +82,21 @@ namespace tyr
 		Extents3 imageExtent;
 	};
 
-	class Device; 
-	class Buffer;
-
-	/// Class repesenting a image
-	class TYR_GRAPHICS_EXPORT Image : public AtomicRefCountedObject
-	{
-	public:
-		Image(Device& device, const ImageDesc& desc);
-		virtual ~Image() = default;
-
-		const ImageDesc& GetDesc() const { return m_Desc; }
-
-		// Returns the size allocated for the image in bytes.
-		// Should not be called for externally created images (ie. swapchain images).
-		size_t GetSizeAllocated() const 
-		{ 
-			TYR_ASSERT(!m_Desc.externalImage);
-			return m_SizeAllocated; 
-		};
-
-	protected:
-		Device& m_Device;
-		ImageDesc m_Desc;
-		size_t m_SizeAllocated;
-	};
-
 	struct ImageViewDesc
 	{
-#if TYR_DEBUG
-		String debugName;
+#if !TYR_FINAL
+		GDebugString debugName;
 #endif
-		ORef<Image> image;
+		ImageHandle image;
 		SubresourceRange subresourceRange;
 		ImageType viewType;
 		// Specifies whether this image view points at a swap chain image
 		bool isSwapChainView = false;
 	};
 
-	/// Class repesenting a image view
-	class TYR_GRAPHICS_EXPORT ImageView : public AtomicRefCountedObject
-	{
-	public:
-		ImageView(const ImageViewDesc& desc);
-		virtual ~ImageView() = default;
-
-		const ImageViewDesc& GetDesc() const { return m_Desc; }
-	protected:
-		ImageViewDesc m_Desc;
-
-	};
-
 	struct SamplerDesc
 	{
-		String debugName;
+		TYR_DECLARE_GDEBUGSTRING(debugName);
 		Filter magFilter;
 		Filter minFilter;
 		SamplerMipmapMode mipmapMode;
@@ -150,18 +112,5 @@ namespace tyr
 		bool anisotropyEnable;
 		bool compareEnable;
 		bool unnormalisedCoords;
-	};
-
-	/// Class repesenting a image sampler
-	class TYR_GRAPHICS_EXPORT Sampler
-	{
-	public:
-		Sampler(const SamplerDesc& desc);
-		virtual ~Sampler() = default;
-
-		const SamplerDesc& GetDesc() const { return m_Desc; }
-	protected:
-		SamplerDesc m_Desc;
-
 	};
 }

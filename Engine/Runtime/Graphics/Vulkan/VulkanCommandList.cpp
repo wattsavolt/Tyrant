@@ -1,23 +1,20 @@
-
-
 #include "VulkanCommandList.h"
 #include "Memory/StackAllocation.h"
 #include "VulkanCommandAllocator.h"
 #include "VulkanSync.h"
 #include "VulkanBuffer.h"
-#include "VulkanBuffer.h"
 #include "VulkanImage.h"
-#include "VulkanDescriptorSet.h"
+#include "VulkanDescriptorSetGroup.h"
 #include "VulkanPipeline.h"
 #include "VulkanExtensions.h"
 
 namespace tyr
 {
-	VulkanCommandList::VulkanCommandList(VulkanDevice& device, const CommandListDesc& desc)
+	CommandListInternal::CommandListInternal(DeviceInternal& device, const CommandListDesc& desc)
 		: CommandList(desc)
 		, m_Device(device)
 	{
-		m_CommandPool = RefCast<VulkanCommandAllocator>(desc.allocator)->GetCommandPool();
+		m_CommandPool = static_cast<VulkanCommandAllocator*>(desc.allocator)->GetCommandPool();
 		m_QueueType = m_Desc.allocator->GetDesc().queueType;
 		m_QueueFamilyIndex = device.GetQueueFamilyIndex(m_QueueType);
 		VkCommandBufferAllocateInfo info;
@@ -28,37 +25,44 @@ namespace tyr
 		info.commandBufferCount = 1;
 
 		vkAllocateCommandBuffers(device.GetLogicalDevice(), &info, &m_CommandBuffer);
-		VulkanUtility::SetDebugName(device.GetLogicalDevice(), desc.debugName.c_str(), VK_OBJECT_TYPE_COMMAND_BUFFER, reinterpret_cast<uint64>(m_CommandBuffer));
+#if !TYR_FINAL
+		VulkanUtility::SetDebugName(device.GetLogicalDevice(), desc.debugName.CStr(), VK_OBJECT_TYPE_COMMAND_BUFFER, reinterpret_cast<uint64>(m_CommandBuffer));
+#endif
 	}
 
-	VulkanCommandList::~VulkanCommandList()
+	CommandListInternal::~CommandListInternal()
 	{
 		vkFreeCommandBuffers(m_Device.GetLogicalDevice(), m_CommandPool, 1, &m_CommandBuffer);
 	}
 	
-	void VulkanCommandList::Begin(CommandBufferUsage usage)
+	void CommandList::Begin(CommandBufferUsage usage)
 	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+
 		VkCommandBufferBeginInfo info;
 		info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 		info.pNext = nullptr;
 		info.flags = static_cast<VkCommandBufferUsageFlags>(usage);
 		info.pInheritanceInfo = nullptr;
 
-		TYR_GASSERT(vkBeginCommandBuffer(m_CommandBuffer, &info));
+		TYR_GASSERT(vkBeginCommandBuffer(commandList.m_CommandBuffer, &info));
 	}
 
-	void VulkanCommandList::End()
+	void CommandList::End()
 	{
-		TYR_GASSERT(vkEndCommandBuffer(m_CommandBuffer));
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		TYR_GASSERT(vkEndCommandBuffer(commandList.m_CommandBuffer));
 	}
 
-	void VulkanCommandList::Reset(bool releaseResources)
+	void CommandList::Reset(bool releaseResources)
 	{
-		TYR_GASSERT(vkResetCommandBuffer(m_CommandBuffer, releaseResources ? VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT : 0));
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		TYR_GASSERT(vkResetCommandBuffer(commandList.m_CommandBuffer, releaseResources ? VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT : 0));
 	}
 
-	void VulkanCommandList::ClearColourImage(ORef<Image>& image, ImageLayout layout, const ClearColourValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount)
+	void CommandList::ClearColourImage(ImageHandle image, ImageLayout layout, const ClearColourValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount)
 	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 		VkImageSubresourceRange* vkSubresourceRanges = StackAlloc<VkImageSubresourceRange>(rangeCount);
 		for (uint i = 0; i < rangeCount; ++i)
 		{
@@ -69,12 +73,14 @@ namespace tyr
 			vkSubresourceRanges[i].layerCount = subresourceRanges[i].arrayLayerCount;
 		}
 		VkClearColorValue* vkClearValue = (VkClearColorValue*)&clearValue;
-		vkCmdClearColorImage(m_CommandBuffer, image.GetAs<VulkanImage>()->GetImage(), static_cast<VkImageLayout>(layout), vkClearValue, rangeCount, vkSubresourceRanges);
+		Image imageData = commandList.m_Device.GetImage(image);
+		vkCmdClearColorImage(commandList.m_CommandBuffer, imageData.image, static_cast<VkImageLayout>(layout), vkClearValue, rangeCount, vkSubresourceRanges);
 		StackFreeLast();
 	}
 
-	void VulkanCommandList::ClearDepthStencilImage(ORef<Image>& image, ImageLayout layout, const ClearDepthStencilValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount)
+	void CommandList::ClearDepthStencilImage(ImageHandle image, ImageLayout layout, const ClearDepthStencilValue& clearValue, const SubresourceRange* subresourceRanges, uint rangeCount)
 	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 		VkImageSubresourceRange* vkSubresourceRanges = StackAlloc<VkImageSubresourceRange>(rangeCount);
 		for (uint i = 0; i < rangeCount; ++i)
 		{
@@ -85,23 +91,25 @@ namespace tyr
 			vkSubresourceRanges[i].layerCount = subresourceRanges[i].arrayLayerCount;
 		}
 		VkClearDepthStencilValue* vkClearValue = (VkClearDepthStencilValue*)&clearValue;
-		vkCmdClearDepthStencilImage(m_CommandBuffer, image.GetAs<VulkanImage>()->GetImage(), static_cast<VkImageLayout>(layout), vkClearValue, rangeCount, vkSubresourceRanges);
+		Image imageData = commandList.m_Device.GetImage(image);
+		vkCmdClearDepthStencilImage(commandList.m_CommandBuffer, imageData.image, static_cast<VkImageLayout>(layout), vkClearValue, rangeCount, vkSubresourceRanges);
 		StackFreeLast();
 	}
 
-	void VulkanCommandList::BeginRendering(const RenderingInfo& renderingInfo) 
+	void CommandList::BeginRendering(const RenderingInfo& renderingInfo) 
 	{
-		auto CreateVulkankRenderingAttachmentInfo = [](const RenderingAttachmentInfo& renderingAttachmentInfo, 
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		static auto CreateVulkankRenderingAttachmentInfo = [&commandList](const RenderingAttachmentInfo& renderingAttachmentInfo,
 			VkRenderingAttachmentInfo& vkRenderingAttachmentInfo) -> void
 		{
 			vkRenderingAttachmentInfo.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
 			vkRenderingAttachmentInfo.pNext = nullptr;
-			vkRenderingAttachmentInfo.imageView = renderingAttachmentInfo.imageView.GetAs<VulkanImageView>()->GetImageView();
+			vkRenderingAttachmentInfo.imageView = commandList.m_Device.GetImageView(renderingAttachmentInfo.imageView).imageView;
 			vkRenderingAttachmentInfo.imageLayout = VulkanUtility::ToVulkanImageLayout(renderingAttachmentInfo.imageLayout);
 			vkRenderingAttachmentInfo.resolveMode = static_cast<VkResolveModeFlagBits>(renderingAttachmentInfo.resolveMode);
 			if (renderingAttachmentInfo.resolveImageView)
 			{
-				vkRenderingAttachmentInfo.resolveImageView = renderingAttachmentInfo.resolveImageView.GetAs<VulkanImageView>()->GetImageView();
+				vkRenderingAttachmentInfo.resolveImageView = commandList.m_Device.GetImageView(renderingAttachmentInfo.resolveImageView).imageView;
 				vkRenderingAttachmentInfo.resolveImageLayout = VulkanUtility::ToVulkanImageLayout(renderingAttachmentInfo.resolveImageLayout);
 			}
 			else
@@ -125,17 +133,17 @@ namespace tyr
 		}
 
 		VkRenderingAttachmentInfo* vkDepthAttachment = nullptr;
-		if (renderingInfo.depthAttachment)
+		if (renderingInfo.hasDepthAttachment)
 		{
 			vkDepthAttachment = stack.Alloc<VkRenderingAttachmentInfo>();
-			CreateVulkankRenderingAttachmentInfo(*renderingInfo.depthAttachment, *vkDepthAttachment);
+			CreateVulkankRenderingAttachmentInfo(renderingInfo.depthAttachment, *vkDepthAttachment);
 		}
 
 		VkRenderingAttachmentInfo* vkStencilAttachment = nullptr;
-		if (renderingInfo.stencilAttachment)
+		if (renderingInfo.hasDepthAttachment)
 		{
 			vkStencilAttachment = stack.Alloc<VkRenderingAttachmentInfo>();
-			CreateVulkankRenderingAttachmentInfo(*renderingInfo.stencilAttachment, *vkStencilAttachment);
+			CreateVulkankRenderingAttachmentInfo(renderingInfo.stencilAttachment, *vkStencilAttachment);
 		}
 
 		VkRenderingInfo vkRenderingInfo;
@@ -153,19 +161,21 @@ namespace tyr
 		vkRenderingInfo.pDepthAttachment = vkDepthAttachment;
 		vkRenderingInfo.pStencilAttachment = vkStencilAttachment;
 
-		vkCmdBeginRendering(m_CommandBuffer, &vkRenderingInfo);
+		vkCmdBeginRendering(commandList.m_CommandBuffer, &vkRenderingInfo);
 	}
 
-	void VulkanCommandList::EndRendering() 
+	void CommandList::EndRendering() 
 	{
-		vkCmdEndRendering(m_CommandBuffer);
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		vkCmdEndRendering(commandList.m_CommandBuffer);
 	}
 
-	void VulkanCommandList::AddBarriers(const BufferBarrier* bufferBarriers, uint bufferBarrierCount,
+	void CommandList::AddBarriers(const BufferBarrier* bufferBarriers, uint bufferBarrierCount,
 		const ImageBarrier* imageBarriers, uint imageBarrierCount,
 		const PipelineBarrier* pipelineBarriers, uint pipelineBarrierCount,
 		Dependency dependency)
 	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 		StackAllocManager stack;
 		VkMemoryBarrier2* vkMemoryBarriers = nullptr;
 		if (pipelineBarrierCount > 0)
@@ -188,14 +198,14 @@ namespace tyr
 			vkBufferBarriers = stack.Alloc<VkBufferMemoryBarrier2>(bufferBarrierCount);
 			for (uint i = 0; i < bufferBarrierCount; ++i)
 			{
-				VulkanBuffer* buffer = static_cast<VulkanBuffer*>(bufferBarriers[i].buffer);
+				Buffer& buffer = commandList.m_Device.GetBuffer(bufferBarriers[i].buffer);
 				vkBufferBarriers[i].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
 				vkBufferBarriers[i].pNext = nullptr;
 				vkBufferBarriers[i].srcAccessMask = static_cast<VkAccessFlags2>(bufferBarriers[i].srcAccess);
 				vkBufferBarriers[i].dstAccessMask = static_cast<VkAccessFlags2>(bufferBarriers[i].dstAccess);
-				vkBufferBarriers[i].buffer = buffer->GetBuffer();
+				vkBufferBarriers[i].buffer = buffer.buffer;
 				vkBufferBarriers[i].offset = bufferBarriers[i].offset;
-				vkBufferBarriers[i].size = buffer->GetDesc().size;
+				vkBufferBarriers[i].size = bufferBarriers[i].size;
 				vkBufferBarriers[i].srcQueueFamilyIndex = bufferBarriers[i].srcQueueFamilyIndex;
 				if (vkBufferBarriers[i].srcQueueFamilyIndex != VK_QUEUE_FAMILY_IGNORED)
 				{
@@ -216,12 +226,12 @@ namespace tyr
 			vkImageBarriers = stack.Alloc<VkImageMemoryBarrier2>(imageBarrierCount);
 			for (uint i = 0; i < imageBarrierCount; ++i)
 			{
-				VulkanImage* image = static_cast<VulkanImage*>(imageBarriers[i].image);
+				Image& image = commandList.m_Device.GetImage(imageBarriers[i].image);
 				vkImageBarriers[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
 				vkImageBarriers[i].pNext = nullptr;
 				vkImageBarriers[i].srcAccessMask = static_cast<VkAccessFlags2>(imageBarriers[i].srcAccess);
 				vkImageBarriers[i].dstAccessMask = static_cast<VkAccessFlags2>(imageBarriers[i].dstAccess);
-				vkImageBarriers[i].image = image->GetImage();
+				vkImageBarriers[i].image = image.image;
 				vkImageBarriers[i].srcQueueFamilyIndex = imageBarriers[i].srcQueueFamilyIndex;
 				if (vkImageBarriers[i].srcQueueFamilyIndex != VK_QUEUE_FAMILY_IGNORED)
 				{
@@ -254,11 +264,14 @@ namespace tyr
 		vkDependencyInfo.imageMemoryBarrierCount = static_cast<uint>(imageBarrierCount);
 		vkDependencyInfo.pImageMemoryBarriers = vkImageBarriers;
 
-		vkCmdPipelineBarrier2(m_CommandBuffer, &vkDependencyInfo);
+		vkCmdPipelineBarrier2(commandList.m_CommandBuffer, &vkDependencyInfo);
 	}
 
-	void VulkanCommandList::CopyBuffer(const ORef<Buffer>& srcBuffer, const ORef<Buffer>& dstBuffer, const BufferCopyInfo* copyInfos, uint copyInfoCount)
+	void CommandList::CopyBuffer(BufferHandle srcBuffer, BufferHandle dstBuffer, const BufferCopyInfo* copyInfos, uint copyInfoCount)
 	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		Buffer& src = commandList.m_Device.GetBuffer(srcBuffer);
+		Buffer& dst = commandList.m_Device.GetBuffer(dstBuffer);
 		VkBufferCopy* copies = StackAlloc<VkBufferCopy>(copyInfoCount);
 		for (uint i = 0; i < copyInfoCount; ++i)
 		{
@@ -266,21 +279,28 @@ namespace tyr
 			copies[i].dstOffset = static_cast<VkDeviceSize>(copyInfos[i].dstOffset);
 			copies[i].size = static_cast<VkDeviceSize>(copyInfos[i].size);
 		}
-		vkCmdCopyBuffer(m_CommandBuffer, srcBuffer.GetAs<VulkanBuffer>()->GetBuffer(), dstBuffer.GetAs<VulkanBuffer>()->GetBuffer(), copyInfoCount, copies);
+		vkCmdCopyBuffer(commandList.m_CommandBuffer, src.buffer, dst.buffer, copyInfoCount, copies);
 		StackFreeLast();
 	}
 
-	void VulkanCommandList::CopyBuffer(const ORef<Buffer>& srcBuffer, const ORef<Buffer>& dstBuffer)
+	void CommandList::CopyBuffer(BufferHandle srcBuffer, BufferHandle dstBuffer)
 	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		Buffer& src = commandList.m_Device.GetBuffer(srcBuffer);
+		Buffer& dst = commandList.m_Device.GetBuffer(dstBuffer);
 		VkBufferCopy vkBufferCopy;
 		vkBufferCopy.srcOffset = 0;
 		vkBufferCopy.dstOffset = 0;
-		vkBufferCopy.size = static_cast<VkDeviceSize>(srcBuffer->GetDesc().size);
-		vkCmdCopyBuffer(m_CommandBuffer, srcBuffer.GetAs<VulkanBuffer>()->GetBuffer(), dstBuffer.GetAs<VulkanBuffer>()->GetBuffer(), 1, &vkBufferCopy);
+		vkBufferCopy.size = src.size;
+		vkCmdCopyBuffer(commandList.m_CommandBuffer, src.buffer, dst.buffer, 1, &vkBufferCopy);
 	}
 
-	void VulkanCommandList::CopyBufferToImage(const ORef<Buffer>& buffer, const ORef<Image>& image, ImageLayout targetLayout, const BufferImageCopyInfo* regions, uint regionCount)
+	void CommandList::CopyBufferToImage(BufferHandle buffer, ImageHandle image, ImageLayout targetLayout, const BufferImageCopyInfo* regions, uint regionCount)
 	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		Buffer& src = commandList.m_Device.GetBuffer(buffer);
+		Image& dst = commandList.m_Device.GetImage(image);
+
 		VkBufferImageCopy* copies = StackAlloc<VkBufferImageCopy>(regionCount);
 		for (uint i = 0; i < regionCount; ++i)
 		{
@@ -294,12 +314,15 @@ namespace tyr
 			copy.imageExtent = { region.imageExtent.width, region.imageExtent.height, region.imageExtent.depth };
 		}
 		VkImageLayout vkLayout = VulkanUtility::ToVulkanImageLayout(targetLayout);
-		vkCmdCopyBufferToImage(m_CommandBuffer, buffer.GetAs<VulkanBuffer>()->GetBuffer(), image.GetAs<VulkanImage>()->GetImage(), vkLayout, regionCount, copies);
+		vkCmdCopyBufferToImage(commandList.m_CommandBuffer, src.buffer, dst.image, vkLayout, regionCount, copies);
 		StackFreeLast();
 	}
 
-	void VulkanCommandList::CopyImage(const ORef<Image>& srcImage, ImageLayout srcLayout, const ORef<Image>& dstImage, ImageLayout dstLayout, const ImageCopyInfo* regions, uint regionCount)
+	void CommandList::CopyImage(ImageHandle srcImage, ImageLayout srcLayout, ImageHandle dstImage, ImageLayout dstLayout, const ImageCopyInfo* regions, uint regionCount)
 	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		Image& src = commandList.m_Device.GetImage(srcImage);
+		Image& dst = commandList.m_Device.GetImage(dstImage);
 		VkImageCopy* copies = StackAlloc<VkImageCopy>(regionCount);
 		for (uint i = 0; i < regionCount; ++i)
 		{
@@ -313,12 +336,15 @@ namespace tyr
 		}
 		VkImageLayout vkSrcLayout = VulkanUtility::ToVulkanImageLayout(srcLayout);
 		VkImageLayout vkDstLayout = VulkanUtility::ToVulkanImageLayout(dstLayout);
-		vkCmdCopyImage(m_CommandBuffer, srcImage.GetAs<VulkanImage>()->GetImage(), vkSrcLayout, dstImage.GetAs<VulkanImage>()->GetImage(), vkDstLayout, regionCount, copies);
+		vkCmdCopyImage(commandList.m_CommandBuffer, src.image, vkSrcLayout, dst.image, vkDstLayout, regionCount, copies);
 		StackFreeLast();
 	}
 
-	void VulkanCommandList::CopyImageToBuffer(const ORef<Image>& image, const ORef<Buffer>& buffer, ImageLayout currentLayout, const BufferImageCopyInfo* regions, uint regionCount)
+	void CommandList::CopyImageToBuffer(ImageHandle image, BufferHandle buffer, ImageLayout currentLayout, const BufferImageCopyInfo* regions, uint regionCount)
 	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		Image& src = commandList.m_Device.GetImage(image);
+		Buffer& dst = commandList.m_Device.GetBuffer(buffer);
 		VkBufferImageCopy* copies = StackAlloc<VkBufferImageCopy>(regionCount);
 		for (uint i = 0; i < regionCount; ++i)
 		{
@@ -332,12 +358,13 @@ namespace tyr
 			copy.imageExtent = { region.imageExtent.width, region.imageExtent.height, region.imageExtent.depth };
 		}
 		VkImageLayout vkLayout = VulkanUtility::ToVulkanImageLayout(currentLayout);
-		vkCmdCopyImageToBuffer(m_CommandBuffer, image.GetAs<VulkanImage>()->GetImage(), vkLayout, buffer.GetAs<VulkanBuffer>()->GetBuffer(), regionCount, copies);
+		vkCmdCopyImageToBuffer(commandList.m_CommandBuffer, src.image, vkLayout, dst.buffer, regionCount, copies);
 		StackFreeLast();
 	}
 
-	void VulkanCommandList::SetViewport(const Viewport* viewports, uint viewportCount)
+	void CommandList::SetViewport(const Viewport* viewports, uint viewportCount)
 	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 		VkViewport* vkViewports = StackAlloc<VkViewport>(viewportCount);
 		// Flip y as Vulkan has an inverted clip space compared to DirectX
 		for (uint i = 0; i < viewportCount; ++i)
@@ -350,12 +377,13 @@ namespace tyr
 			vkViewports[i].minDepth = viewports[i].minDepth;
 			vkViewports[i].maxDepth = viewports[i].maxDepth;
 		}
-		vkCmdSetViewport(m_CommandBuffer, 0, viewportCount, vkViewports);
+		vkCmdSetViewport(commandList.m_CommandBuffer, 0, viewportCount, vkViewports);
 		StackFreeLast();
 	}
 
-	void VulkanCommandList::SetScissor(const GraphicsRect* scissors, uint scissorCount)
+	void CommandList::SetScissor(const GraphicsRect* scissors, uint scissorCount)
 	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 		VkRect2D* vkScissors = StackAlloc<VkRect2D>(scissorCount);
 		for (uint i = 0; i < scissorCount; ++i)
 		{
@@ -364,38 +392,33 @@ namespace tyr
 			vkScissors[i].extent.width = scissors[i].extents.width;
 			vkScissors[i].extent.height = scissors[i].extents.height;
 		}
-		vkCmdSetScissor(m_CommandBuffer, 0, scissorCount, vkScissors);
+		vkCmdSetScissor(commandList.m_CommandBuffer, 0, scissorCount, vkScissors);
 		StackFreeLast();
 	}
 
-	void VulkanCommandList::BindPipeline(const Ref<Pipeline>& pipeline)
+	void CommandList::BindGraphicsPipeline(GraphicsPipelineHandle pipeline)
 	{
-		VkPipelineBindPoint bindPoint; 
-		VkPipeline vkPipeline;
-		switch (pipeline->GetPipelineType())
-		{
-		case PipelineType::Graphics:
-			bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-			vkPipeline = RefCast<VulkanGraphicsPipeline>(pipeline)->GetPipeline();
-			break;
-		case PipelineType::Compute:
-			bindPoint = VK_PIPELINE_BIND_POINT_COMPUTE;
-			vkPipeline = RefCast<VulkanComputePipeline>(pipeline)->GetPipeline();
-			break;
-		case  PipelineType::RayTracing:
-			bindPoint = VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR;
-			vkPipeline = RefCast<VulkanRayTracingPipeline>(pipeline)->GetPipeline();
-			break;
-		default:
-			TYR_ASSERT(false);
-			return;
-		}
-		vkCmdBindPipeline(m_CommandBuffer, bindPoint, vkPipeline);
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		vkCmdBindPipeline(commandList.m_CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, commandList.m_Device.GetGraphicsPipeline(pipeline).pipeline);
 	}
 
-	void VulkanCommandList::BindVertexBuffers(const Buffer* const* vertexBuffers, uint bufferCount)
+	void CommandList::BindComputePipeline(ComputePipelineHandle pipeline)
+	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		vkCmdBindPipeline(commandList.m_CommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, commandList.m_Device.GetComputePipeline(pipeline).pipeline);
+	}
+
+	void CommandList::BindRayTracingPipeline(RayTracingPipelineHandle pipeline)
+	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		vkCmdBindPipeline(commandList.m_CommandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, commandList.m_Device.GetRayTracingPipeline(pipeline).pipeline);
+	}
+
+	void CommandList::BindVertexBuffers(const BufferHandle* vertexBuffers, uint bufferCount)
 	{
 		TYR_ASSERT(bufferCount > 0);
+
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 
 		StackAllocManager stack;
 		VkBuffer* buffers = stack.Alloc<VkBuffer>(bufferCount);
@@ -403,16 +426,17 @@ namespace tyr
 
 		for (uint i = 0; i < bufferCount; ++i)
 		{
-			const VulkanBuffer* buffer = static_cast<const VulkanBuffer*>(vertexBuffers[i]);
-			buffers[i] = buffer->GetBuffer();
+			buffers[i] = commandList.m_Device.GetBuffer(vertexBuffers[i]).buffer;
 			offsets[i] = 0;
 		}
-		vkCmdBindVertexBuffers(m_CommandBuffer, 0, bufferCount, buffers, offsets);
+		vkCmdBindVertexBuffers(commandList.m_CommandBuffer, 0, bufferCount, buffers, offsets);
 	}
 
-	void VulkanCommandList::BindVertexBuffers(const BufferView* const* vertexBufferViews, uint bufferViewCount)
+	void CommandList::BindVertexBuffers(const BufferViewHandle* vertexBufferViews, uint bufferViewCount)
 	{
 		TYR_ASSERT(bufferViewCount > 0);
+
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 
 		StackAllocManager stack;
 		VkBuffer* buffers = stack.Alloc<VkBuffer>(bufferViewCount);
@@ -420,36 +444,36 @@ namespace tyr
 
 		for (uint i = 0; i < bufferViewCount; ++i)
 		{
-			const VulkanBufferView* bufferView = static_cast<const VulkanBufferView*>(vertexBufferViews[i]);
-			const BufferViewDesc& viewDesc = bufferView->GetDesc();
-			buffers[i] = bufferView->GetBuffer()->GetBuffer();
-			offsets[i] = viewDesc.offset;
+			const BufferView& view = commandList.m_Device.GetBufferView(vertexBufferViews[i]);
+			buffers[i] = commandList.m_Device.GetBuffer(view.buffer).buffer;
+			offsets[i] = view.offset;
 		}
-		vkCmdBindVertexBuffers(m_CommandBuffer, 0, bufferViewCount, buffers, offsets);
+		vkCmdBindVertexBuffers(commandList.m_CommandBuffer, 0, bufferViewCount, buffers, offsets);
 	}
 
-	void VulkanCommandList::BindIndexBuffer(const ORef<Buffer>& indexBuffer, size_t offset)
+	void CommandList::BindIndexBuffer(BufferHandle indexBuffer, size_t offset)
 	{
-		const VulkanBuffer* buffer = indexBuffer.GetAs<VulkanBuffer>();
-		BindIndexBufferInternal(buffer, offset);
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		commandList.BindIndexBufferInternal(indexBuffer, offset);
 	}
 
-	void VulkanCommandList::BindIndexBuffer(const ORef<BufferView>& indexBufferView)
+	void CommandList::BindIndexBuffer(BufferViewHandle indexBufferView)
 	{
-		const VulkanBufferView* vulkanBufferView = indexBufferView.GetAs<VulkanBufferView>();
-		const BufferViewDesc& viewDesc = indexBufferView->GetDesc();
-		BindIndexBufferInternal(vulkanBufferView->GetBuffer(), viewDesc.offset);
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		const BufferView& view = commandList.m_Device.GetBufferView(indexBufferView);
+		commandList.BindIndexBufferInternal(view.buffer, view.offset);
 	}
 
-	void VulkanCommandList::BindIndexBufferInternal(const VulkanBuffer* buffer, size_t offset)
+	void CommandListInternal::BindIndexBufferInternal(BufferHandle buffer, size_t offset)
 	{
-		const BufferDesc& bufferDesc = buffer->GetDesc();
+		Buffer& bufferData = m_Device.GetBuffer(buffer);
+
 		VkIndexType type;
-		if (bufferDesc.stride == 2)
+		if (bufferData.stride == 2)
 		{
 			type = VK_INDEX_TYPE_UINT16;
 		}
-		else if (bufferDesc.stride == 4)
+		else if (bufferData.stride == 4)
 		{
 			type = VK_INDEX_TYPE_UINT32;
 		}
@@ -459,64 +483,73 @@ namespace tyr
 			TYR_ASSERT(false);
 		}
 
-		vkCmdBindIndexBuffer(m_CommandBuffer, buffer->GetBuffer(), static_cast<VkDeviceSize>(offset), type);
+		vkCmdBindIndexBuffer(m_CommandBuffer, bufferData.buffer, static_cast<VkDeviceSize>(offset), type);
 	}
 
-	void VulkanCommandList::BindDescriptorSetGroup(const Ref<DescriptorSetGroup>& group, const Ref<Pipeline>& pipeline)
+	void CommandList::BindDescriptorSet(DescriptorSetGroupHandle group, GraphicsPipelineHandle pipeline)
 	{
-		const DescriptorSetGroupDesc& groupDesc = group->GetDesc();
-		const Ref<VulkanDescriptorSetGroup>& vulkanGroup = RefCast<VulkanDescriptorSetGroup>(group);
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 
-		PipelineType pipelineType = pipeline->GetPipelineType();
-		VkPipelineLayout vkPipelineLayout;
-		VkPipelineBindPoint vkPipelineBindPoint;
-		switch (pipelineType)
-		{
-		case PipelineType::Graphics:
-			vkPipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-			vkPipelineLayout = RefCast<VulkanGraphicsPipeline>(pipeline)->GetPipelineLayout();
-			break;
-		case PipelineType::Compute:
-			vkPipelineBindPoint = VK_PIPELINE_BIND_POINT_COMPUTE;
-			vkPipelineLayout = RefCast<VulkanComputePipeline>(pipeline)->GetPipelineLayout();
-			break;
-		case  PipelineType::RayTracing:
-			vkPipelineBindPoint = VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR;
-			vkPipelineLayout = RefCast<VulkanRayTracingPipeline>(pipeline)->GetPipelineLayout();
-			break;
-		default:
-			TYR_ASSERT(false);
-			return;
-		}
-		const VkDescriptorSet* sets = vulkanGroup->GetSets();
-		vkCmdBindDescriptorSets(m_CommandBuffer, vkPipelineBindPoint, vkPipelineLayout, 0, groupDesc.layoutCount,
-			sets, 0, nullptr);
+		const DescriptorSetGroup& groupData = commandList.m_Device.GetDescriptorSetGroup(group);
+		const GraphicsPipeline& pipelineData = commandList.m_Device.GetGraphicsPipeline(pipeline);
+
+		vkCmdBindDescriptorSets(commandList.m_CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineData.pipelineLayout, 0, groupData.layouts.Size(),
+			groupData.sets.Data(), 0, nullptr);
 	}
 
-	void VulkanCommandList::DrawIndexed(uint indexCount, uint instanceCount, uint firstIndex, int vertexOffset, uint firstInstance)
+	void CommandList::BindDescriptorSet(DescriptorSetGroupHandle group, ComputePipelineHandle pipeline)
 	{
-		vkCmdDrawIndexed(m_CommandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+
+		const DescriptorSetGroup& groupData = commandList.m_Device.GetDescriptorSetGroup(group);
+		const ComputePipeline& pipelineData = commandList.m_Device.GetComputePipeline(pipeline);
+
+		vkCmdBindDescriptorSets(commandList.m_CommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineData.pipelineLayout, 0, groupData.layouts.Size(),
+			groupData.sets.Data(), 0, nullptr);
 	}
 
-	void VulkanCommandList::Draw(uint vertexCount, uint instanceCount, uint firstVertex, uint firstInstance)
+	void CommandList::BindDescriptorSet(DescriptorSetGroupHandle group, RayTracingPipelineHandle pipeline)
 	{
-		vkCmdDraw(m_CommandBuffer, vertexCount, instanceCount, firstVertex, firstInstance);
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+
+		const DescriptorSetGroup& groupData = commandList.m_Device.GetDescriptorSetGroup(group);
+		const RayTracingPipeline& pipelineData = commandList.m_Device.GetRayTracingPipeline(pipeline);
+
+		vkCmdBindDescriptorSets(commandList.m_CommandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipelineData.pipelineLayout, 0, groupData.layouts.Size(),
+			groupData.sets.Data(), 0, nullptr);
 	}
 
-	void VulkanCommandList::DrawMeshTasks(uint groupCountX, uint groupCountY, uint groupCountZ)
+	void CommandList::DrawIndexed(uint indexCount, uint instanceCount, uint firstIndex, int vertexOffset, uint firstInstance)
 	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		vkCmdDrawIndexed(commandList.m_CommandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+	}
+
+	void CommandList::Draw(uint vertexCount, uint instanceCount, uint firstVertex, uint firstInstance)
+	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		vkCmdDraw(commandList.m_CommandBuffer, vertexCount, instanceCount, firstVertex, firstInstance);
+	}
+
+	void CommandList::DrawMeshTasks(uint groupCountX, uint groupCountY, uint groupCountZ)
+	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 		// TODO: Add the extension
-		vkCmdDrawMeshTasksEXT(m_CommandBuffer, groupCountX, groupCountY, groupCountZ);
+		vkCmdDrawMeshTasksEXT(commandList.m_CommandBuffer, groupCountX, groupCountY, groupCountZ);
 	}
 
-	void VulkanCommandList::Dispatch(uint groupCountX, uint groupCountY, uint groupCountZ)
+	void CommandList::Dispatch(uint groupCountX, uint groupCountY, uint groupCountZ)
 	{
-		vkCmdDispatch(m_CommandBuffer, groupCountX, groupCountY, groupCountZ);
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		vkCmdDispatch(commandList.m_CommandBuffer, groupCountX, groupCountY, groupCountZ);
 	}
 
-	void VulkanCommandList::Execute(const CommndListExecuteDesc* executeDescs, uint executeDescCount, uint queueIndex, const Ref<Fence>& fence)
+	void CommandList::Execute(const CommndListExecuteDesc* executeDescs, uint executeDescCount, uint queueIndex, FenceHandle fence)
 	{
 		TYR_ASSERT(executeDescs && executeDescCount > 0);
+
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+
 		StackAllocManager stack;
 		VkSubmitInfo* submitInfos = stack.Alloc<VkSubmitInfo>(executeDescCount);
 		for (uint i = 0; i < executeDescCount; ++i)
@@ -528,8 +561,8 @@ namespace tyr
 			VkCommandBuffer* commandBuffers = stack.Alloc<VkCommandBuffer>(executeDesc.commandLists.Size());
 			for (size_t j = 0; j < executeDesc.commandLists.Size(); ++j)
 			{
-				const Ref<VulkanCommandList>& commandList = RefCast<VulkanCommandList>(executeDesc.commandLists[j]);
-				commandBuffers[j] = commandList->m_CommandBuffer;
+				const CommandListInternal* cmdList = static_cast<CommandListInternal*>(executeDesc.commandLists[j]);
+				commandBuffers[j] = cmdList->m_CommandBuffer;
 			}
 
 			VkSemaphore* waitSemaphores = nullptr;
@@ -538,8 +571,8 @@ namespace tyr
 				waitSemaphores = stack.Alloc<VkSemaphore>(executeDesc.waitSemaphores.Size());
 				for (size_t j = 0; j < executeDesc.waitSemaphores.Size(); ++j)
 				{
-					const Ref<VulkanSemaphore>& semaphore = RefCast<VulkanSemaphore>(executeDesc.waitSemaphores[j]);
-					waitSemaphores[j] = semaphore->GetSemaphore();
+					const Semaphore& semaphore = commandList.m_Device.GetSemaphore(executeDesc.waitSemaphores[j]);
+					waitSemaphores[j] = semaphore.semaphore;
 				}
 			}
 
@@ -559,8 +592,8 @@ namespace tyr
 				signalSemaphores = stack.Alloc<VkSemaphore>(executeDesc.signalSemaphores.Size());
 				for (size_t j = 0; j < executeDesc.signalSemaphores.Size(); ++j)
 				{
-					const Ref<VulkanSemaphore>& semaphore = RefCast<VulkanSemaphore>(executeDesc.signalSemaphores[j]);
-					signalSemaphores[j] = semaphore->GetSemaphore();
+					const Semaphore& semaphore = commandList.m_Device.GetSemaphore(executeDesc.signalSemaphores[j]);
+					signalSemaphores[j] = semaphore.semaphore;
 				}
 			}
 
@@ -587,8 +620,8 @@ namespace tyr
 			submitInfos[i].pSignalSemaphores = signalSemaphores;
 		}
 
-		VkFence vkFence = fence ? RefCast<VulkanFence>(fence)->GetFence() : VK_NULL_HANDLE;
-		VkQueue queue = m_Device.GetQueue(m_QueueType, queueIndex);
+		VkFence vkFence = fence ? commandList.m_Device.GetFence(fence).fence : VK_NULL_HANDLE;
+		VkQueue queue = commandList.m_Device.GetQueue(m_QueueType, queueIndex);
 		TYR_GASSERT(vkQueueSubmit(queue, executeDescCount, submitInfos, vkFence));
 	}
 }

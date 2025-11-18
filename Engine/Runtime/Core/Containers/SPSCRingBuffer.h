@@ -25,13 +25,13 @@ namespace tyr
             : m_WriteIndex(0)
             , m_ReadIndex(0)
         {
-            TYR_STATIC_ASSERT((Capacity & (Capacity - 1)) == 0, "Capacity must be a power of 2");
+            
         }
 
         // Producer-side
         bool Enqueue(const T& item)
         {
-            const uint nextWrite = (m_WriteIndex + 1) & (Capacity - 1);
+            const uint nextWrite = Math::ComputeWrappedIncrement<Capacity>(m_WriteIndex);
             if (nextWrite == m_ReadIndex)
             {
                 // Buffer is full
@@ -44,23 +44,32 @@ namespace tyr
         }
 
         // Consumer-side
-        T* Read()
+        Optional<T> Read()
         {
-            if (m_ReadIndex == m_WriteIndex)
+            if (m_ReadIndex != m_WriteIndex)
             {
-                // Buffer is empty
-                return nullptr;
+                T& value = m_Slots[m_ReadIndex];
+                m_ReadIndex = Math::ComputeWrappedIncrement<Capacity>(m_ReadIndex);
+                return value;
             }
+            // Buffer is empty
+            return std::nullopt;
+        }
 
-            return &m_Slots[m_ReadIndex];
+        Optional<T> ReadOnly()
+        {
+            if (m_ReadIndex != m_WriteIndex)
+            {
+                return m_Slots[m_ReadIndex];
+            }
+            // Buffer is empty
+            return std::nullopt;
         }
 
         void Pop()
         {
-            if (m_ReadIndex != m_WriteIndex)
-            {
-                m_ReadIndex = (m_ReadIndex + 1) & (Capacity - 1);
-            }
+            TYR_ASSERT(m_ReadIndex != m_WriteIndex);
+            m_ReadIndex = Math::ComputeWrappedIncrement<Capacity>(m_ReadIndex);
         }
 
         bool IsEmpty() const
@@ -70,7 +79,7 @@ namespace tyr
 
         bool IsFull() const
         {
-            return ((m_WriteIndex + 1) & (Capacity - 1)) == m_ReadIndex;
+            return m_ReadIndex == Math::ComputeWrappedIncrement<Capacity>(m_WriteIndex);
         }
 
     private:

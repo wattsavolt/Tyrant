@@ -1,8 +1,8 @@
 /// Copyright (c) 2023 Aidan Clear 
 #pragma once
 
-#include "INonCopyable.h"
 #include "Base/Base.h"
+#include "Base/INonCopyable.h"
 
 namespace tyr
 {

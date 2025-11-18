@@ -1,9 +1,7 @@
 #pragma once
 
 #include "Base/Base.h"
-#include "String/StringTypes.h"
 #include "Hashing.h"
-#include "Reflection/PrivateReflection.h"
 
 namespace tyr
 {
@@ -11,24 +9,25 @@ namespace tyr
     class Identifier
     {
     public:
-        Identifier() : m_Hash(0) {}
+        constexpr Identifier() : m_Hash(0) {}
 
-        Identifier(const char* str)
+        constexpr Identifier(const char* str)
         {
             m_Hash = FNV1aHash<T, offsetBasis, prime>(str);
         }
 
-        Identifier(const String& str)
-            : Identifier(str.c_str())
+        // Useful for a substring from a string view
+        constexpr Identifier(const char* str, uint size)
         {
+            m_Hash = FNV1aHash<T, offsetBasis, prime>(str, size);
         }
 
-        Identifier(const Guid& guid)
+        constexpr Identifier(const Guid& guid)
         {
             m_Hash = FNV1aHash<T, offsetBasis, prime>(guid);
         }
 
-        Identifier(T hash)
+        constexpr Identifier(T hash)
             : m_Hash(hash)
         {
         }
@@ -72,8 +71,6 @@ namespace tyr
         }
 
     private:
-        TYR_REFL_PRIVATE_ACCESS(Id32);
-        TYR_REFL_PRIVATE_ACCESS(Id64);
         T m_Hash;
     };
 

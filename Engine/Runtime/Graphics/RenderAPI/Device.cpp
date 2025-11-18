@@ -13,10 +13,4 @@ namespace tyr
 	{
 
 	}
-
-	uint Device::GetQueueFamilyIndex(CommandQueueType type) const
-	{
-		return QUEUE_FAMILY_IGNORED;
-	}
-	
 }

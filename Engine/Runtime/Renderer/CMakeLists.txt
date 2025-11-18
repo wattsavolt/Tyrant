@@ -4,6 +4,10 @@ set(EXCLUDED_SRCS
 	"Linux"
 	"MacOS")
 
+# Private third-party includes and libraries
+set(PRIVATE_INC_DIRS "${TYR_THIRD_PARTY_HEADER_LIBS_DIR}/DirectXShaderCompiler/inc")
+set(PRIVATE_LIBS "")
+
 if(WIN32)
 	list(REMOVE_ITEM EXCLUDED_SRCS "Win32")
 endif()
@@ -34,6 +38,7 @@ target_include_directories(TyrantRenderer PUBLIC
 	$<BUILD_INTERFACE:${TYR_RUNTIME_DIR}/Renderer>
 	$<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/include/Renderer>)
 	
+target_include_directories(TyrantRenderer PRIVATE ${PRIVATE_INC_DIRS})
 
 # Defines
 target_compile_definitions(TyrantRenderer PRIVATE 
@@ -45,6 +50,8 @@ target_compile_definitions(TyrantRenderer PRIVATE
 
 # Libraries
 target_link_libraries(TyrantRenderer PUBLIC TyrantGraphics)
+
+target_link_libraries(TyrantRenderer PRIVATE ${PRIVATE_LIBS})
 
 
 # IDE specific

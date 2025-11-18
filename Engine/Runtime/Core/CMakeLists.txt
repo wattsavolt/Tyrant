@@ -31,6 +31,7 @@ add_common_properties(TyrantCore)
 # Includes
 target_include_directories(TyrantCore PUBLIC
 	$<BUILD_INTERFACE:${TYR_RUNTIME_DIR}/Core>
+	$<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/Generated/Config>
 	$<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/include/Core>)
 
 # Defines
@@ -42,15 +43,15 @@ target_compile_definitions(TyrantCore PRIVATE
 	$<$<CONFIG:Release>:TYR_CONFIG=TYR_CONFIG_RELEASE>)
 	
 if(TYR_EDITOR_MODE)
-	target_compile_definitions(TyrantCore PUBLIC TYR_IS_EDITOR=1) 	
+	target_compile_definitions(TyrantCore PUBLIC TYR_EDITOR=1) 	
 else()
-	target_compile_definitions(TyrantCore PUBLIC TYR_IS_EDITOR=0) 
+	target_compile_definitions(TyrantCore PUBLIC TYR_EDITOR=0) 
 endif()
 
 if(TYR_FINAL_MODE)
-	target_compile_definitions(TyrantCore PUBLIC TYR_IS_FINAL=1) 
+	target_compile_definitions(TyrantCore PUBLIC TYR_FINAL=1) 
 else()
-	target_compile_definitions(TyrantCore PUBLIC TYR_IS_FINAL=0) 
+	target_compile_definitions(TyrantCore PUBLIC TYR_FINAL=0) 
 endif()
 
 if(WIN32)

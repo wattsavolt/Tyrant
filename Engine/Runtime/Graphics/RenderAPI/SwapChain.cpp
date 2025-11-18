@@ -1,6 +1,4 @@
 #include "SwapChain.h"
-#include "Image.h"
-#include "Sync.h"
 
 namespace tyr
 {
@@ -34,13 +32,12 @@ namespace tyr
 	
 	void SwapChain::CreateSwapChainImagesAndViews(Handle* imageHandles, uint imageCount)
 	{
-		m_Images.Reserve(imageCount);
-		m_ImageViews.Reserve(imageCount);
-
 		for (uint i = 0; i < imageCount; ++i)
 		{
 			ImageDesc imageDesc;
-			imageDesc.debugName = String("SwapChainImage_") + std::to_string(i);
+#if !TYR_FINAL
+			imageDesc.debugName = GDebugString("SwapChainImage_") + static_cast<int>(i);
+#endif
 			imageDesc.width = m_Width;
 			imageDesc.height = m_Height;
 			imageDesc.type = ImageType::Image2D;
@@ -48,11 +45,12 @@ namespace tyr
 			imageDesc.format = m_Desc.pixelFormat;
 			imageDesc.layout = m_RenderingLayout;
 			imageDesc.usage = m_ImageUsage;
-
-			m_Images.Emplace(m_Device.CreateImage(imageDesc));
+			m_Images.Add(m_Device.CreateImage(imageDesc));
 
 			ImageViewDesc viewDesc;
-			viewDesc.debugName = String("SwapChainImageView_") + std::to_string(i);
+#if !TYR_FINAL
+			viewDesc.debugName = GDebugString("SwapChainImageView_") + static_cast<int>(i);
+#endif
 			viewDesc.isSwapChainView = true;
 			viewDesc.image = m_Images[i];
 			viewDesc.viewType = ImageType::Image2D;
@@ -61,8 +59,22 @@ namespace tyr
 			viewDesc.subresourceRange.mipLevelCount = 1;
 			viewDesc.subresourceRange.baseArrayLayer = 0;
 			viewDesc.subresourceRange.arrayLayerCount = 1; // Use 2 for stereoscopic (VR).
-			m_ImageViews.Emplace(m_Device.CreateImageView(viewDesc));
+			m_ImageViews.Add(m_Device.CreateImageView(viewDesc));
 		}
+	}
+
+	void SwapChain::DeleteSwapChainImagesAndViews()
+	{
+		for (ImageViewHandle handle : m_ImageViews)
+		{
+			m_Device.DeleteImageView(handle);
+		}
+		m_ImageViews.Clear();
+		for (ImageHandle handle : m_Images)
+		{
+			m_Device.DeleteImage(handle);
+		}
+		m_Images.Clear();
 	}
 
 	void SwapChain::CreateRenderingImageBarrier(ImageBarrier& barrier, uint imageIndex, uint srcQueueFamilyIndex)
@@ -71,7 +83,7 @@ namespace tyr
 		barrier.dstAccess = m_RenderingWriteAccess;
 		barrier.srcLayout = IMAGE_LAYOUT_UNKNOWN;
 		barrier.dstLayout = m_RenderingLayout;
-		barrier.image = m_Images[imageIndex].Get();
+		barrier.image = m_Images[imageIndex];
 		barrier.subresourceRange.aspect = m_SubresourceAspect; 
 		barrier.subresourceRange.baseMipLevel = 0;
 		barrier.subresourceRange.mipLevelCount = 1;
@@ -88,7 +100,7 @@ namespace tyr
 		barrier.dstAccess = BARRIER_ACCESS_NONE;
 		barrier.srcLayout = m_RenderingLayout;
 		barrier.dstLayout = IMAGE_LAYOUT_PRESENT_SRC;
-		barrier.image = m_Images[imageIndex].Get();
+		barrier.image = m_Images[imageIndex];
 		barrier.subresourceRange.aspect = m_SubresourceAspect;
 		barrier.subresourceRange.baseMipLevel = 0;
 		barrier.subresourceRange.mipLevelCount = 1;

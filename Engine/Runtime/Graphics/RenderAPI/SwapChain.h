@@ -3,12 +3,11 @@
 #include "GraphicsBase.h"
 #include "RenderAPITypes.h"
 #include "Device.h"
+#include "Image.h"
+#include "Sync.h"
 
 namespace tyr
 {
-	class Image;
-	class ImageView;
-	class Semaphore;
 	class CommandList;
 	struct ImageBarrier;
 
@@ -30,10 +29,10 @@ namespace tyr
 		SwapChain(Device& device, const SwapChainDesc& desc);
 		virtual ~SwapChain();
 
-		virtual uint AcquireNextImage(Ref<Semaphore>& semaphore) = 0;
+		virtual uint AcquireNextImage(SemaphoreHandle semaphore) = 0;
 
 		// Semaphore should be one used when executing the command list
-		virtual void Present(const Ref<CommandList>& commandList, const Ref<Semaphore>& semaphore, uint imageIndex, uint queueIndex = 0u) = 0;
+		virtual void Present(const CommandList* commandList, SemaphoreHandle semaphore, uint imageIndex, uint queueIndex = 0u) = 0;
 
 		// Adds barrier needed before rendering to the swap chain image
 		void CreateRenderingImageBarrier(ImageBarrier& barrier, uint imageIndex, uint srcQueueFamilyIndex = QUEUE_FAMILY_IGNORED);
@@ -51,9 +50,9 @@ namespace tyr
 		
 		const SwapChainDesc& GetDesc() const { return m_Desc; }
 
-		const Array<ORef<Image>>& GetImages() const { return m_Images; }
+		const LocalArray<ImageHandle, 3>& GetImages() const { return m_Images; }
 
-		const Array<ORef<ImageView>>& GetImageViews() const { return m_ImageViews; }
+		const LocalArray<ImageViewHandle, 3>& GetImageViews() const { return m_ImageViews; }
 
 		const uint GetWidth() const { return m_Width; }
 
@@ -61,11 +60,12 @@ namespace tyr
 
 	protected:
 		void CreateSwapChainImagesAndViews(Handle* imageHandles, uint imageCount);
+		void DeleteSwapChainImagesAndViews();
 
 		Device& m_Device;
 		SwapChainDesc m_Desc;
-		Array<ORef<Image>> m_Images;
-		Array<ORef<ImageView>> m_ImageViews;
+		LocalArray<ImageHandle, 3> m_Images;
+		LocalArray<ImageViewHandle, 3> m_ImageViews;
 		BarrierAccess m_RenderingWriteAccess;
 		BarrierAccess m_RenderingReadAccess;
 		ImageLayout m_RenderingLayout;

@@ -1,46 +1,41 @@
 #pragma once
 
 #include "Base/Base.h"
+#include "Callable.h"
 #include "Containers/Containers.h"
-#include "ThreadPool.h"
 #include <memory>
-#include <functional>
 
 namespace tyr
 {
-    enum class ThreadTaskState
+    enum class TaskState : uint8
     {
         Inactive,
-        Active
+        Pending,
+        Running,
+        Finished
     };
 
-    class Task final : public ThreadTask
+    class Task final
     {
     public:
+        Task(Callable&& callable);
+
         Task();
 
-        template<typename Func>
-        void SetFunction(Func&& func)
-        {
-            m_Func = std::function<void()>(std::forward<Func>(func));
-        }
-
-        template<typename Func>
-        void SetFunction(Func& func)
-        {
-            m_Func = func;
-        }
+        void SetCallable(Callable&& callable);
 
         bool IsActive() const
         {
-            return m_State.load(std::memory_order_acquire) == ThreadTaskState::Inactive;
+            return m_State.load(std::memory_order_acquire) != TaskState::Inactive;
         }
-
-    protected:
-        void Run() override;
-
+        
     private:
-        std::function<void()> m_Func;
-        Atomic<ThreadTaskState> m_State;
+        friend class PooledThread;
+        void Run();
+
+        Callable m_Callable;
+
+        std::atomic<TaskState> m_State;
     };
+   
 }

@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "Base/Base.h"
@@ -59,52 +58,52 @@ namespace tyr
 		static float Asin(float f);
 
 		/// Inverse tangent. 
-		static inline float Atan(float f) { return std::atan(f); }
+		static TYR_FORCEINLINE float Atan(float f) { return std::atan(f); }
 
 		/// Inverse tangent with two arguments, returns angle between the X axis and the point. 
-		static inline float Atan2(float y, float x) { return std::atan2(y, x); }
+		static TYR_FORCEINLINE float Atan2(float y, float x) { return std::atan2(y, x); }
 
 		/// Cosine 
-		static inline float Cos(float f) { return std::cos(f); }
+		static TYR_FORCEINLINE float Cos(float f) { return std::cos(f); }
 
 		/// Sine
-		static inline float Sin(float f) { return std::sin(f); }
+		static TYR_FORCEINLINE float Sin(float f) { return std::sin(f); }
 
 		/// Tangent
-		static inline float Tan(float f) { return std::tan(f); }
+		static TYR_FORCEINLINE float Tan(float f) { return std::tan(f); }
 
 		/// Square root
-		static inline float Sqrt(float f) { return std::sqrt(f); }
+		static TYR_FORCEINLINE float Sqrt(float f) { return std::sqrt(f); }
 
 		/// inverse of square root 
-		static inline float InvSqrt(float f) { return 1.0f / std::sqrt(f); }
+		static TYR_FORCEINLINE float InvSqrt(float f) { return 1.0f / std::sqrt(f); }
 
 		/// Returns square of the provided value.
-		static inline float Sqr(float f) { return f * f; }
+		static TYR_FORCEINLINE float Sqr(float f) { return f * f; }
 
 		/// Returns base raised to the provided power. 
-		static inline float Pow(float f, float power) { return std::pow(f, power); }
+		static TYR_FORCEINLINE float Pow(float f, float power) { return std::pow(f, power); }
 
 		/// Returns euler number (e) raised to the provided power. 
-		static inline float Exp(float f) { return std::exp(f); }
+		static TYR_FORCEINLINE float Exp(float f) { return std::exp(f); }
 
 		/// Returns natural (base e) logarithm of the provided value. 
-		static inline float Log(float f) { return std::log(f); }
+		static TYR_FORCEINLINE float Log(float f) { return std::log(f); }
 
 		/// Returns base 2 logarithm of the provided value. 
-		static inline float Log2(float f) { return std::log(f) / c_LogBase2; }
+		static TYR_FORCEINLINE float Log2(float f) { return std::log(f) / c_LogBase2; }
 
 		/// Returns base N logarithm of the provided value.
-		static inline float LogN(float base, float val) { return std::log(val) / std::log(base); }
+		static TYR_FORCEINLINE float LogN(float base, float val) { return std::log(val) / std::log(base); }
 
 		/// Returns the absolute value. 
-		static inline float Abs(float f) { return std::fabs(f); }
+		static TYR_FORCEINLINE float Abs(float f) { return std::fabs(f); }
 
 		/// Returns to the nearest integer. 
-		static inline float Round(float f) { return std::round(f); }
+		static TYR_FORCEINLINE float Round(float f) { return std::round(f); }
 
 		/// Returns the nearest integer equal or higher to the provided value. 
-		static inline float Ceil(float val) { return std::ceil(val); }
+		static TYR_FORCEINLINE float Ceil(float val) { return std::ceil(val); }
 
 		/// Returns the sign of the provided value as 1 or -1. 
 		static float Sign(float f);
@@ -119,20 +118,20 @@ namespace tyr
 
 		/// Clamp a number within the range [0..1]. 
 		template <typename T>
-		static T clamp01(T num)
+		static T Clamp01(T num)
 		{
 			return std::max(std::min(num, (T)1), (T)0);
 		}
 
 		/// Checks if two floats are equal accounting for tolerable inaccuracies. 
-		static inline bool ApproxEquals(float a, float b,
+		static TYR_FORCEINLINE bool ApproxEquals(float a, float b,
 			float tolerance = std::numeric_limits<float>::epsilon())
 		{
 			return fabs(b - a) <= tolerance;
 		}
 
 		/// Checks if two doubles are equal accounting for tolerable inaccuracies. 
-		static inline bool ApproxEquals(double a, double b,
+		static TYR_FORCEINLINE bool ApproxEquals(double a, double b,
 			double tolerance = std::numeric_limits<double>::epsilon())
 		{
 			return fabs(b - a) <= tolerance;
@@ -140,6 +139,25 @@ namespace tyr
 
 		// Returns v if it is already a power of 2
 		static uint NextPowerOfTwo(uint v);
+
+		static TYR_FORCEINLINE constexpr bool IsPowerOfTwo(uint n)
+		{
+			return n && ((n & (n - 1)) == 0);
+		}
+
+		template <uint Capacity>
+		static TYR_FORCEINLINE constexpr uint ComputeWrappedIncrement(uint index)
+		{
+			if constexpr (Math::IsPowerOfTwo(Capacity))
+			{
+				// Faster operation than modulo 
+				return (index + 1) & (Capacity - 1);
+			}
+			else
+			{
+				return (index + 1) % Capacity;
+			}
+		}
 
 		static constexpr float c_ApproxOne = 0.99999994f;
 		static constexpr float c_Infinity = std::numeric_limits<float>::infinity();

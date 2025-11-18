@@ -8,10 +8,15 @@ option(TYR_BUILD_TESTS "If true, build targets for running unit tests will be in
 
 option(TYR_EDITOR_MODE "If true, the editor will be opened at runtime." ON)
 
-cmake_dependent_option(TYR_FINAL_MODE "If true, the app will be configured for the final version." OFF "NOT TYR_EDITOR_MODE" OFF)
+option(TYR_FINAL_MODE "If true, the app will be configured for the final / shippable version." OFF)
+
+# Enforce mutual exclusion
+if(TYR_EDITOR_MODE AND TYR_FINAL_MODE)
+    message(FATAL_ERROR "TYR_EDITOR_MODE and TYR_FINAL_MODE cannot both be ON at the same time")
+endif()
 
 ## Generate config files
-configure_file("${TYR_ENGINE_DIR}/CMake/Config/EngineConfig.h.in" "${PROJECT_BINARY_DIR}/Generated/Engine/EngineConfig.h")
+configure_file("${TYR_ENGINE_DIR}/CMake/Config/BuildConfig.h.in" "${PROJECT_BINARY_DIR}/Generated/Config/BuildConfig.h")
 
 add_subdirectory(Tools)
 add_subdirectory(Runtime)

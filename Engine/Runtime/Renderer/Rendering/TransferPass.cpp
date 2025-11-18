@@ -3,7 +3,7 @@
 namespace tyr
 {
 	TransferPass::TransferPass()
-		: Pass(Scene::c_InvalidID)
+		: Pass()
 	{
 	
 	}

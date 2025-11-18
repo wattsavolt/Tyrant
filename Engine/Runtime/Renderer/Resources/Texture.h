@@ -1,9 +1,9 @@
 #pragma once
 
-#include "RenderResource.h"
 #include "RenderAPI/RenderAPITypes.h"
 #include "RenderAPI/Image.h"
 #include "Math/Vector3I.h"
+#include "RenderResource.h"
 
 namespace tyr
 {
@@ -25,44 +25,33 @@ namespace tyr
 
 	struct TextureDesc 
 	{
-		AssetID assetID;
-#if TYR_DEBUG
-		String debugName;
+#if !TYR_FINAL
+		GDebugString debugName;
 #endif
-		TextureInfo info;
+		SamplerHandle sampler;
 		uint arrayLayerCount;
 		ImageUsage usage;
+		TextureInfo info;
 		SampleCount sampleCount;
 		ImageLayout layout;
 	};
 
 	class Device; 
-	class TransferBuffer;
 
-	/// Class repesenting a texture
-	class TYR_RENDERER_EXPORT Texture final : public RenderResource 
+	struct Texture : public RenderResource
+	{
+		ImageHandle image;
+		ImageViewHandle imageView;
+		SamplerHandle sampler;
+		ImageLayout imageLayout;
+	};
+
+	class TYR_RENDERER_EXPORT TextureUtil
 	{
 	public:
-		Texture(Device& device, const TextureDesc& desc);
-		~Texture() = default;
+		static void CreateTexture(Texture& texture, Device& device, const TextureDesc& desc);
 
-		// Should only be called when the texture is no longer in use
-		void Recreate(const TextureDesc& desc);
-
-		static Ref<Texture> Create(Device& device, const TextureDesc& desc);
-
-		ORef<Image>& GetImage() { return m_Image; }
-
-		ORef<ImageView>& GetImageView() { return m_ImageView; }
-
-		ImageLayout GetImageLayout() const { return m_ImageLayout; }
-
-		// Returns the size of the image in bytes
-		uint GetImageSize() const { return m_ImageSize; }
-
-		bool IsCubemap() const { return m_IsCubemap; }
-
-		bool IsDepthTexture() const { return m_IsDepthTexture; }
+		static void DeleteTexture(Texture& texture, Device& device);
 
 		// Returns the pixel size for the specified format in bytes
 		static uint GetTexelFormatSize(PixelFormat format);
@@ -87,7 +76,7 @@ namespace tyr
 			else
 			{
 				TYR_STATIC_ASSERT((std::is_same_v<T, void>), "ConvertFromSRGBtoLinear<T>: Unsupported type.");
-				return 0.0f; 
+				return 0.0f;
 			}
 		}
 
@@ -106,7 +95,7 @@ namespace tyr
 			else
 			{
 				TYR_STATIC_ASSERT((std::is_same_v<T, void>), "ConvertFromLinearToSRGB<T>: Unsupported type.");
-				return T{}; 
+				return T{};
 			}
 		}
 
@@ -124,20 +113,9 @@ namespace tyr
 			else
 			{
 				TYR_STATIC_ASSERT((std::is_same_v<T, void>), "GetMaxPixelValue<T> not implemented for this type.");
-				return T{}; 
+				return T{};
 			}
 		}
-
-	private:
-		ORef<Image> m_Image;
-		ORef<ImageView> m_ImageView;
-		// Current layout tracked by the render graph 
-		friend class RenderGraph;
-		ImageLayout m_ImageLayout;
-		uint m_ImageSize;
-
-		bool m_IsCubemap;
-		bool m_IsDepthTexture;
 	};
 }
 

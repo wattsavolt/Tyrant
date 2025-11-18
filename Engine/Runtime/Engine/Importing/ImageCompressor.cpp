@@ -89,7 +89,7 @@ namespace tyr
         const Array<uint8>& buffer = GetThreadLocalBuffer();
         metadata.dataSize = buffer.Size();
 
-        char absFilePath[TYR_MAX_PATH_STR_SIZE];
+        char absFilePath[TYR_MAX_PATH_TOTAL_SIZE];
         AssetUtil::CreateFullPath(absFilePath, filePath);
 
         Serializer::Instance().SerializeToFile<TextureMetadata>(absFilePath, metadata);

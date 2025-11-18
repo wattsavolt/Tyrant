@@ -1,13 +1,10 @@
-
-
 #include "VulkanSwapChain.h"
-#include "VulkanImage.h"
-#include "VulkanSync.h"
+#include "VulkanDevice.h"
 #include "VulkanCommandList.h"
 
 namespace tyr
 {
-	VulkanSwapChain::VulkanSwapChain(VulkanDevice& device, VkSurfaceKHR surface, const SwapChainDesc& desc, VulkanSwapChain* oldSwapChain)
+	VulkanSwapChain::VulkanSwapChain(DeviceInternal& device, VkSurfaceKHR surface, const SwapChainDesc& desc, VulkanSwapChain* oldSwapChain)
 		: SwapChain(device, desc)
 	{
 		auto physicalDevice = device.GetPhysicalDevice();
@@ -139,24 +136,21 @@ namespace tyr
 
 		CreateSwapChainImagesAndViews(reinterpret_cast<Handle*>(m_Images.Data()), imageCount);
 
-		// TODO: Create framebuffers (in wrapper api) from these images if using render passes.
+		// TODO: Create framebuffers from these images if using render passes.
 	}
 
 	VulkanSwapChain::~VulkanSwapChain()
 	{
-		// The image views need to be manually destroyed to ensure they are destroyed before the images.
-		for (ORef<ImageView>& view : m_ImageViews) 
-		{
-			VulkanImageView* vkView = view.GetAs<VulkanImageView>();
-			vkDestroyImageView(m_LogicalDevice, vkView->GetImageView(), g_VulkanAllocationCallbacks);
-		}
+		DeleteSwapChainImagesAndViews();
 		vkDestroySwapchainKHR(m_LogicalDevice, m_SwapChain, g_VulkanAllocationCallbacks);
 	}
 
-	uint VulkanSwapChain::AcquireNextImage(Ref<Semaphore>& semaphore) 
+	uint VulkanSwapChain::AcquireNextImage(SemaphoreHandle semaphore) 
 	{
 		uint index;
-		VkResult result = vkAcquireNextImageKHR(m_LogicalDevice, m_SwapChain, UINT64_MAX, RefCast<VulkanSemaphore>(semaphore)->GetSemaphore(), VK_NULL_HANDLE, &index);
+		const DeviceInternal& vulkanDevice = static_cast<DeviceInternal&>(m_Device);
+		const Semaphore& semaphoreData = vulkanDevice.GetSemaphore(semaphore);
+		VkResult result = vkAcquireNextImageKHR(m_LogicalDevice, m_SwapChain, UINT64_MAX, semaphoreData.semaphore, VK_NULL_HANDLE, &index);
 		if (result != VK_SUCCESS)
 		{
 			if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
@@ -172,21 +166,19 @@ namespace tyr
 		return index;
 	}
 	
-	void VulkanSwapChain::Present(const Ref<CommandList>& commandList, const Ref<Semaphore>& semaphore, uint imageIndex, uint queueIndex)
+	void VulkanSwapChain::Present(const CommandList* commandList, SemaphoreHandle semaphore, uint imageIndex, uint queueIndex)
 	{
-		const Ref<VulkanCommandList>& vulkanCommandList = RefCast<VulkanCommandList>(commandList);
-		const VulkanDevice& vulkanDevice = static_cast<VulkanDevice&>(m_Device);
-		VkSemaphore vkSemaphore = RefCast<VulkanSemaphore>(semaphore)->GetSemaphore();
+		const DeviceInternal& vulkanDevice = static_cast<DeviceInternal&>(m_Device);
+		const Semaphore& semaphoreData = vulkanDevice.GetSemaphore(semaphore);
 		VkPresentInfoKHR presentInfo = {};
 		presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 		presentInfo.pNext = nullptr;
 		presentInfo.waitSemaphoreCount = 1;
-		presentInfo.pWaitSemaphores = &vkSemaphore;
+		presentInfo.pWaitSemaphores = &semaphoreData.semaphore;
 		presentInfo.swapchainCount = 1;
 		presentInfo.pSwapchains = &m_SwapChain;
 		presentInfo.pImageIndices = &imageIndex;
 		presentInfo.pResults = nullptr;
-
 
 		VkQueue queue = vulkanDevice.GetQueue(commandList->GetQueueType(), queueIndex);
 		VkResult result = vkQueuePresentKHR(queue, &presentInfo);

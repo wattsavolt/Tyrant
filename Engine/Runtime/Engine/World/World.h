@@ -4,19 +4,18 @@
 #include "Math/Vector3.h"
 #include "Math/Matrix4.h"
 #include "EngineMacros.h"
-#include "RenderUpdate/RenderUpdate.h"
+#include "Rendering/Scene.h"
 
 namespace tyr
 {
-	using WorldID = SceneID;
-
 	class Camera;
 
 	struct WorldParams
 	{
+		Name name;
 		// TODO : Add window index later if required
 		SceneViewArea viewArea;
-		// The world is provided the camera but the engine will update the camera dimensions when the window resizes
+		// The world is provided the camera but its dimensions will be updated by the world manager when the window resizes
 		Camera* camera = nullptr;
 	};
 
@@ -26,21 +25,44 @@ namespace tyr
 	public:
 		World();
 		~World();
-		void Initialize(WorldID worldID, const WorldParams& params);
+
+		void Initialize(const WorldParams& params);
+
 		void Shutdown();
-		bool IsFirstFrame() const { return m_IsFirstFrame; }
-		void SetIsFirstFrame(bool value) { m_IsFirstFrame = value; }
-		bool IsInitialized() const { return m_Initialized; }
+
+		void Update(float deltaTime, SceneFrame& sceneFrame);
+
+		const char* GetName() const { return m_Name.CStr(); }
+
 		Camera* GetCamera() const; 
-		WorldID GetWorldID() const { return m_WorldID; }
+
 		void SetCamera(Camera* camera);
+
+		const SceneViewArea& GetViewArea() const { return m_ViewArea; }
+
 		SceneViewArea& GetViewArea() { return m_ViewArea; }
 
+		uint8 GetSceneIndex() const { return m_SceneIndex; }
+
+		void SetActive(bool active);
+
+		bool IsActive() const { return m_Active; }
+
+		void SetVisible(bool visible);
+
+		bool IsVisible() const { return m_Visible; }
+
 	private:
-		WorldID m_WorldID;
+		friend class WorldManager;
+
+		static uint8 s_NextSceneIndex;
+
+		Name m_Name;
 		Camera* m_Camera;
 		SceneViewArea m_ViewArea;
-		bool m_IsFirstFrame;
+		uint8 m_SceneIndex;
+		bool m_Active;
+		bool m_Visible;
 		bool m_Initialized;
 	};
 }

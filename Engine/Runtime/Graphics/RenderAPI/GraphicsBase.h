@@ -21,4 +21,16 @@ namespace tyr
 		Vulkan,
 		D3D12
 	};
+
+	static constexpr uint c_MaxGDebugString = 31;
+	static constexpr uint c_MaxGDebugStringTotalSize = c_MaxGDebugString + 1;
+
+	using GDebugString = LocalString<c_MaxGDebugString>;
+
+#if TYR_FINAL
+#	define TYR_DECLARE_GDEBUGSTRING(name)
+#else
+#	define TYR_DECLARE_GDEBUGSTRING(name) GDebugString name
+#endif
+
 }

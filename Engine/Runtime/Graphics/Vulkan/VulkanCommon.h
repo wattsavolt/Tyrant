@@ -1,15 +1,13 @@
-
 #pragma once
 
 #include <vulkan/vulkan.h>
+#if TYR_PLATFORM == TYR_PLATFORM_LINUX
 #undef None // Conflicting define from Xlib
+#endif
 #include <vma/vk_mem_alloc.h>
-#include "Base/Base.h"
-#include "String/StringTypes.h"
-#include "Containers/Containers.h"
-#include "Utility/Utility.h"
+#include "Base/Primitives.h"
 
-#define VULKAN_ERROR(r) r != VK_SUCCESS 
+#define TYR_VULKAN_ERROR(r) r != VK_SUCCESS 
 
 namespace tyr
 {

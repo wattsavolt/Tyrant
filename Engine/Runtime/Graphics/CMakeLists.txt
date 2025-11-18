@@ -16,7 +16,7 @@ endif()
 
 
 # Private third-party includes and libraries
-set(PRIVATE_INC_DIRS "${TYR_THIRD_PARTY_HEADER_LIBS_DIR}/DirectXShaderCompiler/inc")
+set(PRIVATE_INC_DIRS "")
 set(PRIVATE_LIBS "")
 
 if(WIN32)
@@ -33,7 +33,6 @@ if(UNIX)
 	endif()
 endif()
 
-
 add_source_groups(SRCS "${EXCLUDED_SRCS}")
 
 # Target
@@ -41,32 +40,6 @@ add_library(TyrantGraphics SHARED ${SRCS})
 copy_binaries(TyrantGraphics ${PROJECT_SOURCE_DIR})
 
 add_common_properties(TyrantGraphics)
-
-# Includes
-target_include_directories(TyrantGraphics PUBLIC
-	$<BUILD_INTERFACE:${TYR_RUNTIME_DIR}/Graphics>
-	$<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/include/Graphics>)
-	
-
-# Defines
-target_compile_definitions(TyrantGraphics PRIVATE 
-	-DTYR_GRAPHICS_EXPORTS
-	$<$<CONFIG:Debug>:TYR_CONFIG=TYR_CONFIG_DEBUG> 
-	$<$<CONFIG:RelWithDebInfo>:TYR_CONFIG=TYR_CONFIG_RELWITHDEBINFO>
-	$<$<CONFIG:MinSizeRel>:TYR_CONFIG=TYR_CONFIG_MINSIZEREL>
-	$<$<CONFIG:Release>:TYR_CONFIG=TYR_CONFIG_RELEASE>)
-
-
-# Libraries
-target_link_libraries(TyrantGraphics PUBLIC TyrantCore)
-
-
-# TODO: Disable for phones (if ever supported) to use render passes on Vulkan.
-target_compile_definitions(TyrantGraphics PUBLIC TYR_USE_DYNAMIC_RENDERING=1) 
-
-if(Vulkan_FOUND)
-	target_compile_definitions(TyrantGraphics PUBLIC TYR_VULKAN_AVAILABLE=1) 
-endif()	
 
 
 # The Vulkan_ variables are built into CMAKE after version 3.7. Not supported on Apple yet.
@@ -93,17 +66,39 @@ if(Vulkan_FOUND)
 	#)
 endif()	
 
+# Includes
+target_include_directories(TyrantGraphics PUBLIC
+	$<BUILD_INTERFACE:${TYR_RUNTIME_DIR}/Graphics>
+	$<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/include/Graphics>)
+	
 target_include_directories(TyrantGraphics PRIVATE ${PRIVATE_INC_DIRS})
 
+# Defines
+target_compile_definitions(TyrantGraphics PRIVATE 
+	-DTYR_GRAPHICS_EXPORTS
+	$<$<CONFIG:Debug>:TYR_CONFIG=TYR_CONFIG_DEBUG> 
+	$<$<CONFIG:RelWithDebInfo>:TYR_CONFIG=TYR_CONFIG_RELWITHDEBINFO>
+	$<$<CONFIG:MinSizeRel>:TYR_CONFIG=TYR_CONFIG_MINSIZEREL>
+	$<$<CONFIG:Release>:TYR_CONFIG=TYR_CONFIG_RELEASE>)
+
+
+# Libraries
+target_link_libraries(TyrantGraphics PUBLIC TyrantCore)
+
 target_link_libraries(TyrantGraphics PRIVATE ${PRIVATE_LIBS})
+
+
+# TODO: Disable for phones (if ever supported) to use render passes on Vulkan.
+target_compile_definitions(TyrantGraphics PUBLIC TYR_USE_DYNAMIC_RENDERING=1) 
+
+if(Vulkan_FOUND)
+	target_compile_definitions(TyrantGraphics PUBLIC TYR_VULKAN_AVAILABLE=1) 
+endif()	
 
 # Vulkan_GLSLC_EXECUTABLE - the path to the GLSL SPIR-V compiler
 
 # IDE specific
 set_property(TARGET TyrantGraphics PROPERTY FOLDER Runtime)
-
-
-# Target link directories
 
 # Install
 install(

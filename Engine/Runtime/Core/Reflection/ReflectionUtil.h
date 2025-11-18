@@ -3,6 +3,7 @@
 #include "Base/Base.h"
 #include "Containers/Containers.h"
 #include "String/StringTypes.h"
+#include "Identifiers/Identifiers.h"
 #include <type_traits>
 
 namespace tyr
@@ -25,6 +26,15 @@ namespace tyr
 	template<typename K, typename V, typename H>
 	struct IsHashMap<HashMap<K, V, H>> : std::true_type {};
 
+    template<typename T>
+    struct IsLocalString : std::false_type {};
+
+    template<uint N>
+    struct IsLocalString<LocalString<N>> : std::true_type {};
+
+    template<typename T>
+    struct IsConstCharPtr : std::is_same<const char*, std::decay_t<T>> {};
+
     template <typename T, template <typename...> class Template>
     struct IsSpecialization : std::false_type {};
 
@@ -38,7 +48,7 @@ namespace tyr
     struct LocalArrayTraits<LocalArray<T, C>>
     {
         using elementType = T;
-        static constexpr uint capacity = C;
+        static constexpr uint c_Capacity = C;
     };
 
     template<typename T>
@@ -63,13 +73,40 @@ namespace tyr
     };
 
     template<typename T>
+    struct LocalStringTraits;
+
+    template<uint N>
+    struct LocalStringTraits<LocalString<N>>
+    {
+        // Capacity - 1 as excludes null character
+        static constexpr uint c_MaxSize = N;
+    };
+
+    template<typename T>
     struct CArrayTraits;
 
     template<typename ElementType, size_t N>
     struct CArrayTraits<ElementType[N]>
     {
         using elementType = ElementType;
-        static constexpr size_t capacity = N;
+        static constexpr size_t c_Capacity = N;
+    };
+
+    template<typename T>
+    struct IsIdentifier : std::false_type {};
+
+    template<typename T, T offsetBasis, T prime>
+    struct IsIdentifier<Identifier<T, offsetBasis, prime>> : std::true_type {};
+
+    template<typename T>
+    struct IdentifierTraits;
+
+    template<typename T, T offsetBasis, T prime>
+    struct IdentifierTraits<Identifier<T, offsetBasis, prime>>
+    {
+        using hashType = T;
+        static constexpr size_t c_OffsetBasis = offsetBasis;
+        static constexpr size_t c_Prime = prime;
     };
 
     constexpr StringView StripNamespace(StringView typeName) 
@@ -93,10 +130,8 @@ namespace tyr
         return typeName;
     }
    
-    // Note: __FUNCSIG__ and __PRETTY_FUNCTION__ are both string literals — which are stored in static memory so safe
-    // to return a StringView
     template<typename T>
-    constexpr String GetTypeName()
+    constexpr StringView GetTypeName()
     {
         StringView typeName;
 #if defined(_MSC_VER)  // MSVC uses __FUNCSIG__
@@ -133,7 +168,26 @@ namespace tyr
 #else
 #error "Unsupported compiler"
 #endif
-        return String(typeName);
+        return typeName;
+    }
+
+    template<typename T>
+    constexpr Id64 GetTypeID()
+    {
+        const StringView typeName = GetTypeName<T>();
+        return Id64(typeName.data(), static_cast<uint>(typeName.size()));
+    }
+
+    template <typename T>
+    constexpr StringView GetTypeName(const T&)
+    {
+        return GetTypeName<T>();
+    }
+
+    template <typename T>
+    constexpr Id64 GetTypeID(const T&)
+    {
+        return GetTypeID<T>();
     }
 
     template<typename T>
@@ -154,10 +208,17 @@ namespace tyr
     };
 
     template <typename Class, typename FieldType>
-    constexpr String GetFieldTypeName(FieldType Class::* fieldPtr)
+    constexpr StringView GetFieldTypeName(FieldType Class::* fieldPtr)
     {
         using T = typename FieldTypeResolver<FieldType Class::*>::type;
         return GetTypeName<T>();
+    }
+
+    template <typename Class, typename FieldType>
+    constexpr Id64 GetFieldTypeID(FieldType Class::* fieldPtr)
+    {
+        using T = typename FieldTypeResolver<FieldType Class::*>::type;
+        return GetTypeID<T>();
     }
 
     template<typename Class, typename FieldType>

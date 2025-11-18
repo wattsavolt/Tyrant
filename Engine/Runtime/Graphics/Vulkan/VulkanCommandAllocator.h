@@ -2,20 +2,21 @@
 #pragma once
 
 #include "RenderAPI/CommandAllocator.h"
-#include "VulkanDevice.h"
+#include "VulkanCommon.h"
 
 namespace tyr
 {
+	class DeviceInternal;
 	class VulkanCommandAllocator : public CommandAllocator
 	{
 	public:
-		VulkanCommandAllocator(VulkanDevice& device, const CommandAllocatorDesc& desc);
+		VulkanCommandAllocator(DeviceInternal& device, const CommandAllocatorDesc& desc);
 		~VulkanCommandAllocator();
 		void Reset() override;
 
 		VkCommandPool GetCommandPool() const { return m_CommandPool; };
 	private:
-		VulkanDevice& m_Device;
+		DeviceInternal& m_Device;
 		VkCommandPool m_CommandPool;
 	};
 }

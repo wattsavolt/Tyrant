@@ -6,12 +6,12 @@ namespace tyr
     Serializer::Serializer(bool serializeNonFinal)
         : m_SerializeNonFinal(false) { }
 
-    void Serializer::SerializeVersion(BinaryStream& stream, int version)
+    void Serializer::SerializeVersion(BufferedFileStream& stream, int version)
     {
         stream.Write(&version, sizeof(version));
     }
 
-    void Serializer::SerializeField(BinaryStream& stream, const uint8* data, const Field& field)
+    void Serializer::SerializeField(BufferedFileStream& stream, const uint8* data, const Field& field)
     {
         const TypeInfo& typeInfo = TypeRegistry::Instance().GetType(field.typeID);
 
@@ -36,7 +36,7 @@ namespace tyr
         }
     }
 
-    void Serializer::SerializeCArray(BinaryStream& stream, const uint8* data, uint count, const TypeInfo& typeInfo)
+    void Serializer::SerializeCArray(BufferedFileStream& stream, const uint8* data, uint count, const TypeInfo& typeInfo)
     {
         stream.Write(&count, sizeof(count));
         if (typeInfo.fieldCount > 0)
@@ -55,9 +55,8 @@ namespace tyr
         }
     }
 
-    void Serializer::SerializeObject(BinaryStream& stream, const uint8* data, const TypeInfo& typeInfo)
+    void Serializer::SerializeObject(BufferedFileStream& stream, const uint8* data, const TypeInfo& typeInfo)
     {
-        SerializeVersion(stream, typeInfo.version);
         for (uint i = 0; i < typeInfo.fieldCount; ++i)
         {
             const Field& field = typeInfo.fields[i];
@@ -68,19 +67,19 @@ namespace tyr
         }
     }
 
-    void Serializer::SerializeValue(BinaryStream& stream, const uint8* data, const TypeInfo& typeInfo)
+    void Serializer::SerializeValue(BufferedFileStream& stream, const uint8* data, const TypeInfo& typeInfo)
     {
         stream.Write(data, typeInfo.size);
     }
 
-    int Serializer::DeserializeVersion(BinaryStream& stream)
+    int Serializer::DeserializeVersion(BufferedFileStream& stream)
     {
         int version;
         stream.Read(&version, sizeof(version));
         return version;
     }
 
-    void Serializer::DeserializeField(BinaryStream& stream, uint8* data, const Field& field)
+    void Serializer::DeserializeField(BufferedFileStream& stream, uint8* data, const Field& field)
     {
         const TypeInfo& typeInfo = TypeRegistry::Instance().GetType(field.typeID);
 
@@ -103,7 +102,7 @@ namespace tyr
         }
     }
 
-    void Serializer::DeserializeCArray(BinaryStream& stream, uint8* data, const TypeInfo& typeInfo)
+    void Serializer::DeserializeCArray(BufferedFileStream& stream, uint8* data, const TypeInfo& typeInfo)
     {
         uint count;
         stream.Read(&count, sizeof(count));
@@ -124,10 +123,8 @@ namespace tyr
     }
     
 
-    void Serializer::DeserializeObject(BinaryStream& stream, uint8* data, const TypeInfo& typeInfo)
+    void Serializer::DeserializeObject(BufferedFileStream& stream, uint8* data, const TypeInfo& typeInfo)
     {
-        const int version = DeserializeVersion(stream);
-        TYR_ASSERT(version == typeInfo.version);
         for (uint i = 0; i < typeInfo.fieldCount; ++i)
         {
             const Field& field = typeInfo.fields[i];
@@ -135,7 +132,7 @@ namespace tyr
         }
     }
 
-    void Serializer::DeserializeValue(BinaryStream& stream, uint8* data, const TypeInfo& typeInfo)
+    void Serializer::DeserializeValue(BufferedFileStream& stream, uint8* data, const TypeInfo& typeInfo)
     {
         stream.Read(data, typeInfo.size);
     }
@@ -147,7 +144,7 @@ namespace tyr
 
     Serializer& Serializer::Instance()
     {
-#if TYR_FINAL_MODE
+#if TYR_FINAL
         static TYR_THREADLOCAL Serializer serializer(false);
 #else
         static TYR_THREADLOCAL Serializer serializer(true);

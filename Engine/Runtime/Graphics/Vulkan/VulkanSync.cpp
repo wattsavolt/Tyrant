@@ -1,34 +1,45 @@
-
 #include "VulkanSync.h"
+#include "VulkanDevice.h"
 
 namespace tyr
 {
-	VulkanFence::VulkanFence(VulkanDevice& device, const FenceDesc& desc)
-		: m_Device(device)
-		, Fence(desc)
+	FenceHandle Device::CreateFence(const FenceDesc& desc)
 	{
-		VkFenceCreateInfo createInfo = {};
-		createInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-		createInfo.pNext = nullptr;
-		createInfo.flags = desc.signalled ? VK_FENCE_CREATE_SIGNALED_BIT : 0; 
+		FenceHandle handle;
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Fence& fence = *device.m_FencePool.Create(handle.id);
+		VkFenceCreateInfo fenceCI = {};
+		fenceCI.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		fenceCI.pNext = nullptr;
+		fenceCI.flags = desc.signalled ? VK_FENCE_CREATE_SIGNALED_BIT : 0;
 
-		TYR_GASSERT(vkCreateFence(device.GetLogicalDevice(), &createInfo, g_VulkanAllocationCallbacks, &m_Fence));
-		VulkanUtility::SetDebugName(device.GetLogicalDevice(), desc.debugName.c_str(), VK_OBJECT_TYPE_FENCE, reinterpret_cast<uint64>(m_Fence));
+		TYR_GASSERT(vkCreateFence(device.m_LogicalDevice, &fenceCI, g_VulkanAllocationCallbacks, &fence.fence));
+#if !TYR_FINAL
+		VulkanUtility::SetDebugName(device.m_LogicalDevice, desc.debugName.CStr(), VK_OBJECT_TYPE_FENCE, reinterpret_cast<uint64>(fence.fence));
+#endif
+		return handle;
 	}
 
-	VulkanFence::~VulkanFence()
+	void Device::DeleteFence(FenceHandle handle)
 	{
-		vkDestroyFence(m_Device.GetLogicalDevice(), m_Fence, g_VulkanAllocationCallbacks);	
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Fence& fence = device.GetFence(handle);
+		vkDestroyFence(device.m_LogicalDevice, fence.fence, g_VulkanAllocationCallbacks);
+		device.m_FencePool.Delete(handle.id);
 	}
 
-	void VulkanFence::Reset()
+	void Device::ResetFence(FenceHandle handle)
 	{
-		TYR_GASSERT(vkResetFences(m_Device.GetLogicalDevice(), 1, &m_Fence));
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Fence& fence = device.GetFence(handle);
+		TYR_GASSERT(vkResetFences(device.m_LogicalDevice, 1, &fence.fence));
 	}
 
-	bool VulkanFence::GetStatus() const
+	bool Device::GetFenceStatus(FenceHandle handle) const
 	{
-		VkResult result = vkGetFenceStatus(m_Device.GetLogicalDevice(), m_Fence);
+		const DeviceInternal& device = static_cast<const DeviceInternal&>(*this);
+		const Fence& fence = device.GetFence(handle);
+		VkResult result = vkGetFenceStatus(device.m_LogicalDevice, fence.fence);
 		if (result == VK_SUCCESS)
 		{
 			return true;
@@ -41,9 +52,11 @@ namespace tyr
 		return false;
 	}
 
-	bool VulkanFence::Wait()
+	bool Device::WaitForFence(FenceHandle handle, uint64 timeout) const
 	{
-		VkResult result = vkWaitForFences(m_Device.GetLogicalDevice(), 1, &m_Fence, VK_TRUE, m_Desc.timeout);
+		const DeviceInternal& device = static_cast<const DeviceInternal&>(*this);
+		const Fence& fence = device.GetFence(handle);
+		VkResult result = vkWaitForFences(device.m_LogicalDevice, 1, &fence.fence, VK_TRUE, timeout);
 		if (result == VK_SUCCESS)
 		{
 			return true;
@@ -56,65 +69,84 @@ namespace tyr
 		return false;
 	}
 
-	VulkanSemaphore::VulkanSemaphore(VulkanDevice& device, const SemaphoreDesc& desc)
-		: m_Device(device)
-		, Semaphore(desc)
+	SemaphoreHandle Device::CreateSemaphoreResource(const SemaphoreDesc& desc)
 	{
-		VkSemaphoreCreateInfo createInfo = {};
-		createInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-		createInfo.pNext = desc.type == SemaphoreType::Timeline ? &createInfo : nullptr;
-		createInfo.flags = 0;
+		SemaphoreHandle handle;
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Semaphore& semaphore = *device.m_SemaphorePool.Create(handle.id);
+
+		VkSemaphoreCreateInfo semaphoreCI = {};
+		semaphoreCI.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+		semaphoreCI.flags = 0;
 
 		if (desc.type == SemaphoreType::Timeline)
 		{
-			VkSemaphoreTypeCreateInfo typeCreateInfo;
-			typeCreateInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
-			typeCreateInfo.pNext = nullptr;
-			typeCreateInfo.initialValue = 0;
-			typeCreateInfo.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
-			createInfo.pNext = &typeCreateInfo;
+			VkSemaphoreTypeCreateInfo typeCI;
+			typeCI.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+			typeCI.pNext = nullptr;
+			typeCI.initialValue = 0;
+			typeCI.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+			semaphoreCI.pNext = &typeCI;
+		}
+		else
+		{
+			semaphoreCI.pNext = nullptr;
 		}
 
-		TYR_GASSERT(vkCreateSemaphore(device.GetLogicalDevice(), &createInfo, g_VulkanAllocationCallbacks, &m_Semaphore));
-		VulkanUtility::SetDebugName(device.GetLogicalDevice(), desc.debugName.c_str(), VK_OBJECT_TYPE_SEMAPHORE, reinterpret_cast<uint64>(m_Semaphore));
+		TYR_GASSERT(vkCreateSemaphore(device.m_LogicalDevice, &semaphoreCI, g_VulkanAllocationCallbacks, &semaphore.semaphore));
+#if !TYR_FINAL
+		VulkanUtility::SetDebugName(device.m_LogicalDevice, desc.debugName.CStr(), VK_OBJECT_TYPE_SEMAPHORE, reinterpret_cast<uint64>(semaphore.semaphore));
+#endif
+		semaphore.type = desc.type;
+
+		return handle;
 	}
 
-	VulkanSemaphore::~VulkanSemaphore()
+	void Device::DeleteSemaphoreResource(SemaphoreHandle handle)
 	{
-		vkDestroySemaphore(m_Device.GetLogicalDevice(), m_Semaphore, g_VulkanAllocationCallbacks);
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Semaphore& semaphore = device.GetSemaphore(handle);
+		vkDestroySemaphore(device.m_LogicalDevice, semaphore.semaphore, g_VulkanAllocationCallbacks);
+		device.m_SemaphorePool.Delete(handle.id);
 	}
 
-	void VulkanSemaphore::Signal(uint64 value)
+	void Device::SignalSemaphore(SemaphoreHandle handle, uint64 value)
 	{
-		TYR_ASSERT(m_Desc.type == SemaphoreType::Timeline);
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Semaphore& semaphore = device.GetSemaphore(handle);
+		TYR_ASSERT(semaphore.type == SemaphoreType::Timeline);
 		VkSemaphoreSignalInfo info;
 		info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO;
 		info.pNext = nullptr;
-		info.semaphore = m_Semaphore;
+		info.semaphore = semaphore.semaphore;
 		info.value = value;
-		TYR_GASSERT(vkSignalSemaphore(m_Device.GetLogicalDevice(), &info));
+		TYR_GASSERT(vkSignalSemaphore(device.m_LogicalDevice, &info));
 	}
 
-	uint64 VulkanSemaphore::GetValue() const
+	uint64 Device::GetSemaphoreValue(SemaphoreHandle handle) const
 	{
-		TYR_ASSERT(m_Desc.type == SemaphoreType::Timeline);
+		const DeviceInternal& device = static_cast<const DeviceInternal&>(*this);
+		const Semaphore& semaphore = device.GetSemaphore(handle);
+		TYR_ASSERT(semaphore.type == SemaphoreType::Timeline);
 		uint64 value;
-		TYR_GASSERT(vkGetSemaphoreCounterValue(m_Device.GetLogicalDevice(), m_Semaphore, &value));
+		TYR_GASSERT(vkGetSemaphoreCounterValue(device.m_LogicalDevice, semaphore.semaphore, &value));
 		return value;
 	}
 
-	bool VulkanSemaphore::Wait(uint64 value, uint64 timeout)
+	bool Device::WaitForSemaphore(SemaphoreHandle handle, uint64 value, uint64 timeout) const
 	{
-		TYR_ASSERT(m_Desc.type == SemaphoreType::Timeline);
+		const DeviceInternal& device = static_cast<const DeviceInternal&>(*this);
+		const Semaphore& semaphore = device.GetSemaphore(handle);
+		TYR_ASSERT(semaphore.type == SemaphoreType::Timeline);
 		VkSemaphoreWaitInfo info;
 		info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
 		info.pNext = nullptr;
 		info.flags = 0;
 		info.semaphoreCount = 1;
-		info.pSemaphores = &m_Semaphore;
+		info.pSemaphores = &semaphore.semaphore;
 		info.pValues = &value;
 
-		VkResult result = vkWaitSemaphores(m_Device.GetLogicalDevice(), &info, timeout);
+		VkResult result = vkWaitSemaphores(device.m_LogicalDevice, &info, timeout);
 		if (result == VK_SUCCESS)
 		{
 			return true;
@@ -127,37 +159,51 @@ namespace tyr
 		return false;
 	}
 
-	VulkanEvent::VulkanEvent(VulkanDevice& device, const EventDesc& desc)
-		: m_Device(device)
-		, Event(desc)
+	EventHandle Device::CreateEventResource(const EventDesc& desc)
 	{
+		EventHandle handle;
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Event& event = *device.m_EventPool.Create(handle.id);
+
 		VkEventCreateInfo createInfo = {};
 		createInfo.sType = VK_STRUCTURE_TYPE_EVENT_CREATE_INFO;
 		createInfo.pNext = nullptr;
 		createInfo.flags = 0;
 
-		TYR_GASSERT(vkCreateEvent(device.GetLogicalDevice(), &createInfo, g_VulkanAllocationCallbacks, &m_Event));
-		VulkanUtility::SetDebugName(device.GetLogicalDevice(), desc.debugName.c_str(), VK_OBJECT_TYPE_EVENT, reinterpret_cast<uint64>(m_Event));
+		TYR_GASSERT(vkCreateEvent(device.m_LogicalDevice, &createInfo, g_VulkanAllocationCallbacks, &event.event));
+#if !TYR_FINAL
+		VulkanUtility::SetDebugName(device.m_LogicalDevice, desc.debugName.CStr(), VK_OBJECT_TYPE_EVENT, reinterpret_cast<uint64>(event.event));
+#endif
+		return handle;
 	}
 
-	VulkanEvent::~VulkanEvent()
+	void Device::DeleteEventResource(EventHandle handle)
 	{
-		vkDestroyEvent(m_Device.GetLogicalDevice(), m_Event, g_VulkanAllocationCallbacks);
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Event& event = device.GetEvent(handle);
+		vkDestroyEvent(device.m_LogicalDevice, event.event, g_VulkanAllocationCallbacks);
+		device.m_EventPool.Delete(handle.id);
 	}
 
-	bool VulkanEvent::Set()
+	bool Device::SetEvent(EventHandle handle)
 	{
-		TYR_GASSERT(vkSetEvent(m_Device.GetLogicalDevice(), m_Event));
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Event& event = device.GetEvent(handle);
+		TYR_GASSERT(vkSetEvent(device.m_LogicalDevice, event.event));
 	}
 
-	void VulkanEvent::Reset()
+	void Device::ResetEvent(EventHandle handle)
 	{
-		TYR_GASSERT(vkResetEvent(m_Device.GetLogicalDevice(), m_Event));
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Event& event = device.GetEvent(handle);
+		TYR_GASSERT(vkResetEvent(device.m_LogicalDevice, event.event));
 	}
 
-	bool VulkanEvent::IsSet() const
+	bool Device::IsEventSet(EventHandle handle) const
 	{
-		VkResult result = vkGetEventStatus(m_Device.GetLogicalDevice(), m_Event);
+		const DeviceInternal& device = static_cast<const DeviceInternal&>(*this);
+		const Event& event = device.GetEvent(handle);
+		VkResult result = vkGetEventStatus(device.m_LogicalDevice, event.event);
 		if (result == VK_EVENT_SET)
 		{
 			return true;

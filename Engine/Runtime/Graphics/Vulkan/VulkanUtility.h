@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "RenderAPI/RenderAPITypes.h"
@@ -39,7 +38,7 @@ namespace tyr
 
 		static inline void SetDebugName(VkDevice device, const char* name, VkObjectType objectType, uint64 objectHandle)
 		{
-#if TYR_DEBUG
+#if !TYR_FINAL
 			VkDebugUtilsObjectNameInfoEXT info = {};
 			info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
 			info.pNext = nullptr;
@@ -53,6 +52,12 @@ namespace tyr
 #endif 
 		}
 	};
+
+#if TYR_FINAL
+#	define TYR_SET_GFX_DEBUG_NAME()
+#else
+#	define TYR_SET_GFX_DEBUG_NAME(device, name, objectType, objectHandle) VulkanUtility::SetDebugName(device, name, objectType, objectHandle);
+#endif
 }
 
 

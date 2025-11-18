@@ -11,13 +11,16 @@ namespace tyr
 #define TYR_REFL_CONCAT_INNER(a, b) a##b
 #define TYR_REFL_CONCAT(a, b) TYR_REFL_CONCAT_INNER(a, b)
 
+// Only suited to non-template types. For template types, use a custom serialiser 
 #define TYR_REFL_CLASS_START(type, typeVersion) \
     struct type##MetaClass \
     { \
         type##MetaClass() \
         { \
-            const String typeName = GetTypeName<type>(); \
-            TypeInfo& info = TypeRegistry::Instance().AddType(typeName.c_str()); \
+            const StringView typeName = GetTypeName<type>(); \
+            const Id64 typeID(typeName.data(), typeName.size()); \
+            TypeInfo& info = TypeRegistry::Instance().AddType(typeID); \
+            info.name = TypeName(typeName.data(), typeName.size()); \
             info.size = sizeof(type); \
             info.alignment = alignof(type); \
             info.version = typeVersion; \
@@ -27,9 +30,9 @@ namespace tyr
         } \
     } TYR_REFL_CONCAT(metaClassInst_, __LINE__); 
 
-#define TYR_REFL_FIELD(fieldPtr, name, isVisible, isEditable, isFinal) TypeInfoUtil::AddField(info, name, GetFieldTypeName(fieldPtr), GetFieldBuiltInCustomObjectSerializer(fieldPtr), 0, GetFieldOffset(fieldPtr), isVisible, isEditable, isFinal, false);
+#define TYR_REFL_FIELD(fieldPtr, name, isVisible, isEditable, isFinal) TypeInfoUtil::AddField(info, name, GetFieldTypeID(fieldPtr), GetFieldBuiltInCustomObjectSerializer(fieldPtr), 0, GetFieldOffset(fieldPtr), isVisible, isEditable, isFinal, false);
 
-#define TYR_REFL_ARRAY_FIELD(countFieldPtr, dataFieldPtr, name, isVisible, isEditable, isFinal) TypeInfoUtil::AddField(info, name, GetFieldTypeName(dataFieldPtr), nullptr, GetFieldOffset(countFieldPtr), GetFieldOffset(dataFieldPtr), isVisible, isEditable, isFinal, true);
+#define TYR_REFL_ARRAY_FIELD(countFieldPtr, dataFieldPtr, name, isVisible, isEditable, isFinal) TypeInfoUtil::AddField(info, name, GetFieldTypeID(dataFieldPtr), nullptr, GetFieldOffset(countFieldPtr), GetFieldOffset(dataFieldPtr), isVisible, isEditable, isFinal, true);
 }
 
 

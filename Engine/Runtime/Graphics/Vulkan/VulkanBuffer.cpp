@@ -3,114 +3,141 @@
 
 namespace tyr
 {
-	VulkanBuffer::VulkanBuffer(VulkanDevice& device, const BufferDesc& desc)
-		: Buffer(desc)
-		, m_Device(device)
+	BufferHandle Device::CreateBuffer(const BufferDesc& desc)
 	{
-		VkBufferCreateInfo bufferInfo;
-		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-		bufferInfo.pNext = nullptr;
-		bufferInfo.flags = 0;
-		bufferInfo.size = static_cast<VkDeviceSize>(desc.size);
-		bufferInfo.usage = static_cast<VkBufferUsageFlags>(desc.usage);
-		bufferInfo.sharingMode = VulkanUtility::ToVulkanSharingMode(desc.sharingMode);
-		bufferInfo.queueFamilyIndexCount = 0;
-		bufferInfo.pQueueFamilyIndices = nullptr;
+		BufferHandle handle;
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Buffer& buffer = *device.m_BufferPool.Create(handle.id);
+		VkBufferCreateInfo bufferCI;
+		bufferCI.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bufferCI.pNext = nullptr;
+		bufferCI.flags = 0;
+		bufferCI.size = static_cast<VkDeviceSize>(desc.size);
+		bufferCI.usage = static_cast<VkBufferUsageFlags>(desc.usage);
+		bufferCI.sharingMode = VulkanUtility::ToVulkanSharingMode(desc.sharingMode);
+		bufferCI.queueFamilyIndexCount = 0;
+		bufferCI.pQueueFamilyIndices = nullptr;
 		
 		TYR_ASSERT(device.HasMemoryType(desc.memoryProperty));
-		TYR_GASSERT(vkCreateBuffer(device.GetLogicalDevice(), &bufferInfo, g_VulkanAllocationCallbacks, &m_Buffer));
+		TYR_GASSERT(vkCreateBuffer(device.m_LogicalDevice, &bufferCI, g_VulkanAllocationCallbacks, &buffer.buffer));
 
-#if TYR_DEBUG
-		VulkanUtility::SetDebugName(device.GetLogicalDevice(), desc.debugName.c_str(), VK_OBJECT_TYPE_BUFFER, reinterpret_cast<uint64>(m_Buffer));
-#endif
+		TYR_SET_GFX_DEBUG_NAME(device.m_LogicalDevice, desc.debugName.CStr(), VK_OBJECT_TYPE_BUFFER, reinterpret_cast<uint64>(buffer.buffer));
 
-		m_Allocation = device.AllocateMemory(m_Buffer, static_cast<VkMemoryPropertyFlagBits>(m_Desc.memoryProperty), m_SizeAllocated);
+		buffer.size = bufferCI.size;
+		buffer.stride = desc.stride;
+		buffer.usage = bufferCI.usage;
+		buffer.memoryProperty = static_cast<VkMemoryPropertyFlagBits>(desc.memoryProperty);
+		buffer.allocation = device.AllocateMemory(buffer.buffer, buffer.memoryProperty);
+
+		return handle;
 	}
 
-	VulkanBuffer::~VulkanBuffer()
+	void Device::DeleteBuffer(BufferHandle handle)
 	{
-		vkDestroyBuffer(m_Device.GetLogicalDevice(), m_Buffer, g_VulkanAllocationCallbacks);
-		m_Device.FreeMemory(m_Allocation);
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Buffer& buffer = device.GetBuffer(handle);
+		vkDestroyBuffer(device.m_LogicalDevice, buffer.buffer, g_VulkanAllocationCallbacks);
+		device.FreeMemory(buffer.allocation);
+		device.m_BufferPool.Delete(handle.id);
 	}
 
-	uint8* VulkanBuffer::Map() const
+	size_t Device::GetBufferSize(BufferHandle handle) const
 	{
-		TYR_ASSERT(Utility::HasFlag(m_Desc.memoryProperty, MEMORY_PROPERTY_HOST_VISIBLE_BIT));
+		const DeviceInternal& device = static_cast<const DeviceInternal&>(*this);
+		const Buffer& buffer = device.GetBuffer(handle);
+		return static_cast<size_t>(buffer.size);
+	}
+
+	uint8* Device::MapBuffer(BufferHandle handle)
+	{
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Buffer& buffer = device.GetBuffer(handle);
+		TYR_ASSERT(Utility::HasFlag(buffer.memoryProperty, MEMORY_PROPERTY_HOST_VISIBLE_BIT));
 		uint8* data;
-		TYR_GASSERT(vmaMapMemory(m_Device.GetAllocator(), m_Allocation, (void**)&data));
+		TYR_GASSERT(vmaMapMemory(device.m_Allocator, buffer.allocation, (void**)&data));
 		return data;
 	}
 
-	void VulkanBuffer::Unmap()
+	void Device::UnmapBuffer(BufferHandle handle)
 	{
-		TYR_ASSERT(Utility::HasFlag(m_Desc.memoryProperty, MEMORY_PROPERTY_HOST_VISIBLE_BIT));
-		vmaUnmapMemory(m_Device.GetAllocator(), m_Allocation);
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Buffer& buffer = device.GetBuffer(handle);
+		TYR_ASSERT(Utility::HasFlag(buffer.memoryProperty, MEMORY_PROPERTY_HOST_VISIBLE_BIT));
+		vmaUnmapMemory(device.m_Allocator, buffer.allocation);
 	}
 
-	void VulkanBuffer::Write(const void* data, size_t offset, size_t size) 
+	void Device::WriteBuffer(BufferHandle handle, const void* data, size_t offset, size_t size)
 	{
-		const bool& hostVisible = Utility::HasFlag(m_Desc.memoryProperty, MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Buffer& buffer = device.GetBuffer(handle);
+		const bool& hostVisible = Utility::HasFlag(buffer.memoryProperty, MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 		TYR_ASSERT(hostVisible);
-		const bool& hostCoherent = Utility::HasFlag(m_Desc.memoryProperty, MEMORY_PROPERTY_HOST_COHERENT_BIT); 
-		uint8* mappedData = Map();
+		const bool& hostCoherent = Utility::HasFlag(buffer.memoryProperty, MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		uint8* mappedData = MapBuffer(handle);
 		memcpy((void*)&mappedData[offset], data, size);
 		if (!hostCoherent)
 		{
-			vmaFlushAllocation(m_Device.GetAllocator(), m_Allocation, 0, VK_WHOLE_SIZE);
+			vmaFlushAllocation(device.m_Allocator, buffer.allocation, 0, VK_WHOLE_SIZE);
 		}
-		Unmap();	
+		UnmapBuffer(handle);	
 	}
 
-	void VulkanBuffer::Read(void* data, size_t offset, size_t size)
+	void Device::ReadBuffer(BufferHandle handle, void* data, size_t offset, size_t size)
 	{
-		const bool& hostVisible = Utility::HasFlag(m_Desc.memoryProperty, MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Buffer& buffer = device.GetBuffer(handle);
+		const bool& hostVisible = Utility::HasFlag(buffer.memoryProperty, MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 		TYR_ASSERT(hostVisible);
-		const bool& hostCoherent = Utility::HasFlag(m_Desc.memoryProperty, MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		const bool& hostCoherent = Utility::HasFlag(buffer.memoryProperty, MEMORY_PROPERTY_HOST_COHERENT_BIT);
 		
-		const uint8* mappedData = Map();
+		const uint8* mappedData = MapBuffer(handle);
 		if (!hostCoherent)
 		{
-			vmaInvalidateAllocation(m_Device.GetAllocator(), m_Allocation, 0, VK_WHOLE_SIZE);
+			vmaInvalidateAllocation(device.m_Allocator, buffer.allocation, 0, VK_WHOLE_SIZE);
 		}
 		memcpy(data, (const void*)&mappedData[offset], size);
-		Unmap();
+		UnmapBuffer(handle);
 	}
 
-	VulkanBufferView::VulkanBufferView(VulkanDevice& device, const BufferViewDesc& desc)
-		: BufferView(desc)
-		, m_Device(device)
+	BufferViewHandle Device::CreateBufferView(const BufferViewDesc& desc)
 	{
-		const VulkanBuffer* buffer = desc.buffer.GetAs<VulkanBuffer>();
-		VkBufferViewCreateInfo bufferViewInfo{};
-		bufferViewInfo.pNext = nullptr;
-		bufferViewInfo.sType = VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO;
-		bufferViewInfo.flags = 0;
-		bufferViewInfo.buffer = buffer->GetBuffer();
-		bufferViewInfo.format = VK_FORMAT_R8_UINT;
-		bufferViewInfo.offset = desc.offset;
-		bufferViewInfo.range = desc.size;
+		BufferViewHandle handle;
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		BufferView& bufferView = *device.m_BufferViewPool.Create(handle.id);
+		Buffer& buffer = device.GetBuffer(desc.buffer);
 
-		const BufferDesc& bufferDesc = desc.buffer->GetDesc();
+		VkBufferViewCreateInfo bufferViewCI{};
+		bufferViewCI.pNext = nullptr;
+		bufferViewCI.sType = VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO;
+		bufferViewCI.flags = 0;
+		bufferViewCI.buffer = buffer.buffer;
+		bufferViewCI.format = VK_FORMAT_R8_UINT;
+		bufferViewCI.offset = desc.offset;
+		bufferViewCI.range = desc.size;
 
 		// Only makes sense to create a buffer view in vulkan for buffers with uniform texel or storage texel usage. 
-		if (Utility::HasFlag(bufferDesc.usage, BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT) || Utility::HasFlag(bufferDesc.usage, BUFFER_USAGE_STORAGE_BUFFER_BIT))
+		if (Utility::HasFlag(buffer.usage, VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT) || Utility::HasFlag(buffer.usage, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT))
 		{
-			TYR_GASSERT(vkCreateBufferView(device.GetLogicalDevice(), &bufferViewInfo, g_VulkanAllocationCallbacks, &m_BufferView));
+			TYR_GASSERT(vkCreateBufferView(device.m_LogicalDevice, &bufferViewCI, g_VulkanAllocationCallbacks, &bufferView.bufferView));
+			TYR_SET_GFX_DEBUG_NAME(device.m_LogicalDevice, desc.debugName.CStr(), VK_OBJECT_TYPE_BUFFER_VIEW, reinterpret_cast<uint64>(bufferView.bufferView));
 		}
-		else
-		{
-			m_BufferView = nullptr;
-		}
+		
+		bufferView.buffer = desc.buffer;
+		bufferView.offset = desc.offset;
+		bufferView.size = desc.size;
 
-		m_Buffer = m_Desc.buffer.GetAs<VulkanBuffer>();
+		return handle;
 	}
 
-	VulkanBufferView::~VulkanBufferView()
+	void Device::DeleteBufferView(BufferViewHandle handle)
 	{
-		const BufferDesc& bufferDesc = m_Desc.buffer->GetDesc();
-		if (Utility::HasFlag(bufferDesc.usage, BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT) || Utility::HasFlag(bufferDesc.usage, BUFFER_USAGE_STORAGE_BUFFER_BIT))
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		BufferView& bufferView = device.GetBufferView(handle);
+		Buffer& buffer = device.GetBuffer(bufferView.buffer);
+		if (Utility::HasFlag(buffer.usage, VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT) || Utility::HasFlag(buffer.usage, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT))
 		{
-			vkDestroyBufferView(m_Device.GetLogicalDevice(), m_BufferView, g_VulkanAllocationCallbacks);
+			vkDestroyBufferView(device.m_LogicalDevice, bufferView.bufferView, g_VulkanAllocationCallbacks);
 		}
+		device.m_BufferViewPool.Delete(handle.id);
 	}
 }

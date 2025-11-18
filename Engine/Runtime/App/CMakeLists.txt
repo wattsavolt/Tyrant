@@ -44,8 +44,7 @@ target_compile_definitions(TyrantApp PRIVATE
 	$<$<CONFIG:RelWithDebInfo>:TYR_CONFIG=TYR_CONFIG_RELWITHDEBINFO>
 	$<$<CONFIG:MinSizeRel>:TYR_CONFIG=TYR_CONFIG_MINSIZEREL>
 	$<$<CONFIG:Release>:TYR_CONFIG=TYR_CONFIG_RELEASE>)
-
-target_compile_definitions(TyrantApp PUBLIC TYR_APP_NAME=${TYR_APP_NAME}) 	
+	
 target_compile_definitions(TyrantApp PUBLIC TYR_APP_LIB_NAME=${TYR_APP_LIB_NAME}) 	
 
 # Libraries

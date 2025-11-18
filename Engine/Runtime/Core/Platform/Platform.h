@@ -70,7 +70,10 @@ namespace tyr
 
 		static void CreateGuid(Guid& guid);
 
-		static String GetBinaryDirectory();
+		// @note: dir must be preallocated to a large enough size
+		static void GetBinaryDirectoryPath(char* dirPath);
+
+		static String GetBinaryDirectoryPath();
 
 		static const char* c_DynamicLibExtension;
 

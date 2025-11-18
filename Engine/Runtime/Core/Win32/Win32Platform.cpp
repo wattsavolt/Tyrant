@@ -4,6 +4,7 @@
 #include <windows.h>
 #include "String/StringTypes.h"
 #include "Identifiers/Guid.h"
+#include "Utility/PathUtil.h"
 #include <intrin.h>
 #include <rpc.h>
 
@@ -11,7 +12,7 @@ namespace tyr
 {
 	const char* Platform::c_DynamicLibExtension = ".dll";
 
-	const String Platform::c_BinaryDirectory = GetBinaryDirectory();
+	const String Platform::c_BinaryDirectory = GetBinaryDirectoryPath();
 
 	void Platform::Exit(bool cleanup)
 	{
@@ -204,10 +205,17 @@ namespace tyr
 		TYR_ASSERT(status == RPC_S_OK);
 	}
 
-	String Platform::GetBinaryDirectory()
+	void Platform::GetBinaryDirectoryPath(char* dirPath)
 	{
-		char buffer[MAX_PATH];
-		GetModuleFileName(nullptr, buffer, MAX_PATH);
+		char executablePath[TYR_MAX_PATH];
+		GetModuleFileName(nullptr, executablePath, TYR_MAX_PATH);
+		PathUtil::GetDirectoryPathFromFilePath(executablePath, dirPath);
+	}
+
+	String Platform::GetBinaryDirectoryPath()
+	{
+		char buffer[TYR_MAX_PATH];
+		GetModuleFileName(nullptr, buffer, TYR_MAX_PATH);
 
 		String executablePath = buffer;
 		String executableDirectory = executablePath.substr(0, executablePath.find_last_of("\\/"));

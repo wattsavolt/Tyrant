@@ -1,60 +1,29 @@
 #include <cstdlib>
 
 #include "Core.h"
-#include "EngineManager.h"
-#include "App/AppBase.h"
+#include "AppModule.h"
 #include "Platform/Platform.h"
 #include "Utility/Utility.h"
 #include "Utility/LibraryLoader.h"
+#include "Module/ModuleManager.h"
 #include "Engine.h" 
-#if TYR_IS_EDITOR
-#include "Editor.h"
-#endif
 
-
-typedef TYR_IMPORT tyr::AppBase* (TYR_STDCALL *CreateApp)();
-
-tyr::AppBase* LoadApp(const tyr::LibraryLoader& loader)
+namespace tyr
 {
-    CreateApp createApp = static_cast<CreateApp>(loader.GetProcessAddress("CreateApp"));
-    return createApp();
-}
-
-int Run(int windowShowFlag = 1)
-{
-    tyr::EngineParams engineParams;
-#if TYR_IS_EDITOR
-    engineParams.app = new tyr::Editor();
-#else
-    clr::LibraryLoader loader;
-    const char* libName = TYR_TO_LITERAL(TYR_APP_LIB_NAME);
-    if (!loader.Load(libName))
+    int Run(int windowShowFlag = 1)
     {
-        return EXIT_FAILURE;
+        Engine* engine = new tyr::Engine();
+        engine->Initialize([]() {
+            // Application modules must be registered here
+            TYR_REGISTER_MODULE(AppModule);
+        });
+        engine->Run();
+        // All modules will be shutdown and unregistered here
+        engine->Shutdown();
+        delete engine;
+
+        return EXIT_SUCCESS;
     }
-    engineParams.app = LoadApp(loader);
-#endif
-
-    int result;
-
-    if (engineParams.app)
-    {
-        engineParams.appName = TYR_TO_LITERAL(TYR_APP_NAME);
-        engineParams.windowShowFlag = 1;
-        tyr::EngineManager::RunEngine(engineParams);
-        delete engineParams.app;
-        result = EXIT_SUCCESS;
-    }
-    else
-    {
-        result = EXIT_FAILURE;
-    } 
-
-#if !TYR_IS_EDITOR
-    loader.Unload();
-#endif
-
-    return result;
 }
 
 #if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
@@ -67,12 +36,12 @@ int APIENTRY WinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
-    return Run(nCmdShow);
+    return tyr::Run(nCmdShow);
 }
 #else
 int main(int argc, char* argv[])
 {
-    return Run(nCmdShow);
+    return tyr::Run(nCmdShow);
 }
 #endif
 	

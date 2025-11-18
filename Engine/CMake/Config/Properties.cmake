@@ -94,11 +94,11 @@ if (UNIX)
 	# Linux
 	else()
 		# Find tools used for stripping binaries
-	    find_program(OBJCOPY_TOOL objcopy)
+	    	find_program(OBJCOPY_TOOL objcopy)
 
-	    if (NOT OBJCOPY_TOOL)
-	        message(FATAL_ERROR "Could not find 'objcopy' tool.")
-	    endif()
+	    	if (NOT OBJCOPY_TOOL)
+	        	message(FATAL_ERROR "Could not find 'objcopy' tool.")
+	    	endif()
 
 	endif()
 endif()

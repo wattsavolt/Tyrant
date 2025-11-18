@@ -1,19 +1,29 @@
-
-
 #include "VulkanPipeline.h"
-#include "VulkanDescriptorSet.h"
-#include "VulkanShader.h"
+#include "VulkanDevice.h"
+#include "VulkanDescriptorSetGroup.h"
+#include "VulkanShaderModule.h"
 
 namespace tyr
 {
-	VulkanRenderPass::VulkanRenderPass(VulkanDevice* device, const RenderPassDesc& renderPassDesc)
-		: RenderPass(renderPassDesc)
-		, m_Device(device)
+	void CreateAttachmentReferences(const AttachmentReference* attachments, uint attachmentCount, VkAttachmentReference* vkAttachments)
 	{
-		StackAllocManager stack;
+		for (uint i = 0; i < attachmentCount; ++i)
+		{
+			const AttachmentReference& attachment = attachments[i];
+			vkAttachments[i].attachment = attachment.attachmentIndex;
+			vkAttachments[i].layout = VulkanUtility::ToVulkanImageLayout(attachment.layout);
+		}
+	}
 
+	RenderPassHandle Device::CreateRenderPass(const RenderPassDesc& renderPassDesc)
+	{
+		RenderPassHandle handle;
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		RenderPass& renderPass = *device.m_RenderPassPool.Create(handle.id);
+
+		StackAllocManager stack;
 		VkAttachmentDescription* attachments = stack.Alloc<VkAttachmentDescription>(renderPassDesc.attachments.Size());
-		for (int i = 0; i < renderPassDesc.attachments.Size(); ++i)
+		for (uint i = 0; i < renderPassDesc.attachments.Size(); ++i)
 		{
 			const AttachmentDesc& desc = renderPassDesc.attachments[i];
 			VkAttachmentDescription& attachment = attachments[i];
@@ -26,7 +36,6 @@ namespace tyr
 		}
 
 		VkSubpassDescription* subpasses = stack.Alloc<VkSubpassDescription>(renderPassDesc.subpasses.Size());
-		// Array<FixedArray<Array<VkAttachmentReference>, 5>> subpassAttachments;
 		for (uint i = 0; i < renderPassDesc.subpasses.Size(); ++i)
 		{
 			const SubpassDesc& desc = renderPassDesc.subpasses[i];
@@ -76,32 +85,39 @@ namespace tyr
 		renderPassInfo.dependencyCount = static_cast<uint>(renderPassDesc.dependencies.Size());
 		renderPassInfo.pDependencies = dependencies;
 
-		TYR_GASSERT(vkCreateRenderPass(device->GetLogicalDevice(), &renderPassInfo, g_VulkanAllocationCallbacks, &m_RenderPass));
+		TYR_GASSERT(vkCreateRenderPass(device.m_LogicalDevice, &renderPassInfo, g_VulkanAllocationCallbacks, &renderPass.renderPass));
+
+		return handle;
 	}
 
-	VulkanRenderPass::~VulkanRenderPass()
+	void Device::DeleteRenderPass(RenderPassHandle handle)
 	{
-		vkDestroyRenderPass(m_Device->GetLogicalDevice(), m_RenderPass, g_VulkanAllocationCallbacks);
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		RenderPass& renderPass = device.GetRenderPass(handle);
+		vkDestroyRenderPass(device.m_LogicalDevice, renderPass.renderPass, g_VulkanAllocationCallbacks);
+		device.m_RenderPassPool.Delete(handle.id);
 	}
 
-	void VulkanRenderPass::CreateAttachmentReferences(const AttachmentReference* attachments, uint attachmentCount, VkAttachmentReference* vkAttachments)
+	void ToVulkanStencilOpState(const StencilOpState& stencilOpState, VkStencilOpState& vkStencilOpState)
 	{
-		for (uint i = 0; i < attachmentCount; ++i)
-		{
-			const AttachmentReference& attachment = attachments[i];
-			vkAttachments[i].attachment = attachment.attachmentIndex;
-			vkAttachments[i].layout = VulkanUtility::ToVulkanImageLayout(attachment.layout);
-		}	
+		vkStencilOpState.failOp = VulkanUtility::ToVulkanStencilOp(stencilOpState.failOp);
+		vkStencilOpState.passOp = VulkanUtility::ToVulkanStencilOp(stencilOpState.passOp);
+		vkStencilOpState.depthFailOp = VulkanUtility::ToVulkanStencilOp(stencilOpState.depthFailOp);
+		vkStencilOpState.compareOp = VulkanUtility::ToVulkanCompareOp(stencilOpState.compareOp);
+		vkStencilOpState.compareMask = stencilOpState.compareMask;
+		vkStencilOpState.writeMask = stencilOpState.writeMask;
+		vkStencilOpState.reference = stencilOpState.reference;
 	}
 
-	VulkanGraphicsPipeline::VulkanGraphicsPipeline(VulkanDevice* device, const GraphicsPipelineDesc& desc)
-		: GraphicsPipeline(desc)
+	GraphicsPipelineHandle Device::CreateGraphicsPipeline(const GraphicsPipelineDesc& desc)
 	{
-		m_Device = device;
+		GraphicsPipelineHandle handle;
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		GraphicsPipeline& pipeline = *device.m_GraphicsPipelinePool.Create(handle.id);
 
 		StackAllocManager stack;
 
-		VkDevice logicalDevice = m_Device->GetLogicalDevice();
+		VkDevice logicalDevice = device.m_LogicalDevice;
 
 		// Create vertex input state
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
@@ -235,8 +251,8 @@ namespace tyr
 			vkDescriptorSetLayouts = stack.Alloc<VkDescriptorSetLayout>(pipelineLayoutInfo.setLayoutCount);
 			for (uint i = 0; i < pipelineLayoutInfo.setLayoutCount; ++i)
 			{
-				Ref<VulkanDescriptorSetLayout> const& layout = RefCast<VulkanDescriptorSetLayout>(desc.pipelineLayoutDesc.descriptorSetLayouts[i]);
-				vkDescriptorSetLayouts[i] = layout->GetLayout();
+				const DescriptorSetLayout& layout = device.GetDescriptorSetLayout(desc.pipelineLayoutDesc.descriptorSetLayouts[i]);
+				vkDescriptorSetLayouts[i] = layout.layout;
 			}
 		}
 		pipelineLayoutInfo.pSetLayouts = vkDescriptorSetLayouts;
@@ -256,25 +272,42 @@ namespace tyr
 		}
 		pipelineLayoutInfo.pPushConstantRanges = vkConstantRanges;
 
-		TYR_GASSERT(vkCreatePipelineLayout(logicalDevice, &pipelineLayoutInfo, g_VulkanAllocationCallbacks, &m_PipelineLayout));
+		TYR_GASSERT(vkCreatePipelineLayout(logicalDevice, &pipelineLayoutInfo, g_VulkanAllocationCallbacks, &pipeline.pipelineLayout));
 
 
-		// Note: m_Desc must be used below for dynamic states as some dyanmic states are added if not present in description argument.
-		VkDynamicState* vkDynamicStates = nullptr;
+		// Create dynamic state infos
+		bool viewPortDynamicState = false;
+		bool scissorsDynamicState = false;
+
+		LocalArray<VkDynamicState, GraphicsPipelineDesc::c_MaxDynamicStates> vkDynamicStates;
+		for (DynamicState state : desc.dynamicStates)
+		{
+			if (state == DynamicState::Viewport)
+			{
+				viewPortDynamicState = true;
+			}
+			else if (state == DynamicState::Scissor)
+			{
+				scissorsDynamicState = true;
+			}
+			vkDynamicStates.Add(VulkanUtility::ToVulkanDynamicState(state));
+		}
+
+		// Ensure viewport and scissor can be dynamic if not provided.
+		if (!viewPortDynamicState)
+		{
+			vkDynamicStates.Add(VK_DYNAMIC_STATE_VIEWPORT);
+		}
+		if (!scissorsDynamicState)
+		{
+			vkDynamicStates.Add(VK_DYNAMIC_STATE_SCISSOR);
+		}
+		
 		VkPipelineDynamicStateCreateInfo dynamicState{};
 		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
 		dynamicState.pNext = nullptr;
-		dynamicState.dynamicStateCount = m_Desc.dynamicStates.Size();
-		if (dynamicState.dynamicStateCount > 0)
-		{
-			vkDynamicStates = stack.Alloc<VkDynamicState>(dynamicState.dynamicStateCount);
-			for (uint i = 0; i < dynamicState.dynamicStateCount; ++i)
-			{
-				vkDynamicStates[i] = VulkanUtility::ToVulkanDynamicState(m_Desc.dynamicStates[i]);
-			}
-		}
-		dynamicState.pDynamicStates = vkDynamicStates;
-
+		dynamicState.dynamicStateCount = vkDynamicStates.Size();
+		dynamicState.pDynamicStates = vkDynamicStates.Data();
 
 		// Create shader stages
 		VkPipelineShaderStageCreateInfo* vkStages = nullptr;
@@ -284,13 +317,13 @@ namespace tyr
 			vkStages = stack.Alloc<VkPipelineShaderStageCreateInfo>(shaderCount);
 			for (uint i = 0; i < shaderCount; ++i)
 			{
-				const Ref<VulkanShader>& shader = RefCast<VulkanShader>(desc.shaders[i]);
+				const ShaderModule& shader = device.GetShaderModule(desc.shaders[i]);
 				vkStages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 				vkStages[i].pNext = nullptr;
 				vkStages[i].flags = 0;
-				vkStages[i].stage = static_cast<VkShaderStageFlagBits>(shader->GetStage());
-				vkStages[i].module = shader->GetShaderModule();
-				vkStages[i].pName = shader->GetEntryPoint();
+				vkStages[i].stage = shader.stage;
+				vkStages[i].module = shader.shaderModule;
+				vkStages[i].pName = shader.entryPoint.CStr();
 				vkStages[i].pSpecializationInfo = nullptr;
 			}
 		}
@@ -308,7 +341,7 @@ namespace tyr
 		pipelineInfo.pDepthStencilState = &depthStencilState;
 		pipelineInfo.pColorBlendState = &blendState;
 		pipelineInfo.pDynamicState = &dynamicState;
-		pipelineInfo.layout = m_PipelineLayout;
+		pipelineInfo.layout = pipeline.pipelineLayout;
 
 #if TYR_USE_DYNAMIC_RENDERING
 		pipelineInfo.renderPass = VK_NULL_HANDLE;
@@ -327,7 +360,7 @@ namespace tyr
 		pipelineRendering.stencilAttachmentFormat = VulkanUtility::ToVulkanPixelFormat(desc.dynamicRendering.stencilAttachmentFormat);
 		pipelineInfo.pNext = &pipelineRendering;
 #else
-		Ref<VulkanRenderPass> renderPass = RefCast<VulkanRenderPass>(desc.renderPass);
+		Ref<RenderPass> renderPass = RefCast<RenderPass>(desc.renderPass);
 		pipelineInfo.renderPass = renderPass->GetRenderPass();
 		pipelineInfo.subpass = desc.subpassIndex;
 		pipelineInfo.pNext = nullptr;
@@ -336,59 +369,65 @@ namespace tyr
 		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; 
 		pipelineInfo.basePipelineIndex = -1; 
 
-		TYR_GASSERT(vkCreateGraphicsPipelines(logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, g_VulkanAllocationCallbacks, &m_Pipeline));
+		TYR_GASSERT(vkCreateGraphicsPipelines(logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, g_VulkanAllocationCallbacks, &pipeline.pipeline));
+
+		return handle;
 	}
 
-	VulkanGraphicsPipeline::~VulkanGraphicsPipeline()
+	void Device::DeleteGraphicsPipeline(GraphicsPipelineHandle handle)
 	{
-		vkDestroyPipeline(m_Device->GetLogicalDevice(), m_Pipeline, g_VulkanAllocationCallbacks);
-		vkDestroyPipelineLayout(m_Device->GetLogicalDevice(), m_PipelineLayout, g_VulkanAllocationCallbacks);
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		GraphicsPipeline& pipeline = device.GetGraphicsPipeline(handle);
+		vkDestroyPipeline(device.m_LogicalDevice, pipeline.pipeline, g_VulkanAllocationCallbacks);
+		vkDestroyPipelineLayout(device.m_LogicalDevice, pipeline.pipelineLayout, g_VulkanAllocationCallbacks);
+		device.m_GraphicsPipelinePool.Delete(handle.id);
 	}
 
-	void VulkanGraphicsPipeline::ToVulkanStencilOpState(const StencilOpState& stencilOpState, VkStencilOpState& vkStencilOpState)
+	ComputePipelineHandle Device::CreateComputePipeline(const ComputePipelineDesc& desc)
 	{
-		vkStencilOpState.failOp = VulkanUtility::ToVulkanStencilOp(stencilOpState.failOp);
-		vkStencilOpState.passOp = VulkanUtility::ToVulkanStencilOp(stencilOpState.passOp);
-		vkStencilOpState.depthFailOp = VulkanUtility::ToVulkanStencilOp(stencilOpState.depthFailOp);
-		vkStencilOpState.compareOp = VulkanUtility::ToVulkanCompareOp(stencilOpState.compareOp);
-		vkStencilOpState.compareMask = stencilOpState.compareMask;
-		vkStencilOpState.writeMask = stencilOpState.writeMask;
-		vkStencilOpState.reference = stencilOpState.reference;
-	}
-
-	VulkanComputePipeline::VulkanComputePipeline(VulkanDevice* device, const ComputePipelineDesc& desc)
-		: ComputePipeline(desc)
-	{
-		m_Device = device;
+		ComputePipelineHandle handle;
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		ComputePipeline& pipeline = *device.m_ComputePipelinePool.Create(handle.id);
 
 		StackAllocManager stack;
 
-		VkDevice logicalDevice = m_Device->GetLogicalDevice();
+		VkDevice logicalDevice = device.m_LogicalDevice;
 
 		// TODO: Finish constructor
+
+		return handle;
 	}
 
-	VulkanComputePipeline::~VulkanComputePipeline()
+	void Device::DeleteComputePipeline(ComputePipelineHandle handle)
 	{
-		vkDestroyPipeline(m_Device->GetLogicalDevice(), m_Pipeline, g_VulkanAllocationCallbacks);
-		vkDestroyPipelineLayout(m_Device->GetLogicalDevice(), m_PipelineLayout, g_VulkanAllocationCallbacks);
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		ComputePipeline& pipeline = device.GetComputePipeline(handle);
+		vkDestroyPipeline(device.m_LogicalDevice, pipeline.pipeline, g_VulkanAllocationCallbacks);
+		vkDestroyPipelineLayout(device.m_LogicalDevice, pipeline.pipelineLayout, g_VulkanAllocationCallbacks);
+		device.m_ComputePipelinePool.Delete(handle.id);
 	}
 
-	VulkanRayTracingPipeline::VulkanRayTracingPipeline(VulkanDevice* device, const RayTracingPipelineDesc& desc)
-		: RayTracingPipeline(desc)
+	RayTracingPipelineHandle Device::CreateRayTracingPipeline(const RayTracingPipelineDesc& desc)
 	{
-		m_Device = device;
+		RayTracingPipelineHandle handle;
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		RayTracingPipeline& pipeline = *device.m_RayTracingPipelinePool.Create(handle.id);
 
 		StackAllocManager stack;
 
-		VkDevice logicalDevice = m_Device->GetLogicalDevice();
+		VkDevice logicalDevice = device.m_LogicalDevice;
 
 		// TODO: Finish constructor
+
+		return handle;
 	}
 
-	VulkanRayTracingPipeline::~VulkanRayTracingPipeline()
+	void Device::DeleteRayTracingPipeline(RayTracingPipelineHandle handle)
 	{
-		vkDestroyPipeline(m_Device->GetLogicalDevice(), m_Pipeline, g_VulkanAllocationCallbacks);
-		vkDestroyPipelineLayout(m_Device->GetLogicalDevice(), m_PipelineLayout, g_VulkanAllocationCallbacks);
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		RayTracingPipeline& pipeline = device.GetRayTracingPipeline(handle);
+		vkDestroyPipeline(device.m_LogicalDevice, pipeline.pipeline, g_VulkanAllocationCallbacks);
+		vkDestroyPipelineLayout(device.m_LogicalDevice, pipeline.pipelineLayout, g_VulkanAllocationCallbacks);
+		device.m_RayTracingPipelinePool.Delete(handle.id);
 	}
 }

@@ -14,7 +14,7 @@ namespace tyr
 		AssetID assetID;
 		MaterialType type;
 		uint textureCount;
-		AssetID textures[Material::c_MaxTextures];
+		AssetID textures[MaterialConstants::c_MaxTextures];
 	};
 
 	struct MaterialAsset 
@@ -22,6 +22,6 @@ namespace tyr
 		AssetID id;
 		MaterialType type;
 		uint textureCount;
-		uint textures[Material::c_MaxTextures];
+		uint textures[MaterialConstants::c_MaxTextures];
 	};
 }

@@ -77,7 +77,7 @@ namespace tyr
                     Construct<T>(&newData[i], std::move(m_Data[i]));
                 }
 
-                // Old elemtns still need to be destructed (if non trbiially destructible) even after being moved
+                // Old elemtns still need to be destructed (if non trivially destructible) even after being moved
                 DestructElements(0, m_Size);
 
                 // Free the old data

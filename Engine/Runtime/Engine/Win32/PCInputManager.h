@@ -13,7 +13,6 @@ namespace tyr
 		~PCInputManager();
 
 		void Initialize() override;
-		bool HandleNextMessage(bool& quitMsgReceived) override;
 		void Shutdown() override;
 
 	private:

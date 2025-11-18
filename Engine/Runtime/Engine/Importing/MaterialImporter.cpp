@@ -52,7 +52,7 @@ namespace tyr
 			return false;
 		}
 
-		char outputPath[TYR_MAX_PATH_STR_SIZE];
+		char outputPath[TYR_MAX_PATH_TOTAL_SIZE];
 		snprintf(outputPath, sizeof(outputPath), "%s/%s%s", outputFolderPath, textureName, c_TextureFileExtension);
 
 		compDesc.assetID = AssetUtil::CreateAssetID();
@@ -83,11 +83,11 @@ namespace tyr
 	{
 		if (desc.albedoID != 0)
 		{
-			material.textures[Material::c_PbrAlbedoIndex] = desc.albedoID;
+			material.textures[MaterialConstants::c_PbrAlbedoIndex] = desc.albedoID;
 			return true;
 		}
 
-		char textureName[AssetPath::c_MaxAssetNameStrSize];
+		char textureName[PathConstants::c_MaxAssetNameTotalSize];
 		snprintf(textureName, sizeof(textureName), "%s%s", desc.materialName, "_Albedo");
 
 		AssetID textureID;
@@ -97,7 +97,7 @@ namespace tyr
 			return false;
 		}
 
-		material.textures[Material::c_PbrAlbedoIndex] = textureID;
+		material.textures[MaterialConstants::c_PbrAlbedoIndex] = textureID;
 
 		return true;
 	}
@@ -106,7 +106,7 @@ namespace tyr
 	{
 		if (desc.normalHeightID != 0)
 		{
-			material.textures[Material::c_PbrNormalHeightIndex] = desc.normalHeightID;
+			material.textures[MaterialConstants::c_PbrNormalHeightIndex] = desc.normalHeightID;
 			return true;
 		}
 
@@ -165,7 +165,7 @@ namespace tyr
 			return false;
 		}
 
-		char outputPath[TYR_MAX_PATH_STR_SIZE];
+		char outputPath[TYR_MAX_PATH_TOTAL_SIZE];
 		snprintf(outputPath, sizeof(outputPath), "%s/%s%s%s", desc.outputFolderPath, desc.materialName, "_NormalHeight", c_TextureFileExtension);
 
 		compDesc.assetID = AssetUtil::CreateAssetID();
@@ -187,7 +187,7 @@ namespace tyr
 
 		AssetRegistry::Instance().AddAsset(compDesc.assetID, compDesc.outputFilePath, &material.assetID);
 
-		material.textures[Material::c_PbrNormalHeightIndex] = compDesc.assetID;
+		material.textures[MaterialConstants::c_PbrNormalHeightIndex] = compDesc.assetID;
 
 		return true;
 	}
@@ -196,7 +196,7 @@ namespace tyr
 	{
 		if (desc.aoRoughnessMetallicID != 0)
 		{
-			material.textures[Material::c_PbrAoRoughnessMetallicIndex] = desc.aoRoughnessMetallicID;
+			material.textures[MaterialConstants::c_PbrAoRoughnessMetallicIndex] = desc.aoRoughnessMetallicID;
 			return true;
 		}
 
@@ -288,7 +288,7 @@ namespace tyr
 			compDesc.inputFormat = bitDepth == ImageBitDepth::SixteenBit ? ImageCompressionInputFormat::RGBA_16F : ImageCompressionInputFormat::RGBA_32F;	
 		}
 
-		char outputPath[TYR_MAX_PATH_STR_SIZE];
+		char outputPath[TYR_MAX_PATH_TOTAL_SIZE];
 		snprintf(outputPath, sizeof(outputPath), "%s/%s%s%s", desc.outputFolderPath, desc.materialName, "_AORoughnessMetallic", c_TextureFileExtension);
 
 		compDesc.assetID = AssetUtil::CreateAssetID();
@@ -310,7 +310,7 @@ namespace tyr
 
 		AssetRegistry::Instance().AddAsset(compDesc.assetID, compDesc.outputFilePath, &material.assetID);
 
-		material.textures[Material::c_PbrAoRoughnessMetallicIndex] = compDesc.assetID;
+		material.textures[MaterialConstants::c_PbrAoRoughnessMetallicIndex] = compDesc.assetID;
 
 		return true;
 	}
@@ -318,10 +318,10 @@ namespace tyr
 	bool MaterialImporter::CreateMaterialAssetInfo(const char* outputFolderPath, const char* materialName, MaterialAssetFile& material) const
 	{
 		// Relative to the asset directory
-		char materialPath[AssetPath::c_MaxAssetPathStrSize];
+		char materialPath[PathConstants::c_MaxAssetPathTotalSize];
 		snprintf(materialPath, sizeof(materialPath), "%s/%s%s", outputFolderPath, materialName, c_MaterialFileExtension);
 
-		char absMaterialFolderPath[TYR_MAX_PATH_STR_SIZE];
+		char absMaterialFolderPath[TYR_MAX_PATH_TOTAL_SIZE];
 		AssetUtil::CreateFullPath(absMaterialFolderPath, outputFolderPath);
 
 		bool exists;
@@ -385,10 +385,10 @@ namespace tyr
 
 	bool MaterialImporter::SerializeMaterial(const PbrMaterialImportDesc& desc, const MaterialAssetFile& material) const
 	{
-		char materialPath[AssetPath::c_MaxAssetPathStrSize];
+		char materialPath[PathConstants::c_MaxAssetPathTotalSize];
 		snprintf(materialPath, sizeof(materialPath), "%s/%s%s", desc.outputFolderPath, desc.materialName, c_MaterialFileExtension);
 
-		char absMaterialPath[TYR_MAX_PATH_STR_SIZE];
+		char absMaterialPath[TYR_MAX_PATH_TOTAL_SIZE];
 		AssetUtil::CreateFullPath(absMaterialPath, materialPath);
 
 		return true;

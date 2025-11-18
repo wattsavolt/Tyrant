@@ -3,10 +3,11 @@
 
 namespace tyr
 {
-	VulkanImage::VulkanImage(VulkanDevice& device, const ImageDesc& desc)
-		: Image(device, desc)
-		, m_Device(device)
+	ImageHandle Device::CreateImage(const ImageDesc& desc)
 	{
+		ImageHandle handle;
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Image& image = *device.m_ImagePool.Create(handle.id);
 		VkImageCreateInfo imageCI;
 		imageCI.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
 		imageCI.pNext = nullptr;
@@ -44,43 +45,55 @@ namespace tyr
 		imageCI.pQueueFamilyIndices = nullptr;
 		imageCI.initialLayout = static_cast<VkImageLayout>(desc.layout);
 
+		image.format = imageCI.format;
+		image.usage = imageCI.usage;
+	
+		image.memoryProperty = static_cast<VkMemoryPropertyFlagBits>(desc.memoryProperty);
+
 		if (desc.externalImage)
 		{
-			m_Image = reinterpret_cast<VkImage>(desc.externalImage);
-			m_Allocation = nullptr;
+			image.image = reinterpret_cast<VkImage>(desc.externalImage);
+			image.allocation = nullptr;
+			image.isExternal = true;
 		}
 		else
 		{
-			TYR_GASSERT(vkCreateImage(device.GetLogicalDevice(), &imageCI, g_VulkanAllocationCallbacks, &m_Image));
-			m_Allocation = device.AllocateMemory(m_Image, static_cast<VkMemoryPropertyFlagBits>(m_Desc.memoryProperty), m_SizeAllocated);
+			TYR_GASSERT(vkCreateImage(device.m_LogicalDevice, &imageCI, g_VulkanAllocationCallbacks, &image.image));
+			image.allocation = device.AllocateMemory(image.image, image.memoryProperty);
+			image.isExternal = false;
 		}
-#if TYR_DEBUG
-		VulkanUtility::SetDebugName(device.GetLogicalDevice(), desc.debugName.c_str(), VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64>(m_Image));
-#endif
+		TYR_SET_GFX_DEBUG_NAME(device.m_LogicalDevice, desc.debugName.CStr(), VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64>(image.image));
+		return handle;
 	}
 	
-	VulkanImage::~VulkanImage()
+	void Device::DeleteImage(ImageHandle handle)
 	{
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Image& image = device.GetImage(handle);
+
 		// Don't delete external image.
-		if (!m_Desc.externalImage)
+		if (!image.isExternal)
 		{
-			vkDestroyImage(m_Device.GetLogicalDevice(), m_Image, g_VulkanAllocationCallbacks);
-			m_Device.FreeMemory(m_Allocation);
+			vkDestroyImage(device.m_LogicalDevice, image.image, g_VulkanAllocationCallbacks);
+			device.FreeMemory(image.allocation);
 		}
+
+		device.m_ImagePool.Delete(handle.id);
 	}
 
-	VulkanImageView::VulkanImageView(VulkanDevice& device, const ImageViewDesc& desc)
-		: ImageView(desc)
-		, m_Device(device)
+	ImageViewHandle Device::CreateImageView(const ImageViewDesc& desc)
 	{
-		const VulkanImage* image = desc.image.GetAs<VulkanImage>();
+		ImageViewHandle handle;
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		ImageView& imageView = *device.m_ImageViewPool.Create(handle.id);
+		Image& image = device.GetImage(desc.image);
 
 		VkImageViewCreateInfo imageViewCI;
 		imageViewCI.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 		imageViewCI.pNext = nullptr;
 		imageViewCI.flags = 0;
-		imageViewCI.image = image->GetImage();
-		imageViewCI.format = VulkanUtility::ToVulkanPixelFormat(image->GetDesc().format);
+		imageViewCI.image = image.image;
+		imageViewCI.format = image.format;
 		imageViewCI.viewType = static_cast<VkImageViewType>(desc.viewType);
 		imageViewCI.components = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY };
 		imageViewCI.subresourceRange.aspectMask = static_cast<VkImageAspectFlags>(desc.subresourceRange.aspect);
@@ -89,23 +102,29 @@ namespace tyr
 		imageViewCI.subresourceRange.baseArrayLayer = desc.subresourceRange.baseArrayLayer;
 		imageViewCI.subresourceRange.layerCount = desc.subresourceRange.arrayLayerCount;
 
-		vkCreateImageView(device.GetLogicalDevice(), &imageViewCI, g_VulkanAllocationCallbacks, &m_ImageView);
-		VulkanUtility::SetDebugName(device.GetLogicalDevice(), desc.debugName.c_str(), VK_OBJECT_TYPE_IMAGE_VIEW, reinterpret_cast<uint64>(m_ImageView));
+		vkCreateImageView(device.m_LogicalDevice, &imageViewCI, g_VulkanAllocationCallbacks, &imageView.imageView);
+		TYR_SET_GFX_DEBUG_NAME(device.m_LogicalDevice, desc.debugName.CStr(), VK_OBJECT_TYPE_IMAGE_VIEW, reinterpret_cast<uint64>(imageView.imageView));
+
+		imageView.image = desc.image;
+
+		return handle;
 	}
 
-	VulkanImageView::~VulkanImageView()
+	void Device::DeleteImageView(ImageViewHandle handle)
 	{
-		// Swapchain image view will be deleted in the VulkanSwapChain class
-		if (!m_Desc.isSwapChainView)
-		{
-			vkDestroyImageView(m_Device.GetLogicalDevice(), m_ImageView, g_VulkanAllocationCallbacks);
-		}
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		ImageView& imageView = device.GetImageView(handle);
+		Image& image = device.GetImage(imageView.image);
+		vkDestroyImageView(device.m_LogicalDevice, imageView.imageView, g_VulkanAllocationCallbacks);
+		device.m_ImageViewPool.Delete(handle.id);
 	}
 
-	VulkanSampler::VulkanSampler(VulkanDevice& device, const SamplerDesc& desc)
-		: Sampler(desc)
-		, m_Device(device)
+	SamplerHandle Device::CreateSampler(const SamplerDesc& desc)
 	{
+		SamplerHandle handle;
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Sampler& sampler = *device.m_SamplerPool.Create(handle.id);
+
 		VkSamplerCreateInfo samplerCI;
 		samplerCI.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 		samplerCI.pNext = nullptr;
@@ -126,14 +145,16 @@ namespace tyr
 		samplerCI.borderColor = VulkanUtility::ToVulkanBorderColour(desc.borderColour);
 		samplerCI.unnormalizedCoordinates = desc.unnormalisedCoords;
 
-		vkCreateSampler(device.GetLogicalDevice(), &samplerCI, g_VulkanAllocationCallbacks, &m_Sampler);
-#if TYR_DEBUG
-		VulkanUtility::SetDebugName(device.GetLogicalDevice(), desc.debugName.c_str(), VK_OBJECT_TYPE_SAMPLER, reinterpret_cast<uint64>(m_Sampler));
-#endif
+		vkCreateSampler(device.m_LogicalDevice, &samplerCI, g_VulkanAllocationCallbacks, &sampler.sampler);
+		TYR_SET_GFX_DEBUG_NAME(device.m_LogicalDevice, desc.debugName.CStr(), VK_OBJECT_TYPE_SAMPLER, reinterpret_cast<uint64>(sampler.sampler));
+		return handle;
 	}
 
-	VulkanSampler::~VulkanSampler()
+	void Device::DeleteSampler(SamplerHandle handle)
 	{
-		vkDestroySampler(m_Device.GetLogicalDevice(), m_Sampler, g_VulkanAllocationCallbacks);
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		Sampler& sampler = device.GetSampler(handle);
+		vkDestroySampler(device.m_LogicalDevice, sampler.sampler, g_VulkanAllocationCallbacks);
+		device.m_SamplerPool.Delete(handle.id);
 	}
 }

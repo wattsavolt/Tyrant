@@ -15,6 +15,8 @@ namespace tyr
 
 		size_t Read(void* buffer, size_t count)  override;
 
+		void Skip(size_t count) override;
+
 		Type GetStreamType() const override;
 	
 	private:

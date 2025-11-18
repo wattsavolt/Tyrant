@@ -1,18 +1,12 @@
 #pragma once
 
 #include "RenderAPI/AccelerationStructure.h"
-#include "VulkanDevice.h"
+#include "VulkanCommon.h"
 
 namespace tyr
 {
-	// TODO: Implement
-	class VulkanAccelerationStructure final : public AccelerationStructure
+	struct AccelerationStructure
 	{
-	public:
-		VulkanAccelerationStructure(VulkanDevice& device, const AccelerationStructureDesc& desc);
-		~VulkanAccelerationStructure();
-		
-	private:
-		VulkanDevice& m_Device;
+		VkAccelerationStructureKHR accelerationStructure;
 	};
 }

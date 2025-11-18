@@ -1,7 +1,6 @@
 #pragma once
 
 #include "StringTypes.h"
-#include "CustomString.h"
 
 namespace tyr
 {
@@ -60,6 +59,22 @@ namespace tyr
 		static WString ToWString(const char* str)
 		{
 			return ToWString(String(str));
+		}
+
+		// Note: Both src and dst must have been appropriately allocated
+		static void ToWString(const char* src, wchar_t* dst)
+		{
+			TYR_ASSERT(src && dst);
+
+			const size_t len = strlen(src);
+
+			for (size_t i = 0; i < len; ++i)
+			{
+				// ASCII/UTF-8 safe: directly widen each byte
+				dst[i] = static_cast<wchar_t>(static_cast<unsigned char>(src[i]));
+			}
+
+			dst[len] = L'\0'; // null-terminate
 		}
 
 		static String ToString(const WString& str)

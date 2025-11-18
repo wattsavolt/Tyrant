@@ -41,9 +41,11 @@ namespace tyr
 
 	public:
 		// fileName must be preallocated
-		static void GetFileNameWithoutExtension(char fileName[], const char* filePath);
+		static void GetFileNameWithoutExtension(const char* filePath, char* fileName);
 
         static String GetFileNameWithoutExtension(const String& input);
+
+        static void GetDirectoryPathFromFilePath(const char* filePath, char* dirPath);
 
         // Combines multiple paths
         // Handy for tools

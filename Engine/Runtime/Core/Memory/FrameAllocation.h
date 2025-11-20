@@ -131,7 +131,7 @@ namespace tyr
 			IncAllocCount();
 #endif
 
-			return FrameAllocAligned(bytes, alignment);
+			return FrameAllocAligned((uint)bytes, alignment);
 		}
 
 		static void* AllocateAligned16(size_t bytes)
@@ -140,7 +140,7 @@ namespace tyr
 			IncAllocCount();
 #endif
 
-			return FrameAllocAligned(bytes, 16);
+			return FrameAllocAligned((uint)bytes, 16);
 		}
 
 		static void Free(void* data)

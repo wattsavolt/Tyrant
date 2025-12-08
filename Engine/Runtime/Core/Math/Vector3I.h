@@ -88,12 +88,12 @@ namespace tyr
 			return Vector3I(x * rhs.x, y * rhs.y, z * rhs.z);
 		}
 
-		Vector3I operator/ (float val) const
+		Vector3I operator/ (int val) const
 		{
 			TYR_ASSERT(val != 0.0);
 
 			float fInv = 1.0f / val;
-			return Vector3I(x * fInv, y * fInv, z * fInv);
+			return Vector3I(static_cast<int>(x * fInv), static_cast<int>(y * fInv), static_cast<int>(z * fInv));
 		}
 
 		Vector3I operator/ (const Vector3I& rhs) const
@@ -171,9 +171,9 @@ namespace tyr
 
 			float inv = 1.0f / rhs;
 
-			x *= inv;
-			y *= inv;
-			z *= inv;
+			x = static_cast<int>(x * inv);
+			y = static_cast<int>(y * inv);
+			z = static_cast<int>(z * inv);
 
 			return *this;
 		}
@@ -224,7 +224,7 @@ namespace tyr
 		}
 
 		/// Returns the square of the length(magnitude) of the vector. 
-		float SqrLength() const
+		int SqrLength() const
 		{
 			return x * x + y * y + z * z;
 		}

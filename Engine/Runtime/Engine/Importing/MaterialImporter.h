@@ -23,12 +23,12 @@ namespace tyr
 		AssetID aoRoughnessMetallicID;
 		// Are input textures in sRGB colour space
 		bool isSRGB = true;
-		// For compatibility with PBR materials created for Unity
+		// Set true if material was created for Unity.
 		bool smoothnessInMetallic = false;
 	};
 
 	struct MaterialAssetFile;
-	class MaterialImporter final : public INonCopyable
+	class TYR_ENGINE_EXPORT MaterialImporter final : public INonCopyable
 	{
 	public:
 		static MaterialImporter& Instance();

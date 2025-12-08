@@ -1,5 +1,3 @@
-
-
 #pragma once
 
 #include "Base/Base.h"
@@ -7,8 +5,9 @@
 
 namespace tyr
 {
-	class Ray;
 	class Matrix4;
+	class Ray;
+	class BoundingSphere;
 
 	/// A class representing a 3D plane
 	class TYR_CORE_EXPORT Plane
@@ -28,8 +27,11 @@ namespace tyr
 
 		float GetDistanceFromPoint(const Vector3& point) const;
 		
-		/// Returns true if intersects and calculates distance from ray to the plane 
+		/// Returns true if intersects and calculates signed distance from ray to the plane 
 		bool Intersects(const Ray& ray, float& distance) const;
+
+		/// Returns true if intersects and calculates signed distance from sphere to the plane 
+		bool Intersects(const BoundingSphere& sphere, float& distance) const;
 
 		/// Transform a plane by an affine 4x4 matrix.
 		Plane MultiplyByAffineMatrix(const Matrix4& mat) const;
@@ -44,15 +46,6 @@ namespace tyr
 			return (rhs.m_Distance != m_Distance || rhs.m_Normal != m_Normal);
 		}
 
-		void SetNormal(const Vector3& normal) { m_Normal = normal; }
-
-		const Vector3& GetNormal() const { return m_Normal; }
-
-		void SetDistance(float distance) { m_Distance = distance; }
-
-		float GetDistance() const { return m_Distance; }
-
-	private:
 		Vector3 m_Normal;
 		float m_Distance;
 	};

@@ -40,6 +40,9 @@ namespace tyr
 
 	struct Texture : public RenderResource
 	{
+		AssetID id;
+		// Index into array of textures in shader
+		uint index;
 		ImageHandle image;
 		ImageViewHandle imageView;
 		SamplerHandle sampler;

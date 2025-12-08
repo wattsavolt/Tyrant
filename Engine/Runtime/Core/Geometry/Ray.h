@@ -30,15 +30,6 @@ namespace tyr
 		///                               is located within the sphere.
 		bool Intersects(const BoundingSphere& sphere, float& distance, bool discardContained = true) const;
 
-		void SetOrigin(const Vector3& origin) { m_Origin = origin; }
-
-		const Vector3& GetOrigin() const { return m_Origin; }
-
-		void SetDirection(const Vector3& dir) { m_Direction = dir; }
-
-		const Vector3& GetDirection() const { return m_Direction; }
-
-	private:
 		Vector3 m_Origin;
 		Vector3 m_Direction;
 	};

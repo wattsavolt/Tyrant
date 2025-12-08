@@ -1,5 +1,6 @@
 #include "BoundingSphere.h"
 #include "Ray.h"
+#include "Plane.h"
 
 namespace tyr
 {
@@ -14,7 +15,7 @@ namespace tyr
 
 	bool BoundingSphere::Intersects(const Ray& ray, float& distance, bool discardContained) const
 	{
-		const Vector3& toRayOrig = ray.GetOrigin() - GetCentre();
+		const Vector3& toRayOrig = ray.m_Origin - GetCentre();
 		float radius = GetRadius();
 
 		// Check origin inside first
@@ -24,7 +25,7 @@ namespace tyr
 			return true;
 		}
 
-		const Vector3& rayDir = ray.GetDirection();
+		const Vector3& rayDir = ray.m_Direction;
 
 		// t = (-b +/- sqrt(b*b + 4ac)) / 2a
 		float a = rayDir.Dot(rayDir);
@@ -51,5 +52,14 @@ namespace tyr
 			distance = t;
 			return true;
 		}
+	}
+
+	bool BoundingSphere::Intersects(const Plane& plane, float& distance) const
+	{
+		// Signed distance from sphere center to plane
+		distance = plane.m_Normal.Dot(m_Centre) + plane.m_Distance;
+
+		// Intersection occurs when sphere overlaps or touches the plane
+		return std::fabs(distance) <= m_Radius;
 	}
 }

@@ -20,14 +20,14 @@ namespace tyr
 		ImageInfo info;
 		ImageLoader::LoadImageInfo(albedoPath, info);
 
-		if (info.channelCount != 4)
+		if (info.channelCount != 3 && info.channelCount != 4)
 		{
 			TYR_LOG_ERROR("Invalid number of channels in texture %s.", albedoPath);
 			return false;
 		}
 
 		Image2DCompressionDesc compDesc;
-
+		// Force 4 channels even when there is no alpha channel as nvtt only support RGBA as input
 		switch (info.bitDepth)
 		{
 		case ImageBitDepth::EightBit:
@@ -59,7 +59,7 @@ namespace tyr
 		compDesc.width = info.width;
 		compDesc.height = info.height;
 		compDesc.outputFormat = ImageCompressionOutputFormat::BC7;
-		compDesc.mipCount = 0;
+		compDesc.mipCount = 1;
 		compDesc.outputFilePath = outputPath;
 		compDesc.isSRGB = isSRGB;
 
@@ -92,7 +92,7 @@ namespace tyr
 
 		AssetID textureID;
 
-		if (!ImportAlbedoTexture(desc.outputFolderPath, textureName, desc.albedoPath, desc.isSRGB, textureID, &material.assetID))
+		if (!ImportAlbedoTexture(desc.outputFolderPath, textureName, desc.albedoPath, desc.isSRGB, textureID, &material.id))
 		{
 			return false;
 		}
@@ -172,7 +172,7 @@ namespace tyr
 		compDesc.width = normalInfo.width;
 		compDesc.height = normalInfo.height;
 		compDesc.outputFormat = ImageCompressionOutputFormat::BC7;
-		compDesc.mipCount = 0;
+		compDesc.mipCount = 1;
 		compDesc.outputFilePath = outputPath;
 		compDesc.isSRGB = desc.isSRGB;
 
@@ -185,7 +185,7 @@ namespace tyr
 			return false;
 		}
 
-		AssetRegistry::Instance().AddAsset(compDesc.assetID, compDesc.outputFilePath, &material.assetID);
+		AssetRegistry::Instance().AddAsset(compDesc.assetID, compDesc.outputFilePath, &material.id);
 
 		material.textures[MaterialConstants::c_PbrNormalHeightIndex] = compDesc.assetID;
 
@@ -295,7 +295,7 @@ namespace tyr
 		compDesc.width = aoInfo.width;
 		compDesc.height = aoInfo.height;
 		compDesc.outputFormat = ImageCompressionOutputFormat::BC7;
-		compDesc.mipCount = 0;
+		compDesc.mipCount = 1;
 		compDesc.outputFilePath = outputPath;
 		compDesc.isSRGB = desc.isSRGB;
 
@@ -308,7 +308,7 @@ namespace tyr
 			return false;
 		}
 
-		AssetRegistry::Instance().AddAsset(compDesc.assetID, compDesc.outputFilePath, &material.assetID);
+		AssetRegistry::Instance().AddAsset(compDesc.assetID, compDesc.outputFilePath, &material.id);
 
 		material.textures[MaterialConstants::c_PbrAoRoughnessMetallicIndex] = compDesc.assetID;
 
@@ -352,15 +352,15 @@ namespace tyr
 		// Create material directory
 		{
 			std::error_code ec;
-			if (!fs::create_directory(absMaterialFolderPath, ec))
+			if (!fs::create_directories(absMaterialFolderPath, ec))
 			{
 				TYR_LOG_ERROR("Error creating directory %s.", absMaterialFolderPath);
 				return false;
 			}
 		}
 
-		material.assetID = AssetUtil::CreateAssetID();
-		AssetRegistry::Instance().AddAsset(material.assetID, materialPath);
+		material.id = AssetUtil::CreateAssetID();
+		AssetRegistry::Instance().AddAsset(material.id, materialPath);
 
 		return true;
 	}
@@ -388,8 +388,7 @@ namespace tyr
 		char materialPath[PathConstants::c_MaxAssetPathTotalSize];
 		snprintf(materialPath, sizeof(materialPath), "%s/%s%s", desc.outputFolderPath, desc.materialName, c_MaterialFileExtension);
 
-		char absMaterialPath[TYR_MAX_PATH_TOTAL_SIZE];
-		AssetUtil::CreateFullPath(absMaterialPath, materialPath);
+		AssetUtil::SaveAsset<MaterialAssetFile>(materialPath, material);
 
 		return true;
 	}

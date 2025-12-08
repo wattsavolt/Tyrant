@@ -7,7 +7,7 @@
 namespace tyr
 {
 	// Loads and stores config data from a .ini file
-	class TYR_CORE_EXPORT Config final
+	class TYR_CORE_EXPORT CommandLine final
 	{
 	public:
 		using Key = Id64;
@@ -15,7 +15,7 @@ namespace tyr
 
 		static constexpr uint8 c_MaxEntries = 50;
 
-		Config(const char* filePath);
+		CommandLine(const char* filePath);
 
 		const Value& GetValue(const char* name) const;
 

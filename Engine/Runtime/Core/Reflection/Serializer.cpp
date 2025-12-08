@@ -4,7 +4,19 @@
 namespace tyr
 {
     Serializer::Serializer(bool serializeNonFinal)
-        : m_SerializeNonFinal(false) { }
+        : m_SerializeNonFinal(serializeNonFinal)
+        , m_Buffer{}
+    { }
+
+    Serializer& Serializer::Instance()
+    {
+#if TYR_FINAL
+        static TYR_THREADLOCAL Serializer serializer(false);
+#else
+        static TYR_THREADLOCAL Serializer serializer(true);
+#endif
+        return serializer;
+    }
 
     void Serializer::SerializeVersion(BufferedFileStream& stream, int version)
     {
@@ -13,26 +25,28 @@ namespace tyr
 
     void Serializer::SerializeField(BufferedFileStream& stream, const uint8* data, const Field& field)
     {
-        const TypeInfo& typeInfo = TypeRegistry::Instance().GetType(field.typeID);
-
         if (field.customSerializer)
         {
             field.customSerializer->Serialize(stream, &data[field.dataOffset]);
         }
-        else if (field.isCArray)
-        {
-            uint count;
-            memcpy(&count, &data[field.countOffset], sizeof(uint));
-            SerializeCArray(stream, &data[field.dataOffset], count, typeInfo);
-        }
-        else if (typeInfo.fieldCount > 0)
-        {
-            SerializeObject(stream, &data[field.dataOffset], typeInfo);
-        }
         else
         {
-            // Must be a value type
-            SerializeValue(stream, &data[field.dataOffset], typeInfo);
+            const TypeInfo& typeInfo = TypeRegistry::Instance().GetType(field.typeID);
+            if (field.isCArray)
+            {
+                uint count;
+                memcpy(&count, &data[field.countOffset], sizeof(uint));
+                SerializeCArray(stream, &data[field.dataOffset], count, typeInfo);
+            }
+            else if (typeInfo.fieldCount > 0)
+            {
+                SerializeObject(stream, &data[field.dataOffset], typeInfo);
+            }
+            else
+            {
+                // Must be a value type
+                SerializeValue(stream, &data[field.dataOffset], typeInfo);
+            }
         }
     }
 
@@ -81,24 +95,26 @@ namespace tyr
 
     void Serializer::DeserializeField(BufferedFileStream& stream, uint8* data, const Field& field)
     {
-        const TypeInfo& typeInfo = TypeRegistry::Instance().GetType(field.typeID);
-
         if (field.customSerializer)
         {
             field.customSerializer->Deserialize(stream, &data[field.dataOffset]);
         }
-        else if (field.isCArray)
-        {
-            DeserializeCArray(stream, &data[field.dataOffset], typeInfo);
-        }
-        else if (typeInfo.fieldCount > 0)
-        {
-            DeserializeObject(stream, &data[field.dataOffset], typeInfo);
-        }
         else
         {
-            // Must be a value type
-            DeserializeValue(stream, &data[field.dataOffset], typeInfo);
+            const TypeInfo& typeInfo = TypeRegistry::Instance().GetType(field.typeID);
+            if (field.isCArray)
+            {
+                DeserializeCArray(stream, &data[field.dataOffset], typeInfo);
+            }
+            else if (typeInfo.fieldCount > 0)
+            {
+                DeserializeObject(stream, &data[field.dataOffset], typeInfo);
+            }
+            else
+            {
+                // Must be a value type
+                DeserializeValue(stream, &data[field.dataOffset], typeInfo);
+            }
         }
     }
 
@@ -140,15 +156,5 @@ namespace tyr
     void Serializer::SetSerializeNonFinal(bool serializeNonFinal)
     {
         m_SerializeNonFinal = serializeNonFinal;
-    }
-
-    Serializer& Serializer::Instance()
-    {
-#if TYR_FINAL
-        static TYR_THREADLOCAL Serializer serializer(false);
-#else
-        static TYR_THREADLOCAL Serializer serializer(true);
-#endif
-        return serializer;
     }
 }

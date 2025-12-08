@@ -1,23 +1,23 @@
-#include "Config.h"
+#include "CommandLine.h"
 #include "Logging/Logger.h"
 #include "Platform/Platform.h"
 #include <charconv>
 
 namespace tyr
 {
-	Config::Config(const char* filePath)
+	CommandLine::CommandLine(const char* filePath)
 		: m_Map(c_MaxEntries)
 	{
-		// TODO : Implement loading of .ini and populate the map
+		
 	}
 
-	const Config::Value& Config::GetValue(const char* name) const
+	const CommandLine::Value& CommandLine::GetValue(const char* name) const
 	{
 		const Key key = Key(name);
 		return *m_Map.Find(key);
 	}
 
-	int Config::GetValueAsInt(const char* name) const
+	int CommandLine::GetValueAsInt(const char* name) const
 	{
 		int result;
 		const Key key = Key(name);
@@ -28,7 +28,7 @@ namespace tyr
 		return result;
 	}
 
-	bool Config::GetValueAsBool(const char* name) const
+	bool CommandLine::GetValueAsBool(const char* name) const
 	{
 		const int value = GetValueAsInt(name);
 		TYR_ASSERT(value == 0 || value == 1);

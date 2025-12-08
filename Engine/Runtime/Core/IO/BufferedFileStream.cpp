@@ -8,11 +8,14 @@ namespace tyr
 		, m_Buffer(buffer)
 		, m_BufferSize(bufferSize)
 		, m_BufferOffset(0)
-		, m_MemoryRead(0)
 	{
 		if (op == Operation::Read)
 		{
 			m_MemoryRead = FileStream::Read(m_Buffer, bufferSize);
+		}
+		else
+		{
+			m_MemoryRead = 0;
 		}
 	}
 
@@ -31,7 +34,7 @@ namespace tyr
 	{
 		TYR_ASSERT(buffer && m_Operation == Operation::Write && count > 0);
 		const size_t bufferSizeRemaining = m_BufferSize - m_BufferOffset;
-		if (count >= bufferSizeRemaining)
+		if (count > bufferSizeRemaining)
 		{
 			memcpy(&m_Buffer[m_BufferOffset], buffer, bufferSizeRemaining);
 			FileStream::Write(m_Buffer, m_BufferSize);
@@ -43,7 +46,7 @@ namespace tyr
 				FileStream::Write(remainingData, remaining);
 				m_BufferOffset = 0;
 			}
-			else
+			else  
 			{
 				memcpy(&m_Buffer[0], remainingData, remaining);
 				m_BufferOffset = remaining;
@@ -61,12 +64,12 @@ namespace tyr
 	{
 		TYR_ASSERT(buffer && m_Operation == Operation::Read && count > 0 && m_MemoryRead > 0);
 		const size_t memoryRemaining = m_MemoryRead - m_BufferOffset;
-		if (count >= memoryRemaining)
+		if (count > memoryRemaining)
 		{
 			memcpy(buffer, &m_Buffer[0], memoryRemaining);	
 			const size_t remaining = count - memoryRemaining;
 			uint8* remainingData = &((uint8*)buffer)[memoryRemaining];
-			// This if condition shouldn't occur because the buffer size should be big enough
+			// This if condition shouldn't actually occur because the buffer size should be made big enough by the caller
 			if (remaining > m_BufferSize)
 			{
 				const size_t memoryRead = FileStream::Read(remainingData, remaining);
@@ -84,7 +87,7 @@ namespace tyr
 		}
 		else
 		{
-			memcpy(buffer, &m_Buffer[0], count);
+			memcpy(buffer, &m_Buffer[m_BufferOffset], count);
 			m_BufferOffset += count;
 		}
 		return count;

@@ -83,7 +83,7 @@ namespace tyr
     static void SerializeCompressedImage(const AssetID& assetID, const TextureInfo& textureInfo, const char* filePath)
     {
         TextureMetadata metadata;
-        metadata.assetID = assetID;
+        metadata.id = assetID;
         metadata.info = textureInfo;
 
         const Array<uint8>& buffer = GetThreadLocalBuffer();
@@ -93,7 +93,7 @@ namespace tyr
         AssetUtil::CreateFullPath(absFilePath, filePath);
 
         Serializer::Instance().SerializeToFile<TextureMetadata>(absFilePath, metadata);
-        FileStream::WriteFile(filePath, buffer.Data(), metadata.dataSize);
+        FileStream::WriteFile(absFilePath, buffer.Data(), metadata.dataSize, false);
     }
 
     bool ImageCompressor::CompressImage2D(const Image2DCompressionDesc& desc)

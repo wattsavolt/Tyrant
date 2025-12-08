@@ -36,7 +36,8 @@ namespace tyr
 	// Ambient Occlusion / Roughness / Metallic - R = ambient occlusion, G = roughness, C = metallic
 	struct Material
 	{
-		// Index in materual buffer in the shader
+		AssetID id;
+		// Index into the materual buffer in the shader
 		uint index;
 		// PBR:
 		// Texture 0 - albedo  

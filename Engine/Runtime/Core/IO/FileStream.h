@@ -57,9 +57,9 @@ namespace tyr
 			return stream.Read(reinterpret_cast<void*>(buffer.Data()), size);
 		}
 
-		static void WriteFile(const char* filePath, const void* buffer, size_t bufferSize)
+		static void WriteFile(const char* filePath, const void* buffer, size_t bufferSize, bool overwrite = true)
 		{
-			FileStream stream(filePath, Operation::Write);
+			FileStream stream(filePath, Operation::Write, overwrite);
 			stream.Write(buffer, bufferSize);
 		}
 	

@@ -21,10 +21,12 @@ namespace tyr
 		static const size_t assetDirSize = strlen(c_AssetsDir);
 		const size_t relPathSize = strlen(relativePath);
 		// Max usable characters (excluding '\0')
-		TYR_ASSERT(assetDirSize + relPathSize <= TYR_MAX_PATH);
+		TYR_ASSERT(assetDirSize + 1 + relPathSize <= TYR_MAX_PATH);
 		// Second arg is remaining space in destination buffer
 		strcpy_s(absFilePath, absFilePathSize, c_AssetsDir);
-		// Concatenate source and destination
+		// Add slash
+		strcat_s(absFilePath, absFilePathSize, "/");
+		// Add relative path
 		strcat_s(absFilePath, absFilePathSize, relativePath);
 	}
 }

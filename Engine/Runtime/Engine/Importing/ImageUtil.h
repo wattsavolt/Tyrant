@@ -13,7 +13,7 @@ namespace tyr
 
         // For interleaved / packed images with an equal size per channel(e.g. RGBA / BGRA)
         template <typename T>
-        static void SwapChannels(T * image, uint16 texelCount, uint8 channelCount, uint8 channelIdx0, uint8 channelIdx1)
+        static void SwapChannels(T* image, uint texelCount, uint8 channelCount, uint8 channelIdx0, uint8 channelIdx1)
         {
             TYR_STATIC_ASSERT((std::is_trivial<T>::value), "T must be a trivial type for direct swapping.");
 
@@ -24,7 +24,7 @@ namespace tyr
             TYR_ASSERT(channelIdx0 < channelCount);
             TYR_ASSERT(channelIdx1 < channelCount);
 
-            for (uint16 i = 0; i < texelCount; ++i)
+            for (uint i = 0; i < texelCount; ++i)
             {
                 const uint offset = channelCount * i;
                 const T temp = image[offset + channelIdx0];
@@ -34,7 +34,7 @@ namespace tyr
         }
 
         template <typename T>
-        static void InvertChannelLinear(T* image, uint16 texelCount, uint8 channelCount, uint8 channelIdx)
+        static void InvertChannelLinear(T* image, uint texelCount, uint8 channelCount, uint8 channelIdx)
         {
             TYR_STATIC_ASSERT((std::is_trivial<T>::value), "T must be a trivial type for direct swapping.");
 
@@ -44,7 +44,7 @@ namespace tyr
             TYR_ASSERT(channelIdx < channelCount);
 
             static constexpr T maxPixelValue = TextureUtil::GetMaxPixelValue<T>();
-            for (uint16 i = 0; i < texelCount; ++i)
+            for (uint i = 0; i < texelCount; ++i)
             {
                 const uint offset = channelCount * i;
                 image[offset + channelIdx] = maxPixelValue - image[offset + channelIdx];
@@ -52,7 +52,7 @@ namespace tyr
         }
 
         template <typename T>
-        static void InvertChannelSRGB(T* image, uint16 texelCount, uint8 channelCount, uint8 channelIdx)
+        static void InvertChannelSRGB(T* image, uint texelCount, uint8 channelCount, uint8 channelIdx)
         {
             TYR_STATIC_ASSERT((std::is_trivial<T>::value), "T must be a trivial type for direct swapping.");
 
@@ -62,7 +62,7 @@ namespace tyr
             TYR_ASSERT(channelIdx < channelCount);
 
             static constexpr T maxPixelValue = TextureUtil::GetMaxPixelValue<T>();
-            for (uint16 i = 0; i < texelCount; ++i)
+            for (uint i = 0; i < texelCount; ++i)
             {
                 const uint index = channelCount * i + channelIdx;
                 const T linearVal = TextureUtil::ConvertFromSRGBtoLinear<uint8>(image[index]);
@@ -71,7 +71,7 @@ namespace tyr
         }
 
         template <typename T>
-        static void InvertChannel(T* image, uint16 texelCount, uint8 channelCount, uint8 channelIdx, bool isSRGB)
+        static void InvertChannel(T* image, uint texelCount, uint8 channelCount, uint8 channelIdx, bool isSRGB)
         {
             if (isSRGB)
             {
@@ -84,7 +84,7 @@ namespace tyr
         }
 
         template <typename T>
-        static void CopyChannel(const T* srcImage, T* dstImage, uint16 texelCount, uint8 srcChannelCount, uint8 dstChannelCount, uint8 srcChannelIdx, uint8 dstChannelIdx)
+        static void CopyChannel(const T* srcImage, T* dstImage, uint texelCount, uint8 srcChannelCount, uint8 dstChannelCount, uint8 srcChannelIdx, uint8 dstChannelIdx)
         {
             TYR_STATIC_ASSERT((std::is_trivial<T>::value), "T must be a trivial type for direct copying.");
 
@@ -96,7 +96,7 @@ namespace tyr
             TYR_ASSERT(srcChannelIdx < srcChannelCount);
             TYR_ASSERT(dstChannelIdx < dstChannelCount);
 
-            for (uint16 i = 0; i < texelCount; ++i)
+            for (uint i = 0; i < texelCount; ++i)
             {
                 dstImage[dstChannelCount * i + dstChannelIdx] = srcImage[srcChannelCount * i + srcChannelIdx];
             }

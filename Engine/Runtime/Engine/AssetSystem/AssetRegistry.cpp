@@ -30,7 +30,7 @@ namespace tyr
     {
         char absAssetRegistryPath[TYR_MAX_PATH_TOTAL_SIZE];
         AssetUtil::CreateFullPath(absAssetRegistryPath, c_AssetRegistryPath);
-        const fs::path fsPath = absAssetRegistryPath;
+        const StringView fsPath(absAssetRegistryPath);
         if (std::filesystem::exists(fsPath))
         {
             Serializer::Instance().DeserializeFromFile<AssetRegistryFile>(absAssetRegistryPath, m_RegistryFile);
@@ -39,10 +39,12 @@ namespace tyr
 
     void AssetRegistry::Save()
     {
+#if TYR_EDITOR
         char absAssetRegistryPath[TYR_MAX_PATH_TOTAL_SIZE];
         AssetUtil::CreateFullPath(absAssetRegistryPath, c_AssetRegistryPath);
         PathUtil::CreateDirectoriesInFilePath(absAssetRegistryPath);
         Serializer::Instance().SerializeToFile<AssetRegistryFile>(absAssetRegistryPath, m_RegistryFile);
+#endif
     }
 
     void AssetRegistry::AddAsset(AssetID assetID, const char* assetPath, AssetID* refAssetID)

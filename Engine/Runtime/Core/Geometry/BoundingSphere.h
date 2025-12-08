@@ -1,5 +1,3 @@
-
-
 #pragma once
 
 #include "Base/Base.h"
@@ -8,6 +6,7 @@
 namespace tyr
 {
 	class Ray;
+	class Plane;
 
 	/// A bounding sphere represented by a centre and radius 
 	class TYR_CORE_EXPORT BoundingSphere
@@ -28,6 +27,8 @@ namespace tyr
 		///                                 is located within the sphere.
 		bool Intersects(const Ray& ray, float& distance, bool discardContained = true) const;
 
+		bool Intersects(const Plane& plane, float& distance) const;
+
 		bool operator==(const BoundingSphere& rhs) const
 		{
 			return (rhs.m_Radius == m_Radius && rhs.m_Centre == m_Centre);
@@ -46,7 +47,6 @@ namespace tyr
 
 		float GetRadius() const { return m_Radius; }
 
-	private:
 		Vector3 m_Centre;
 		float m_Radius;
 	};

@@ -7,6 +7,7 @@
 #include "Utility/PathUtil.h"
 #include <intrin.h>
 #include <rpc.h>
+#include <shlobj.h>
 
 namespace tyr
 {
@@ -121,47 +122,57 @@ namespace tyr
 		return handle;
 	}
 
+	static inline LONGLONG Seek(HANDLE h, LONGLONG offset, DWORD moveMethod)
+	{
+		LARGE_INTEGER off, pos;
+		off.QuadPart = offset;
+		const BOOL ok = SetFilePointerEx(h, off, &pos, moveMethod);
+		TYR_ASSERT(ok);
+		return pos.QuadPart;
+	}
+
 	size_t Platform::GetSizeOfFile(FileHandle handle)
 	{
 		TYR_ASSERT(handle);
+
 		DWORD fileSizeHigh;
 		const DWORD fileSizeLow = GetFileSize(handle, &fileSizeHigh);
 
 		if (fileSizeLow == INVALID_FILE_SIZE)
 		{
-			TYR_ASSERT(false);
-			return 0;
+			DWORD err = GetLastError();
+			TYR_ASSERT(err == NO_ERROR); // Only fail if there really is an error
+			if (err != NO_ERROR)
+				return 0;
 		}
-		
-		const size_t fileSize = (static_cast<size_t>(fileSizeHigh) << 32) | fileSizeLow;
-		return fileSize;
+
+		// Use 64-bit to combine high and low
+		const uint64 fullSize = (static_cast<uint64_t>(fileSizeHigh) << 32) | fileSizeLow;
+		return static_cast<size_t>(fullSize); // safe if size_t >= 64-bit
 	}
 
 	void Platform::SetFilePosition(FileHandle handle, size_t position)
 	{
-		const DWORD newPos = SetFilePointer(handle, position, NULL, FILE_BEGIN);
-		TYR_ASSERT(newPos != INVALID_SET_FILE_POINTER && GetLastError() == NO_ERROR);
+		Seek(handle, position, FILE_BEGIN);
 	}
 
 	void Platform::SetFilePositionToEnd(FileHandle handle)
 	{
-		const DWORD newPos = SetFilePointer(handle, 0, NULL, FILE_END);
-		TYR_ASSERT(newPos != INVALID_SET_FILE_POINTER && GetLastError() == NO_ERROR);
+		Seek(handle, 0, FILE_END);
 	}
 
 	size_t Platform::GetFilePosition(FileHandle handle)
 	{
-		const DWORD pos = SetFilePointer(handle, 0, NULL, FILE_CURRENT);
-		TYR_ASSERT(pos != INVALID_SET_FILE_POINTER && GetLastError() == NO_ERROR); 
-		return pos;
+		return static_cast<size_t>(Seek(handle, 0, FILE_CURRENT));
 	}
 
 	bool Platform::IsEOF(FileHandle handle)
 	{
-		const DWORD end = SetFilePointer(handle, 0, NULL, FILE_END);
-		TYR_ASSERT(end != INVALID_SET_FILE_POINTER && GetLastError() == NO_ERROR);
-		return end == static_cast<DWORD>(GetFilePosition(handle));
+		LONGLONG end = Seek(handle, 0, FILE_END);
+		LONGLONG cur = Seek(handle, 0, FILE_CURRENT);
+		return end == cur;
 	}
+
 
 	void Platform::ReadFromFile(FileHandle handle, uint8* buffer, size_t numberOfBytesToRead, size_t& bytesRead) 
 	{
@@ -220,5 +231,33 @@ namespace tyr
 		String executablePath = buffer;
 		String executableDirectory = executablePath.substr(0, executablePath.find_last_of("\\/"));
 		return executableDirectory;
+	}
+
+	void Platform::GetUserDirectoryPath(char* dirPath)
+	{
+		PWSTR wPath = nullptr;
+
+		if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Profile, 0, NULL, &wPath)))
+		{
+			// Convert wide path to UTF-8 
+			int len = WideCharToMultiByte(
+				CP_UTF8,            
+				0,
+				wPath,
+				-1,
+				dirPath,
+				MAX_PATH,
+				NULL,
+				NULL
+			);
+
+			if (len == 0)
+				dirPath[0] = '\0';
+
+			CoTaskMemFree(wPath);
+			return;
+		}
+
+		dirPath[0] = '\0';
 	}
 }

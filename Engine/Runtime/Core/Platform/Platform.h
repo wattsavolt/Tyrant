@@ -75,6 +75,9 @@ namespace tyr
 
 		static String GetBinaryDirectoryPath();
 
+		// Should return path to home folder on Linux
+		static void GetUserDirectoryPath(char* dirPath);
+
 		static const char* c_DynamicLibExtension;
 
 		static const String c_BinaryDirectory;

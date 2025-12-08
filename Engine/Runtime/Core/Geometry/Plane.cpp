@@ -1,5 +1,6 @@
 #include "Plane.h"
 #include "Ray.h"
+#include "BoundingSphere.h"
 #include "Math/Vector4.h"
 #include "Math/Matrix4.h"
 
@@ -33,21 +34,23 @@ namespace tyr
 	
 	bool Plane::Intersects(const Ray& ray, float& distance) const
 	{
-		float denom = m_Normal.Dot(ray.GetDirection());
+		float denom = m_Normal.Dot(ray.m_Direction);
+
 		if (Math::Abs(denom) < std::numeric_limits<float>::epsilon())
 		{
-			// Parallel
 			distance = 0.0f;
-			return false;
+			return false; // Parallel or no intersection
 		}
-		else
-		{
-			// Below is cheaper but nom could also be calculated by taking the ray's origin from the centre point on the plane
-			// and getting the dot product of that and the plane's normal. Then distance = nom / denom
-			float nom = m_Normal.Dot(ray.GetOrigin()) - m_Distance;
-			distance = -(nom / denom);
-			return distance >= 0.0f;
-		}
+
+		float nom = m_Normal.Dot(ray.m_Origin) + m_Distance;
+		distance = -(nom / denom);
+
+		return distance >= 0.0f; // intersection only if in front of the ray
+	}
+
+	bool Plane::Intersects(const BoundingSphere& sphere, float& distance) const
+	{
+		return sphere.Intersects(*this, distance);
 	}
 
 	Plane Plane::MultiplyByAffineMatrix(const Matrix4& mat) const

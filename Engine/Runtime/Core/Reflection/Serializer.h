@@ -70,6 +70,8 @@ namespace tyr
 
         ~Serializer() = default;
 
+        static Serializer& Instance();
+
         template<typename T>
         void Serialize(BufferedFileStream& stream, const T& data)
         {
@@ -194,8 +196,6 @@ namespace tyr
 
         bool IsSerializingNonFinal() const { return m_SerializeNonFinal; }
 
-        static Serializer& Instance();
-
     private:
         Serializer(bool serializeNonFinal);
 
@@ -230,13 +230,14 @@ namespace tyr
     };
 
     template<typename T, uint C>
-    class LocalrraySerializer : public CustomObjectSerializer
+    class LocalArraySerializer : public CustomObjectSerializer
     {
     public:
         void Serialize(BufferedFileStream& stream, const void* object) const override
         {
             const LocalArray<T, C>& arr = *(static_cast<const LocalArray<T, C>*>(object));
-            Serializer::Instance().Serialize<uint>(stream, arr.Size());
+            const uint size = arr.Size();
+            Serializer::Instance().Serialize<uint>(stream, size);
             for (const T& elem : arr)
             {
                 Serializer::Instance().Serialize<T>(stream, elem);
@@ -270,7 +271,8 @@ namespace tyr
         void Serialize(BufferedFileStream& stream, const void* object) const override
         {
             const Array<T>& arr = *(static_cast<const Array<T>*>(object));
-            Serializer::Instance().Serialize<uint>(stream, arr.Size());
+            const uint size = arr.Size();
+            Serializer::Instance().Serialize<uint>(stream, size);
             for (const T& elem : arr)
             {
                 Serializer::Instance().Serialize<T>(stream, elem);
@@ -306,7 +308,8 @@ namespace tyr
         void Serialize(BufferedFileStream& stream, const void* object) const override
         {
             const HashMap<K, V>& map = *(static_cast<const HashMap<K, V>*>(object));
-            Serializer::Instance().Serialize<uint>(stream, map.Size());
+            const uint size = map.Size();
+            Serializer::Instance().Serialize<uint>(stream, size);
             for (const auto& pair : map)
             {
                 Serializer::Instance().Serialize<K>(stream, pair.first);
@@ -345,7 +348,8 @@ namespace tyr
         void Serialize(BufferedFileStream& stream, const void* object) const override
         {
             const LocalString<N>& str = *(static_cast<const LocalString<N>*>(object));
-            Serializer::Instance().Serialize<uint>(stream, str.Size());
+            const uint size = str.Size();
+            Serializer::Instance().Serialize<uint>(stream, size);
             stream.Write(str.CStr(), str.Size());
         }
 
@@ -375,7 +379,9 @@ namespace tyr
         void Serialize(BufferedFileStream& stream, const void* object) const override
         {
             const Identifier<T, offsetBasis, prime>& id = *(static_cast<const Identifier<T, offsetBasis, prime>*>(object));
-            Serializer::Instance().Serialize<T>(stream, id.GetHash());
+            // Important to create a copy of the hash here as passing GetHash() directly will lead to undefined behaviour
+            const T hash = id.GetHash();
+            Serializer::Instance().Serialize<T>(stream, hash);
         }
 
         void Deserialize(BufferedFileStream& stream, void* object) const override

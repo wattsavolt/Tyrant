@@ -6,7 +6,7 @@
 namespace tyr
 {
     template<typename T, T offsetBasis, T prime>
-    class Identifier
+    class Identifier final
     {
     public:
         constexpr Identifier() : m_Hash(0) {}

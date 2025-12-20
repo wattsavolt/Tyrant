@@ -13,6 +13,7 @@ namespace tyr
 		static constexpr uint8 c_MaxSecondaryWindows = 2;
 
 		WindowModule();
+
 		~WindowModule();
 
 		void InitializeModule() override;

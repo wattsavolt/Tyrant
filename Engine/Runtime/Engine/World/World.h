@@ -10,12 +10,12 @@ namespace tyr
 {
 	class Camera;
 
-	struct WorldParams
+	struct WorldConfig
 	{
 		Name name;
 		// TODO : Add window index later if required
 		SceneViewArea viewArea;
-		// The world is provided the camera but its dimensions will be updated by the world manager when the window resizes
+		// The world is provided the camera (will be a component later) but its dimensions will be updated by the world manager when the window resizes
 		Camera* camera = nullptr;
 	};
 
@@ -26,7 +26,7 @@ namespace tyr
 		World();
 		~World();
 
-		void Initialize(const WorldParams& params);
+		void Initialize(const WorldConfig& config, uint8 sceneIndex);
 
 		void Shutdown();
 
@@ -55,12 +55,10 @@ namespace tyr
 	private:
 		friend class WorldManager;
 
-		static uint8 s_NextSceneIndex;
-
 		Name m_Name;
 		Camera* m_Camera;
 		SceneViewArea m_ViewArea;
-		uint8 m_SceneIndex;
+		uint m_SceneIndex;
 		bool m_Active;
 		bool m_Visible;
 		bool m_Initialized;

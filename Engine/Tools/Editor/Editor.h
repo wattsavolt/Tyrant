@@ -6,6 +6,7 @@
 namespace tyr
 {
 	class Camera;
+	class AssetManager;
 	class WorldManager;
 	class World;
 	class TYR_EDITOR_EXPORT Editor final : public AppBase
@@ -20,6 +21,7 @@ namespace tyr
 
 	private:
 		URef<Camera> m_Camera;
+		AssetManager* m_AssetManager;
 		WorldManager* m_WorldManager;
 		World* m_LevelEditorWorld;
 	};

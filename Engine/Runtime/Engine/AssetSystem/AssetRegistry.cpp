@@ -5,9 +5,9 @@
 
 namespace tyr
 {
-    TYR_REFL_CLASS_START(AssetData, 0);
-        TYR_REFL_FIELD(&AssetData::filePath, "FilePath", true, true, true);
-        TYR_REFL_FIELD(&AssetData::references, "References", true, true, false);
+    TYR_REFL_CLASS_START(RegAssetData, 0);
+        TYR_REFL_FIELD(&RegAssetData::filePath, "FilePath", true, true, true);
+        TYR_REFL_FIELD(&RegAssetData::references, "References", true, true, false);
     TYR_REFL_CLASS_END();
 
     TYR_REFL_CLASS_START(AssetRegistryFile, 0);
@@ -51,7 +51,7 @@ namespace tyr
     {
         LockGuard guard(m_Mutex);
         TYR_ASSERT(!m_RegistryFile.assets.Contains(assetID));
-        AssetData& data = m_RegistryFile.assets[assetID];
+        RegAssetData& data = m_RegistryFile.assets[assetID];
         data.filePath = assetPath;
         data.references.Clear();
         data.references.Reserve(5);
@@ -66,7 +66,7 @@ namespace tyr
     {
         LockGuard guard(m_Mutex);
         TYR_ASSERT(m_RegistryFile.assets.Contains(assetID));
-        AssetData& data = m_RegistryFile.assets[assetID];
+        RegAssetData& data = m_RegistryFile.assets[assetID];
         data.references.Add(referenceID);
     }
 
@@ -74,7 +74,7 @@ namespace tyr
     {
         LockGuard guard(m_Mutex);
         TYR_ASSERT(m_RegistryFile.assets.Contains(assetID));
-        AssetData& data = m_RegistryFile.assets[assetID];
+        RegAssetData& data = m_RegistryFile.assets[assetID];
         data.filePath = assetPath;
     }
 
@@ -126,7 +126,7 @@ namespace tyr
         return -1;
     }
 
-    const AssetData& AssetRegistry::GetAssetData(AssetID assetID) const
+    const RegAssetData& AssetRegistry::GetAssetData(AssetID assetID) const
     {
         TYR_ASSERT(m_RegistryFile.assets.Contains(assetID));
         return *m_RegistryFile.assets.Find(assetID);

@@ -571,11 +571,11 @@ namespace tyr
 		Extents2 extents;
 	};
 
-	static constexpr uint16 c_InvalidGraphicsResourceID = UINT16_MAX;
+	static constexpr uint c_InvalidGraphicsResourceID = UINT_MAX;
 
 	struct ResourceHandle
 	{
-		uint16 id = c_InvalidGraphicsResourceID;
+		uint id = c_InvalidGraphicsResourceID;
 
 		operator bool() const
 		{

@@ -47,7 +47,7 @@ namespace tyr
 	union ClearColourValue
 	{
 		float float32[4];
-		int	int32[4];
+		int int32[4];
 		uint uint32[4];
 	};
 
@@ -100,9 +100,9 @@ namespace tyr
 		Filter magFilter;
 		Filter minFilter;
 		SamplerMipmapMode mipmapMode;
-		SamplerAddressMode	addressModeU;
-		SamplerAddressMode	addressModeV;
-		SamplerAddressMode	addressModeW;
+		SamplerAddressMode addressModeU;
+		SamplerAddressMode addressModeV;
+		SamplerAddressMode addressModeW;
 		CompareOp compareOp;
 		BorderColour borderColour;
 		float minLod;

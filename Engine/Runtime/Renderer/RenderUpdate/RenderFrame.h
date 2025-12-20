@@ -9,18 +9,23 @@ namespace tyr
 		static constexpr uint8 c_MaxRenderFrames = 3;
 		// True if the primary window resized since the last frame
 		bool windowResize = false;
-		Array<TextureDesc> m_NewTextures;
-		Array<uint> m_DeletedTextures;
-		Array<MaterialDesc> m_NewMaterials;
-		Array<uint> m_DeletedMaterials;
+		Array<TextureDesc> newTextures;
+		Array<uint> deletedTextures;
+		Array<MaterialDesc> newMaterials;
+		Array<uint> deletedMaterials;
 		SceneFrame sceneFrames[Scene::c_MaxScenes];
 
 		void Clear()
 		{
-			m_NewTextures.Clear();
-			m_DeletedTextures.Clear();
-			m_NewMaterials.Clear();
-			m_DeletedMaterials.Clear();
+			newTextures.Clear();
+			deletedTextures.Clear();
+			newMaterials.Clear();
+			deletedMaterials.Clear();
+
+			for (uint8 i = 0; i < Scene::c_MaxScenes; ++i)
+			{
+				sceneFrames[i].Clear();
+			}
 		}
 	};
 }

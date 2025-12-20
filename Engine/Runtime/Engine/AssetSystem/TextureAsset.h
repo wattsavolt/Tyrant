@@ -10,7 +10,7 @@ namespace tyr
 
 	struct TextureMetadata
 	{
-		AssetID id;
+		AssetID assetID;
 		TextureInfo info;
 		uint dataSize;
 	};

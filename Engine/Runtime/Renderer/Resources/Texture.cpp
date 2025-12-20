@@ -25,6 +25,9 @@ namespace tyr
 		const bool isCubemap = desc.info.type == ImageType::Cubemap || desc.info.type == ImageType::CubemapArray;
 		TYR_ASSERT(!isCubemap || desc.arrayLayerCount % 6 == 0);
 
+		texture.assetID = desc.assetID;
+		texture.index = desc.index;
+
 		ImageDesc imageDesc;
 #if !TYR_FINAL
 		imageDesc.debugName = desc.debugName;

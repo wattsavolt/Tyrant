@@ -11,7 +11,7 @@ namespace tyr
 
 	struct MaterialAssetFile
 	{
-		AssetID id;
+		AssetID assetID;
 		MaterialType type;
 		LocalArray<AssetID, MaterialConstants::c_MaxTextures> textures;
 	};

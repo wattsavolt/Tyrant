@@ -92,7 +92,7 @@ namespace tyr
 
 		AssetID textureID;
 
-		if (!ImportAlbedoTexture(desc.outputFolderPath, textureName, desc.albedoPath, desc.isSRGB, textureID, &material.id))
+		if (!ImportAlbedoTexture(desc.outputFolderPath, textureName, desc.albedoPath, desc.isSRGB, textureID, &material.assetID))
 		{
 			return false;
 		}
@@ -185,7 +185,7 @@ namespace tyr
 			return false;
 		}
 
-		AssetRegistry::Instance().AddAsset(compDesc.assetID, compDesc.outputFilePath, &material.id);
+		AssetRegistry::Instance().AddAsset(compDesc.assetID, compDesc.outputFilePath, &material.assetID);
 
 		material.textures[MaterialConstants::c_PbrNormalHeightIndex] = compDesc.assetID;
 
@@ -308,7 +308,7 @@ namespace tyr
 			return false;
 		}
 
-		AssetRegistry::Instance().AddAsset(compDesc.assetID, compDesc.outputFilePath, &material.id);
+		AssetRegistry::Instance().AddAsset(compDesc.assetID, compDesc.outputFilePath, &material.assetID);
 
 		material.textures[MaterialConstants::c_PbrAoRoughnessMetallicIndex] = compDesc.assetID;
 
@@ -359,8 +359,8 @@ namespace tyr
 			}
 		}
 
-		material.id = AssetUtil::CreateAssetID();
-		AssetRegistry::Instance().AddAsset(material.id, materialPath);
+		material.assetID = AssetUtil::CreateAssetID();
+		AssetRegistry::Instance().AddAsset(material.assetID, materialPath);
 
 		return true;
 	}

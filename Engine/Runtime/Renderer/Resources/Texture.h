@@ -28,10 +28,13 @@ namespace tyr
 #if !TYR_FINAL
 		GDebugString debugName;
 #endif
-		SamplerHandle sampler;
+		AssetID assetID;
+		// Index into array of textures in shader
+		uint index;
 		uint arrayLayerCount;
 		ImageUsage usage;
 		TextureInfo info;
+		SamplerHandle sampler;
 		SampleCount sampleCount;
 		ImageLayout layout;
 	};
@@ -40,7 +43,7 @@ namespace tyr
 
 	struct Texture : public RenderResource
 	{
-		AssetID id;
+		AssetID assetID;
 		// Index into array of textures in shader
 		uint index;
 		ImageHandle image;

@@ -32,4 +32,36 @@ namespace tyr
     {
         m_Callable = std::move(callable);
     }
+
+
+    TaskScheduler::TaskScheduler()
+    {
+
+
+    }
+
+    TaskScheduler::~TaskScheduler()
+    {
+
+    }
+
+    TaskID TaskScheduler::CreateTask(Callable&& callable)
+    {
+        return 0;
+    }
+
+    void TaskScheduler::AddDependency(TaskID task, TaskID dependency)
+    {
+
+    }
+
+    void TaskScheduler::Enqueue(TaskID task)
+    {
+
+    }
+
+    TaskID TaskScheduler::CreateAndEnqueueTask(Callable&& callable)
+    {
+        return 0;
+    }
 }

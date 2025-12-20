@@ -18,7 +18,7 @@ namespace tyr
 
 		void Update(float deltaTime);
 
-		World* AddWorld(const WorldParams& params);
+		World* AddWorld(const WorldConfig& params);
 
 		void RemoveWorld(World* world);
 
@@ -27,9 +27,7 @@ namespace tyr
 	private:
 		LocalObjectPool<World, c_MaxWorlds, false> m_WorldPool;
 		LocalArray<World*, c_MaxWorlds> m_Worlds;
-		RenderFrame m_RenderFrames[RenderFrame::c_MaxRenderFrames];
 		Renderer* m_Renderer;
-		uint8 m_RenderFrameIndex;
 	};
 	
 }

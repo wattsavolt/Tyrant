@@ -4,13 +4,12 @@
 
 namespace tyr
 {
-	uint8 World::s_NextSceneIndex = 0;
-
 	World::World()
-		: m_Initialized(false)
+		: m_SceneIndex(UINT8_MAX)
 		, m_Camera(nullptr)
 		, m_Active(true)
 		, m_Visible(true)
+		, m_Initialized(false)
 	{
 
 	}
@@ -20,14 +19,15 @@ namespace tyr
 		
 	}
 
-	void World::Initialize(const WorldParams& params)
+	void World::Initialize(const WorldConfig& config, uint8 sceneIndex)
 	{
 		TYR_ASSERT(!m_Initialized);
 
-		m_Name = params.name;
-		m_Camera = params.camera;
-		m_ViewArea = params.viewArea;
-		m_SceneIndex = s_NextSceneIndex++ % Scene::c_MaxScenes;
+		m_Name = config.name;
+		m_Camera = config.camera;
+		m_ViewArea = config.viewArea;
+
+		m_SceneIndex = sceneIndex;
 
 		m_Initialized = true;
 	}

@@ -28,6 +28,8 @@ namespace tyr
 		, m_Device(m_RenderAPI->GetDevice())
 		, m_SwapChain(m_RenderAPI->GetSwapChain())
 		, m_ShaderCreator(*m_Device, rendererConfig.shaderConfig)
+		, m_SceneCount(0)
+		, m_RenderFrameIndex(0)
 	{
 		TYR_ASSERT(!s_Instantiated);
 
@@ -100,33 +102,29 @@ namespace tyr
 		m_Viewport.width = windowWidth;
 		m_Viewport.height = windowHeight;
 
-		Optional<const RenderFrame*> rf = m_FrameUpdateQueue.ReadOnly();
-		if (rf)
+		const RenderFrame& renderFrame = GetRenderFrame();
+
+		m_RenderFrameIndex = (m_RenderFrameIndex + 1) % RenderFrame::c_MaxRenderFrames;
+
+		const SceneFrame& sceneFrame = renderFrame.sceneFrames[0];
+		const SceneView& sceneView = sceneFrame.view;
+		const Matrix4 view = Matrix4::CreateView(sceneView.camera.position, sceneView.camera.forward, sceneView.camera.up);
+		// Do reverse-z for greater floating-point precision
+		const Matrix4 projection = Matrix4::CreatePerspective(sceneView.camera.fov, windowWidth / windowHeight, sceneView.camera.farZ, sceneView.camera.nearZ);
+		m_SceneInfo.viewProj = view * projection;
+		m_SceneInfo.camPos = sceneView.camera.position;
+		m_RenderingInfo.renderArea.offset = 
+		{ 
+			static_cast<int>(sceneView.viewArea.x * windowWidth),
+			static_cast<int>(sceneView.viewArea.y * windowHeight)
+		};
+		m_RenderingInfo.renderArea.extents =
 		{
-			const RenderFrame& renderFrame = *rf.value();
-			const SceneFrame& sceneFrame = renderFrame.sceneFrames[0];
-			const SceneView& sceneView = sceneFrame.view;
-			const Matrix4 view = Matrix4::CreateView(sceneView.camera.position, sceneView.camera.forward, sceneView.camera.up);
-			// Do reverse-z for greater floating-point precision
-			const Matrix4 projection = Matrix4::CreatePerspective(sceneView.camera.fov, windowWidth / windowHeight, sceneView.camera.farZ, sceneView.camera.nearZ);
-			m_SceneInfo.viewProj = view * projection;
-			m_SceneInfo.camPos = sceneView.camera.position;
-			m_RenderingInfo.renderArea.offset = 
-			{ 
-				static_cast<int>(sceneView.viewArea.x * windowWidth),
-				static_cast<int>(sceneView.viewArea.y * windowHeight)
-			};
-			m_RenderingInfo.renderArea.extents =
-			{
-				static_cast<uint>(sceneView.viewArea.width * windowWidth),
-				static_cast<uint>(sceneView.viewArea.height * windowHeight)
-			};
-			m_SceneUpdated = true;
-		}
-		else
-		{
-			m_SceneUpdated = false;
-		}
+			static_cast<uint>(sceneView.viewArea.width * windowWidth),
+			static_cast<uint>(sceneView.viewArea.height * windowHeight)
+		};
+		m_SceneUpdated = true;
+		
 
 		if (!m_FirstRender)
 		{
@@ -660,9 +658,9 @@ namespace tyr
 		bindingUpdate.bindingIndex = bindingIndex;
 	}
 
-	bool Renderer::TryAddFrame(const RenderFrame* frame)
+	RenderFrame& Renderer::GetRenderFrame()
 	{
-		return m_FrameUpdateQueue.Enqueue(frame);
+		return m_RenderFrames[m_RenderFrameIndex];
 	}
 
 	void Renderer::WaitForCompletion()
@@ -674,5 +672,35 @@ namespace tyr
 			m_Device->WaitForSemaphore(m_CompletionSemaphore, m_ExecuteDesc.signalValues.Back(), UINT64_MAX);
 		}
 		m_Device->WaitIdle();
+	}
+
+	uint8 Renderer::AddScene()
+	{
+		if (m_SceneCount < Scene::c_MaxScenes)
+		{
+			for (uint8 i = 0; i < Scene::c_MaxScenes; ++i)
+			{
+				if (!m_Scenes[i].active)
+				{
+					m_Scenes[i].active = true;
+					return i;
+				}
+			}
+		}
+
+		TYR_ASSERT(false);
+		return UINT8_MAX;
+	}
+
+	void Renderer::RemoveScene(uint8 index)
+	{
+		if (m_SceneCount == 0 || index >= Scene::c_MaxScenes || !m_Scenes[index].active)
+		{
+			TYR_ASSERT(false);
+			return;
+		}
+
+		m_Scenes[index].active = false;
+		m_Scenes[index].Clear();
 	}
 }

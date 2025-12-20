@@ -52,9 +52,10 @@ namespace tyr
     {
         TYR_ASSERT(m_ModulesInitialized);
 
-        for (IModule* module : m_Modules)
+        // TODO: Okay to update linearly as each module should declare tasks and have a completion task that is waited on by modules that depend on it
+        for (int i = m_Modules.Size() - 1; i >= 0; --i)
         {
-            module->UpdateModule(deltaTime);
+            m_Modules[i]->UpdateModule(deltaTime);
         }
     }
 

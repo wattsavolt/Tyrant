@@ -9,7 +9,7 @@ namespace tyr
 	using ResourceID = uint64;
 
 	/// Base class for a graphics resource.
-	struct RenderResource
+	struct TYR_RENDERER_EXPORT RenderResource
 	{
 		static ResourceID s_NextID;
 

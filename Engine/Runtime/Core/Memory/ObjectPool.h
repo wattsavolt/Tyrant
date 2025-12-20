@@ -10,7 +10,7 @@ namespace tyr
     class ObjectPool final
     {
     public:
-        ObjectPool(uint16 maxObjects)
+        ObjectPool(uint maxObjects)
             : m_MaxObjects(maxObjects)
         {
             m_Pool = AllocN<T>(maxObjects);
@@ -27,7 +27,7 @@ namespace tyr
         T* Create(Args&&... args) 
         {
             TYR_ASSERT(m_ObjectCount < m_MaxObjects);
-            uint16 index;
+            uint index;
             if (!m_FreeSpaces.IsEmpty()) 
             {
                 index = m_FreeSpaces.Back();
@@ -43,23 +43,23 @@ namespace tyr
             return object;
         }
 
-        uint16 GetIndex(const T* object) const
+        uint GetIndex(const T* object) const
         {
             TYR_ASSERT(object != nullptr && m_ObjectCount > 0);
             return object - m_Pool;
         }
 
-        const T* GetObject(uint16 index) const
+        const T* GetObject(uint index) const
         {
             return m_Pool[index];
         }
 
-        T* GetObject(uint16 index)
+        T* GetObject(uint index)
         {
             return m_Pool[index];
         }
 
-        const T& GetObjectRef(uint16 index) const
+        const T& GetObjectRef(uint index) const
         {
             return m_Pool[index];
         }
@@ -78,17 +78,17 @@ namespace tyr
             m_ObjectCount--;
         }
 
-        void Delete(uint16 index)
+        void Delete(uint index)
         {
             Delete(GetObject(index));
         }
 
     private:
         T* m_Pool;
-        Array<uint16> m_FreeSpaces;
-        uint16 m_Pos = 0;
-        uint16 m_ObjectCount = 0;
-        const uint16 m_MaxObjects;
+        Array<uint> m_FreeSpaces;
+        uint m_Pos = 0;
+        uint m_ObjectCount = 0;
+        const uint m_MaxObjects;
     };
 }
 

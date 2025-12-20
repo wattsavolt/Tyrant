@@ -6,7 +6,7 @@
 namespace tyr
 {
     // Local object pool that stores a C-style array of objects.
-    template<class T, uint16 N, bool ClearOnFree = true>
+    template<class T, uint N, bool ClearOnFree = true>
     class LocalObjectPool final
     {
     public:
@@ -17,7 +17,7 @@ namespace tyr
             TYR_ASSERT(m_ObjectCount == 0);
         }
 
-        T* Create(uint16& index)
+        T* Create(uint& index)
         {
             TYR_ASSERT(m_ObjectCount < N);
             if (!m_FreeSpaces.IsEmpty()) 
@@ -33,28 +33,28 @@ namespace tyr
             return &m_Pool[index];
         }
 
-        uint16 GetIndex(const T* object) const
+        uint GetIndex(const T* object) const
         {
             TYR_ASSERT(object != nullptr && m_ObjectCount > 0);
             return object - m_Pool;
         }
 
-        const T* GetObject(uint16 index) const
+        const T* GetObject(uint index) const
         {
             return &m_Pool[index];
         }
 
-        T* GetObject(uint16 index)
+        T* GetObject(uint index)
         {
             return &m_Pool[index];
         }
 
-        const T& GetObjectRef(uint16 index) const
+        const T& GetObjectRef(uint index) const
         {
             return m_Pool[index];
         }
 
-        T& GetObjectRef(uint16 index)
+        T& GetObjectRef(uint index)
         {
             return m_Pool[index];
         }
@@ -71,16 +71,16 @@ namespace tyr
             }
         }
 
-        void Delete(uint16 index)
+        void Delete(uint index)
         {
             Delete(&m_Pool[index]);
         }
 
     private:
         T m_Pool[N];
-        LocalArray<uint16, N> m_FreeSpaces;
-        uint16 m_Pos = 0;
-        uint16 m_ObjectCount = 0;
+        LocalArray<uint, N> m_FreeSpaces;
+        uint m_Pos = 0;
+        uint m_ObjectCount = 0;
     };
 }
 

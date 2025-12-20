@@ -38,6 +38,15 @@ namespace tyr
 		LocalArray<DirectionalLight, c_MaxDirectionalLights> dirLights;
 		LocalArray<PointLight, c_MaxPointLights> pointLights;
 		LocalArray<SpotLight, c_MaxSpotLights> spotLights;
+
+		void Clear()
+		{
+			rigidMeshInstances.Clear();
+			skeletalModelInstances.Clear();
+			dirLights.Clear();
+			pointLights.Clear();
+			spotLights.Clear();
+		}
 	};
 
 	struct Scene
@@ -53,11 +62,22 @@ namespace tyr
 		const char* name;
 		SceneView view;
 		SceneContent content;
+
+		void Clear()
+		{
+			content.Clear();
+		}
 	};
 
 	struct SceneFrame
 	{
 		bool visible = true;
 		SceneView view;
+		// TODO : Add scene updates
+
+		void Clear()
+		{
+
+		}
 	};
 }

@@ -83,7 +83,7 @@ namespace tyr
     static void SerializeCompressedImage(const AssetID& assetID, const TextureInfo& textureInfo, const char* filePath)
     {
         TextureMetadata metadata;
-        metadata.id = assetID;
+        metadata.assetID = assetID;
         metadata.info = textureInfo;
 
         const Array<uint8>& buffer = GetThreadLocalBuffer();

@@ -6,7 +6,6 @@
 namespace tyr
 {
 	WorldManager::WorldManager()
-		:  m_RenderFrameIndex(0)
 	{
 		RendererModule* rendererModule;
 		TYR_GET_MODULE(RendererModule, rendererModule);
@@ -20,7 +19,7 @@ namespace tyr
 
 	void WorldManager::Update(float deltaTime)
 	{
-		RenderFrame& renderFrame = m_RenderFrames[m_RenderFrameIndex];
+		RenderFrame& renderFrame = m_Renderer->GetRenderFrame();
 		renderFrame.Clear();
 
 		// TODO: Set this if window has resized
@@ -29,17 +28,14 @@ namespace tyr
 		{
 			world->Update(deltaTime, renderFrame.sceneFrames[world->GetSceneIndex()]);
 		}
-
-		m_Renderer->TryAddFrame(&renderFrame);
-
-		m_RenderFrameIndex = (m_RenderFrameIndex + 1) % RenderFrame::c_MaxRenderFrames;
 	}
 
-	World* WorldManager::AddWorld(const WorldParams& params)
+	World* WorldManager::AddWorld(const WorldConfig& params)
 	{
-		uint16 index;
+		uint8 sceneIndex = m_Renderer->AddScene();
+		uint index;
 		World* world = m_WorldPool.Create(index);
-		world->Initialize(params);
+		world->Initialize(params, sceneIndex);
 		m_Worlds.Add(world);
 		return world;
 	}

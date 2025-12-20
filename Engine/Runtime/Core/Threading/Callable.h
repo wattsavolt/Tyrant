@@ -9,8 +9,8 @@ namespace tyr
         // Task function to be executed
         void (*Execute)(void*) = nullptr;
         // Argument / data to be used in the task function
-        void* Context = nullptr;
-        // Optional function to delete the task function data after the task function is executed.
+        void* context = nullptr;
+        // Optional function to delete the context after the task function is executed.
         void (*Destroy)(void*) = nullptr;
 
         Callable() = default;
@@ -18,11 +18,11 @@ namespace tyr
         // Move constructor
         Callable(Callable&& other) noexcept
             : Execute(other.Execute),
-            Context(other.Context),
+            context(other.context),
             Destroy(other.Destroy)
         {
             other.Execute = nullptr;
-            other.Context = nullptr;
+            other.context = nullptr;
             other.Destroy = nullptr;
         }
 
@@ -32,15 +32,15 @@ namespace tyr
             if (this != &other)
             {
                 // Clean up existing context if needed
-                if (Destroy && Context)
-                    Destroy(Context);
+                if (Destroy && context)
+                    Destroy(context);
 
                 Execute = other.Execute;
-                Context = other.Context;
+                context = other.context;
                 Destroy = other.Destroy;
 
                 other.Execute = nullptr;
-                other.Context = nullptr;
+                other.context = nullptr;
                 other.Destroy = nullptr;
             }
             return *this;
@@ -52,14 +52,14 @@ namespace tyr
 
         ~Callable()
         {
-            if (Destroy && Context)
-                Destroy(Context);
+            if (Destroy && context)
+                Destroy(context);
         }
 
         void Invoke() const
         {
             if (Execute)
-                Execute(Context);
+                Execute(context);
         }
 
         explicit operator bool() const

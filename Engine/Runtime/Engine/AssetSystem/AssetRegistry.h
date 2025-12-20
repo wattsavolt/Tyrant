@@ -5,7 +5,7 @@
 
 namespace tyr
 {
-	struct AssetData
+	struct RegAssetData
 	{
 		AssetPath filePath;
 		Array<AssetID> references;
@@ -13,7 +13,7 @@ namespace tyr
 
 	struct AssetRegistryFile
 	{
-		HashMap<AssetID, AssetData> assets;
+		HashMap<AssetID, RegAssetData> assets;
 	};
 
 	class TYR_ENGINE_EXPORT AssetRegistry final : public INonCopyable
@@ -32,7 +32,7 @@ namespace tyr
 		int GetAssetRefCount(const char* assetPath) const;
 
 		// Should only be called from a single thread
-		const AssetData& GetAssetData(AssetID assetID) const;
+		const RegAssetData& GetAssetData(AssetID assetID) const;
 
 	private:
 		static constexpr const char* c_AssetRegistryPath = "/AssetRegistry/AssetRegistry.bin";

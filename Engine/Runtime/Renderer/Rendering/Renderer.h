@@ -17,6 +17,7 @@ namespace tyr
 	class Device;
 	class CommandAllocator;
 	struct BufferBindingUpdate;
+
 	struct MaterialData
 	{
 		Vector3 albedo;
@@ -32,10 +33,14 @@ namespace tyr
 
 		void Render(double deltaTime);
 
-		bool TryAddFrame(const RenderFrame* frame);
+		RenderFrame& GetRenderFrame();
 
 		// Wait for all rendering operations to be complete
 		void WaitForCompletion();
+
+		uint8 AddScene();
+
+		void RemoveScene(uint8 index);
 	
 	private:
 		RenderPassHandle CreateRenderPass();
@@ -55,7 +60,6 @@ namespace tyr
 		SwapChain* m_SwapChain;
 		Device* m_Device;
 		ShaderCreator m_ShaderCreator;
-		SPSCRingBuffer<const RenderFrame*, RenderFrame::c_MaxRenderFrames> m_FrameUpdateQueue;
 		GraphicsPipelineHandle m_Pipeline;
 		RenderBuffer m_VertexBuffer;
 		RenderBuffer m_IndexBuffer;
@@ -85,6 +89,10 @@ namespace tyr
 		uint8 m_SemaphoreIndex;
 		Viewport m_Viewport;
 		uint m_SwapChainImageIndex;
+		RenderFrame m_RenderFrames[RenderFrame::c_MaxRenderFrames];
+		Scene m_Scenes[Scene::c_MaxScenes];
+		uint8 m_SceneCount;
+		uint8 m_RenderFrameIndex;
 		bool m_FirstRender;
 		bool m_SceneUpdated;
 	};

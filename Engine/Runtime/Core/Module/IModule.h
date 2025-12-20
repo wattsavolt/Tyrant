@@ -16,7 +16,7 @@ namespace tyr
         // Called before engine shutdown
         virtual void ShutdownModule() = 0;
 
-        // Called every frame by the engine
+        // Called every frame by the engine. Should schedule async tasks for this module
         virtual void UpdateModule(float deltaTime) = 0;
     };
 	

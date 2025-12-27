@@ -23,8 +23,8 @@ namespace tyr
 	template<typename T>
 	struct IsHashMap : std::false_type {};
 
-	template<typename K, typename V, typename H>
-	struct IsHashMap<HashMap<K, V, H>> : std::true_type {};
+	template<typename K, typename V, bool F, typename H>
+	struct IsHashMap<HashMap<K, V, F, H>> : std::true_type {};
 
     template<typename T>
     struct IsLocalString : std::false_type {};
@@ -63,11 +63,12 @@ namespace tyr
     template<typename T>
     struct HashMapTraits;
 
-    template <typename K, typename V, typename H, typename C>
-    struct HashMapTraits<HashMap<K, V, H, C>>
+    template <typename K, typename V, bool F, typename H, typename C>
+    struct HashMapTraits<HashMap<K, V, F, H, C>>
     {
         using keyType = K;
         using valueType = V;
+        static constexpr bool c_Fixed = F;
         using hashType = H;
         using compareType = C;
     };

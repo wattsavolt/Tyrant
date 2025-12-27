@@ -34,7 +34,7 @@ namespace tyr
 	public:
 		static constexpr uint c_MaxTextures = 3000;
 		static constexpr uint c_MaxMaterials = 1000;
-		static constexpr uint c_AssetMapInitialCapacity = c_MaxTextures + c_MaxMaterials;
+		static constexpr uint c_MaxAssets = c_MaxTextures + c_MaxMaterials;
 
 		AssetManager();
 		~AssetManager();
@@ -52,7 +52,8 @@ namespace tyr
 		LocalObjectPool<MaterialLoadData, 100> m_MaterialLoadDataPool;
 		Array<Texture*> m_NewTextures;
 		Array<Material*> m_NewMaterials;
-		HashMap<AssetID, AssetData> m_AssetMap;
+		HashMap<AssetID, uint> m_AssetMap;
+		LocalObjectPool<AssetData, c_MaxAssets> m_AssetDataPool;
 	};
 	
 }

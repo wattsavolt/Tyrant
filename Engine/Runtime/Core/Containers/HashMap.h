@@ -2,12 +2,13 @@
 
 #include "Array.h"
 #include "Math/Math.h"
+#include "Utility/Utility.h"
 
 namespace tyr
 {
     // Hash map thast uses linear probing for collisions and keeps the load factor at 50% max
-    template <typename Key, typename Value, typename Hash = std::hash<Key>, typename A = HeapAllocator>
-    class HashMap
+    template <typename Key, typename Value, bool Fixed = false, typename Hash = std::hash<Key>, typename A = HeapAllocator>
+    class HashMap final
     {
     private:
         struct Bucket
@@ -65,10 +66,14 @@ namespace tyr
 
         void EnsureCapacity(uint requiredSize)
         {
-            // Make sure a max load factor of 0.5 is kept
-            uint requiredCapacity = requiredSize * 2;
+            const uint requiredCapacity = requiredSize * c_InvLoadFactor;
+
             if (requiredCapacity > m_Capacity)
             {
+                if constexpr (Fixed)
+                {
+                    TYR_LOG_FATAL("Attempt to increase capacity of fixed hash map.");
+                }
                 Rehash(Math::NextPowerOfTwo(requiredCapacity));
             }
         }
@@ -96,8 +101,10 @@ namespace tyr
 
 
     public:
+        static constexpr float c_InvLoadFactor = 1 / 0.5f;
+
         HashMap(uint capacity = 8)
-            : m_Capacity(Math::NextPowerOfTwo(capacity))
+            : m_Capacity(Math::NextPowerOfTwo(capacity * c_InvLoadFactor))
             , m_Size(0)
         {
             m_Buckets.Resize(m_Capacity);
@@ -229,6 +236,7 @@ namespace tyr
         }
 
         uint Size() const { return m_Size; }
+
         uint Capacity() const { return m_Capacity; }
 
         // Iterator classes

@@ -13,6 +13,12 @@ namespace tyr
 
 	struct AssetRegistryFile
 	{
+		AssetRegistryFile()
+			: assets(1000)
+		{
+
+		}
+
 		HashMap<AssetID, RegAssetData> assets;
 	};
 
@@ -38,8 +44,6 @@ namespace tyr
 		static constexpr const char* c_AssetRegistryPath = "/AssetRegistry/AssetRegistry.bin";
 
 		AssetRegistry();
-
-		friend class Engine;
 
 		AssetRegistryFile m_RegistryFile;
 		mutable Mutex m_Mutex;

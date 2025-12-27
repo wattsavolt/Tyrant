@@ -324,7 +324,7 @@ namespace tyr
         // Erase an item by index
         void Erase(uint index)
         {         
-            TYR_ASSERT(index < m_Size)          
+            TYR_ASSERT(index < m_Size);
             // Move items after the erased item to fill the gap
             for (uint i = index; i < m_Size - 1; ++i)
             {
@@ -332,6 +332,22 @@ namespace tyr
             }
             // Destruct the last item
             DestructElement(--m_Size);       
+        }
+
+        void EraseFromEnd(uint count)
+        {
+            TYR_ASSERT(count <= m_Size);
+            for (uint i = m_Size - count; i < m_Size; ++i)
+            {
+                DestructElement(i);
+            }
+            m_Size -= count;
+        }
+
+        void Swap(uint indexA, uint indexB)
+        {
+            TYR_ASSERT(indexA != indexB && indexA < m_Size && indexB < m_Size);
+            std::swap(m_Data[indexA], m_Data[indexB]);
         }
 
         T& Back()

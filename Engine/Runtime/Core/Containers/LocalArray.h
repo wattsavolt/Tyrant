@@ -160,6 +160,18 @@ namespace tyr
             --m_Size;       
         }
 
+        void EraseFromEnd(uint count)
+        {
+            TYR_ASSERT(count <= m_Size);
+            m_Size -= count;
+        }
+
+        void Swap(uint indexA, uint indexB)
+        {
+            TYR_ASSERT(indexA != indexB && indexA < m_Size && indexB < m_Size);
+            std::swap(m_Data[indexA], m_Data[indexB]);
+        }
+
         T& Back()
         {
             TYR_ASSERT(m_Size > 0);

@@ -7,7 +7,7 @@
 namespace tyr
 {
 	AssetManager::AssetManager()
-		: m_AssetMap(c_AssetMapInitialCapacity)
+		: m_AssetMap(c_MaxAssets)
 	{
 		AssetRegistry::Instance().Load();
 		m_NewTextures.Reserve(200);
@@ -27,9 +27,10 @@ namespace tyr
 	void AssetManager::LoadTexture(const char* filePath)
 	{
 		AssetID assetID(filePath);
-		if (AssetData* assetData = m_AssetMap.Find(assetID))
+		if (uint* poolIndex = m_AssetMap.Find(assetID))
 		{
-			assetData->refCount++;
+			AssetData& assetData = m_AssetDataPool.GetObjectRef(*poolIndex);
+			assetData.refCount++;
 		}
 		else
 		{
@@ -56,14 +57,16 @@ namespace tyr
 	void AssetManager::LoadMaterial(const char* filePath)
 	{
 		AssetID assetID(filePath);
-		if (AssetData* assetData = m_AssetMap.Find(assetID))
+		if (uint* poolIndex = m_AssetMap.Find(assetID))
 		{
-			assetData->refCount++;
+			AssetData& assetData = m_AssetDataPool.GetObjectRef(*poolIndex);
+			assetData.refCount++;
 		}
 		else
 		{
 			MaterialAssetFile materialFile;
 			AssetUtil::LoadAsset<MaterialAssetFile>(filePath, materialFile);
+
 			uint index;
 			Material* material = m_MaterialPool.Create(index);
 			material->assetID = materialFile.assetID;
@@ -77,7 +80,11 @@ namespace tyr
 				LoadTexture(assetData.filePath.CStr());
 			}
 
-			m_AssetMap[assetID] = { index, 1 };
+			uint dataIndex;
+			AssetData* assetData = m_AssetDataPool.Create(dataIndex);
+			assetData->poolIndex = index;
+			assetData->refCount = 1;
+			m_AssetMap[assetID] = dataIndex;
 			m_NewMaterials.Add(material);
 		}
 	}

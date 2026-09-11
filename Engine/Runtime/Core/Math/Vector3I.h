@@ -8,7 +8,7 @@ namespace tyr
 	class Vector4;
 
 	/// A three dimensional vector with integer values. 
-	class TYR_CORE_EXPORT Vector3I
+	class TYR_CORE_API Vector3I
 	{
 	public:
 		Vector3I() = default;

@@ -6,6 +6,8 @@
 #include "AssetSystem/AssetUtil.h"
 #include "AssetSystem/AssetRegistry.h"
 #include "AssetSystem/TextureAsset.h"
+#include "AssetSystem/AssetConstants.h"
+#include "Rendering/RenderConstants.h"
 
 namespace tyr
 {
@@ -15,36 +17,90 @@ namespace tyr
 		return importer;
 	}
 
-	bool MaterialImporter::ImportAlbedoTexture(const char* outputFolderPath, const char* textureName, const char* albedoPath, bool isSRGB, AssetID& textureID, AssetID* refID) const
+	bool LoadImageInfo(const TextureSource& source, ImageInfo& outInfo)
+	{
+		if (source.path) 
+		{
+			ImageLoader::LoadImageInfo(source.path, outInfo);
+			return true;
+		}
+		else if (source.data) 
+		{
+			ImageLoader::LoadImageInfoFromMem(source.data, source.dataSize, outInfo);
+			return true;
+		}
+		return false;
+	}
+
+	uint8* LoadImage8U(const TextureSource& source, int channelCount)
+	{
+		if (source.path)
+		{
+			ImageLoader::LoadImage8U(source.path, channelCount);
+		}
+		else if (source.data)
+		{
+			ImageLoader::LoadImage8UFromMem(source.data, source.dataSize, channelCount);
+		}
+		return nullptr;
+	}
+
+	uint16* LoadImage16U(const TextureSource& source, int channelCount)
+	{
+		if (source.path)
+		{
+			ImageLoader::LoadImage16U(source.path, channelCount);
+		}
+		else if (source.data)
+		{
+			ImageLoader::LoadImage16UFromMem(source.data, source.dataSize, channelCount);
+		}
+		return nullptr;
+	}
+
+	float* LoadImage32F(const TextureSource& source, int channelCount)
+	{
+		if (source.path)
+		{
+			ImageLoader::LoadImage32F(source.path, channelCount);
+		}
+		else if (source.data)
+		{
+			ImageLoader::LoadImage32FFromMem(source.data, source.dataSize, channelCount);
+		}
+		return nullptr;
+	}
+
+	bool MaterialImporter::ImportAlbedoTexture(const TextureSource& source, const char* outputFolderPath, const char* textureName, bool isSRGB, AssetID& textureID) const
 	{
 		ImageInfo info;
-		ImageLoader::LoadImageInfo(albedoPath, info);
+		LoadImageInfo(source, info);
 
 		if (info.channelCount != 3 && info.channelCount != 4)
 		{
-			TYR_LOG_ERROR("Invalid number of channels in texture %s.", albedoPath);
+			TYR_LOG_ERROR("Invalid number of channels in source texture when trying to create %s.", textureName);
 			return false;
 		}
-
+		
 		Image2DCompressionDesc compDesc;
 		// Force 4 channels even when there is no alpha channel as nvtt only support RGBA as input
 		switch (info.bitDepth)
 		{
 		case ImageBitDepth::EightBit:
 		{
-			compDesc.image = ImageLoader::LoadImage8U(albedoPath, 4);
+			compDesc.image = LoadImage8U(source, 4);
 			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_8U;
 			break;
 		}
 		case ImageBitDepth::SixteenBit:
 		{
-			compDesc.image = ImageLoader::LoadImage32F(albedoPath, 4);
+			compDesc.image = LoadImage32F(source, 4);
 			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_16F;
 			break;
 		}
 		case ImageBitDepth::ThirtyTwoBit:
 		{
-			compDesc.image = ImageLoader::LoadImage32F(albedoPath, 4);
+			compDesc.image = LoadImage32F(source, 4);
 			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_32F;
 			break;
 		}
@@ -53,13 +109,12 @@ namespace tyr
 		}
 
 		char outputPath[TYR_MAX_PATH_TOTAL_SIZE];
-		snprintf(outputPath, sizeof(outputPath), "%s/%s%s", outputFolderPath, textureName, c_TextureFileExtension);
+		snprintf(outputPath, sizeof(outputPath), "%s/%s%s", outputFolderPath, textureName, AssetConstants::c_TextureFileExtension);
 
-		compDesc.assetID = AssetUtil::CreateAssetID();
 		compDesc.width = info.width;
 		compDesc.height = info.height;
 		compDesc.outputFormat = ImageCompressionOutputFormat::BC7;
-		compDesc.mipCount = 1;
+		compDesc.mipCount = RenderConstants::c_MaxMips;
 		compDesc.outputFilePath = outputPath;
 		compDesc.isSRGB = isSRGB;
 
@@ -72,14 +127,14 @@ namespace tyr
 			return false;
 		}
 
-		AssetRegistry::Instance().AddAsset(compDesc.assetID, compDesc.outputFilePath, refID);
+		textureID = AssetUtil::CreateAssetID();
 
-		textureID = compDesc.assetID;
+		AssetRegistry::Instance().AddAsset(textureID, compDesc.outputFilePath);
 
 		return true;
 	}
 
-	bool MaterialImporter::CreateAlbedo(const PbrMaterialImportDesc& desc, MaterialAssetFile& material) const
+	bool MaterialImporter::CreateAlbedo(const PbrMaterialImportDesc& desc, AssetID materialID, MaterialAssetFile& material) const
 	{
 		if (desc.albedoID != 0)
 		{
@@ -92,7 +147,7 @@ namespace tyr
 
 		AssetID textureID;
 
-		if (!ImportAlbedoTexture(desc.outputFolderPath, textureName, desc.albedoPath, desc.isSRGB, textureID, &material.assetID))
+		if (!ImportAlbedoTexture(desc.albedoSource, desc.outputFolderPath, textureName, desc.isSRGB, textureID))
 		{
 			return false;
 		}
@@ -102,7 +157,7 @@ namespace tyr
 		return true;
 	}
 
-	bool MaterialImporter::CreateNormalHeight(const PbrMaterialImportDesc& desc, MaterialAssetFile& material) const
+	bool MaterialImporter::CreateNormalHeight(const PbrMaterialImportDesc& desc, AssetID materialID, MaterialAssetFile& material) const
 	{
 		if (desc.normalHeightID != 0)
 		{
@@ -111,15 +166,22 @@ namespace tyr
 		}
 
 		ImageInfo normalInfo;
-		ImageLoader::LoadImageInfo(desc.normalPath, normalInfo);
+		LoadImageInfo(desc.normalSource, normalInfo);
 
 		ImageInfo heightInfo;
-		ImageLoader::LoadImageInfo(desc.heightPath, heightInfo);
-
-		if (normalInfo.width != heightInfo.width || normalInfo.height != heightInfo.height)
+		const bool heightPresent = desc.heightSource.IsPresent();
+		if (heightPresent)
 		{
-			TYR_LOG_ERROR("The dimensions of the normal and height textures do not match for the PBR material %s.", desc.materialName);
-			return false;
+			LoadImageInfo(desc.heightSource, heightInfo);
+		}
+		
+		if (heightPresent)
+		{
+			if (normalInfo.width != heightInfo.width || normalInfo.height != heightInfo.height)
+			{
+				TYR_LOG_ERROR("The dimensions of the normal and height textures do not match for the PBR material %s.", desc.materialName);
+				return false;
+			}
 		}
 
 		// Use the highest bit depth of any of the textures
@@ -133,30 +195,39 @@ namespace tyr
 		{
 		case ImageBitDepth::EightBit:
 		{
-			uint8* normal = ImageLoader::LoadImage8U(desc.normalPath, 4);
-			uint8* height = ImageLoader::LoadImage8U(desc.heightPath, 1);
-			ImageUtil::CopyChannel<uint8>(height, normal, texelCount, 1, 4, 0, 3);
-			ImageLoader::FreeImage(height);
+			uint8* normal = LoadImage8U(desc.normalSource, 4);
+			if (heightPresent)
+			{
+				uint8* height = LoadImage8U(desc.heightSource, 1);
+				ImageUtil::CopyChannel<uint8>(height, normal, texelCount, 1, 4, 0, 3);
+				ImageLoader::FreeImage(height);
+			}
 			compDesc.image = normal;
 			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_8U;
 			break;
 		}
 		case ImageBitDepth::SixteenBit:
 		{
-			float* normal = ImageLoader::LoadImage32F(desc.normalPath, 4);
-			float* height = ImageLoader::LoadImage32F(desc.heightPath, 1);
-			ImageUtil::CopyChannel<float>(height, normal, texelCount, 1, 4, 0, 3);
-			ImageLoader::FreeImage(height);
+			float* normal = LoadImage32F(desc.normalSource, 4);
+			if (heightPresent)
+			{
+				float* height = LoadImage32F(desc.heightSource, 1);
+				ImageUtil::CopyChannel<float>(height, normal, texelCount, 1, 4, 0, 3);
+				ImageLoader::FreeImage(height);
+			}
 			compDesc.image = normal;
 			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_16F;
 			break;
 		}
 		case ImageBitDepth::ThirtyTwoBit:
 		{
-			float* normal = ImageLoader::LoadImage32F(desc.normalPath, 4);
-			float* height = ImageLoader::LoadImage32F(desc.heightPath, 1);
-			ImageUtil::CopyChannel<float>(height, normal, texelCount, 1, 4, 0, 3);
-			ImageLoader::FreeImage(height);
+			float* normal = LoadImage32F(desc.normalSource, 4);
+			if (heightPresent)
+			{
+				float* height = LoadImage32F(desc.heightSource, 1);
+				ImageUtil::CopyChannel<float>(height, normal, texelCount, 1, 4, 0, 3);
+				ImageLoader::FreeImage(height);
+			}
 			compDesc.image = normal;
 			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_32F;
 			break;
@@ -166,13 +237,12 @@ namespace tyr
 		}
 
 		char outputPath[TYR_MAX_PATH_TOTAL_SIZE];
-		snprintf(outputPath, sizeof(outputPath), "%s/%s%s%s", desc.outputFolderPath, desc.materialName, "_NormalHeight", c_TextureFileExtension);
+		snprintf(outputPath, sizeof(outputPath), "%s/%s%s%s", desc.outputFolderPath, desc.materialName, "_NormalHeight", AssetConstants::c_TextureFileExtension);
 
-		compDesc.assetID = AssetUtil::CreateAssetID();
 		compDesc.width = normalInfo.width;
 		compDesc.height = normalInfo.height;
 		compDesc.outputFormat = ImageCompressionOutputFormat::BC7;
-		compDesc.mipCount = 1;
+		compDesc.mipCount = RenderConstants::c_MaxMips;
 		compDesc.outputFilePath = outputPath;
 		compDesc.isSRGB = desc.isSRGB;
 
@@ -185,14 +255,16 @@ namespace tyr
 			return false;
 		}
 
-		AssetRegistry::Instance().AddAsset(compDesc.assetID, compDesc.outputFilePath, &material.assetID);
+		const AssetID textureID = AssetUtil::CreateAssetID();
 
-		material.textures[MaterialConstants::c_PbrNormalHeightIndex] = compDesc.assetID;
+		AssetRegistry::Instance().AddAsset(textureID, compDesc.outputFilePath, &materialID, 1);
+
+		material.textures[MaterialConstants::c_PbrNormalHeightIndex] = textureID;
 
 		return true;
 	}
 
-	bool MaterialImporter::CreateAORoughnessMetallic(const PbrMaterialImportDesc& desc, MaterialAssetFile& material) const
+	bool MaterialImporter::CreateAORoughnessMetallic(const PbrMaterialImportDesc& desc, AssetID materialID, MaterialAssetFile& material) const
 	{
 		if (desc.aoRoughnessMetallicID != 0)
 		{
@@ -201,101 +273,61 @@ namespace tyr
 		}
 
 		ImageInfo aoInfo;
-		ImageLoader::LoadImageInfo(desc.ambientOcclusionPath, aoInfo);
+		LoadImageInfo(desc.occlusionSource, aoInfo);
 
-		ImageInfo metallicInfo;
-		ImageLoader::LoadImageInfo(desc.metallicPath, metallicInfo);
+		ImageInfo roughnessMetallicInfo;
+		LoadImageInfo(desc.roughnessMetallicSource, roughnessMetallicInfo);
 
-		ImageInfo roughnessInfo;
-
-		uint reqMetallicChannelCount;
-		if (desc.smoothnessInMetallic)
+		if (aoInfo.width != roughnessMetallicInfo.width || aoInfo.height != roughnessMetallicInfo.height)
 		{
-			roughnessInfo = metallicInfo;
-			reqMetallicChannelCount = 4;
-		}
-		else
-		{
-			ImageLoader::LoadImageInfo(desc.roughnessPath, roughnessInfo);
-			reqMetallicChannelCount = 1;
-		}
-
-		if (aoInfo.width != roughnessInfo.width || aoInfo.height != roughnessInfo.height || aoInfo.width != metallicInfo.width || aoInfo.height != metallicInfo.height)
-		{
-			TYR_LOG_ERROR("The dimensions of the ambient occlusion, roughness and metallic textures do not match for the PBR material %s.", desc.materialName);
+			TYR_LOG_ERROR("The dimensions of the occlusion and roughnessMetallic texture does not match for the PBR material %s.", desc.materialName);
 			return false;
 		}
 
-		if (metallicInfo.channelCount < reqMetallicChannelCount)
+		const uint minReqRoughnessMetallicChannelCount = 3;
+		if (roughnessMetallicInfo.channelCount < minReqRoughnessMetallicChannelCount)
 		{
-			TYR_LOG_ERROR("The channel count of the metallic texture is less than required %ud for the PBR material %s.", reqMetallicChannelCount, desc.materialName);
+			TYR_LOG_ERROR("The channel count of the metallic texture is less than required %ud for the PBR material %s.", minReqRoughnessMetallicChannelCount, desc.materialName);
 			return false;
 		}
 
 		// Use the highest bit depth of any of the textures
 		const ImageBitDepth bitDepth = static_cast<ImageBitDepth>(std::max(std::max(static_cast<uint8>(aoInfo.bitDepth),
-			static_cast<uint8>(roughnessInfo.bitDepth)), static_cast<uint8>(metallicInfo.bitDepth)));
+			static_cast<uint8>(roughnessMetallicInfo.bitDepth)), static_cast<uint8>(roughnessMetallicInfo.bitDepth)));
 
 		Image2DCompressionDesc compDesc;
 
-		const uint texelCount = aoInfo.width * aoInfo.height;
+		const uint texelCount = roughnessMetallicInfo.width * roughnessMetallicInfo.height;
 		if (bitDepth == ImageBitDepth::EightBit)
 		{
-			uint8* ao = ImageLoader::LoadImage8U(desc.ambientOcclusionPath, 4);
-			uint8* metallic = ImageLoader::LoadImage8U(desc.metallicPath, reqMetallicChannelCount);
-			ImageUtil::CopyChannel<uint8>(metallic, ao, texelCount, reqMetallicChannelCount, 4, 0, 2);
+			uint8* roughnessMetallic = LoadImage8U(desc.roughnessMetallicSource, 4);
+			uint8* ao = LoadImage8U(desc.occlusionSource, 1);
+			// Write ao to channel 0 of combined texture
+			ImageUtil::CopyChannel<uint8>(ao, roughnessMetallic, texelCount, 1, 4, 0, 0);
 
-			// If smoothness is in metallic (Unity material), then there's no roughess texture
-			if (desc.smoothnessInMetallic)
-			{
-				// Invert to convert smoothness to roughness
-				ImageUtil::InvertChannel(metallic, texelCount, reqMetallicChannelCount, 3, desc.isSRGB);
-				ImageUtil::CopyChannel<uint8>(metallic, ao, texelCount, reqMetallicChannelCount, 4, 3, 2);
-			}
-			else
-			{
-				uint8* roughness = ImageLoader::LoadImage8U(desc.roughnessPath, 1);
-				ImageUtil::CopyChannel<uint8>(roughness, ao, texelCount, 1, 4, 0, 1);
-				ImageLoader::FreeImage(roughness);
-			}
-
-			ImageLoader::FreeImage(metallic);
-			compDesc.image = ao;
+			ImageLoader::FreeImage(ao);
+			compDesc.image = roughnessMetallic;
 			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_8U;
 		}
 		else
 		{
-			float* ao = ImageLoader::LoadImage32F(desc.ambientOcclusionPath, 4);
-			float* metallic = ImageLoader::LoadImage32F(desc.metallicPath, reqMetallicChannelCount);
-			ImageUtil::CopyChannel<float>(metallic, ao, texelCount, reqMetallicChannelCount, 4, 0, 2);
+			float* roughnessMetallic = LoadImage32F(desc.roughnessMetallicSource, 4);
+			float* ao = LoadImage32F(desc.occlusionSource, 1);
+			// Write ao to channel 0 of combined texture
+			ImageUtil::CopyChannel<float>(ao, roughnessMetallic, texelCount, 1, 4, 0, 0);
 
-			// If smoothness is in metallic (Unity material), then there's no roughess texture
-			if (desc.smoothnessInMetallic)
-			{
-				// Invert to convert smoothness to roughness
-				ImageUtil::InvertChannel(metallic, texelCount, reqMetallicChannelCount, 3, desc.isSRGB);
-				ImageUtil::CopyChannel<float>(metallic, ao, texelCount, reqMetallicChannelCount, 4, 3, 2);
-			}
-			else
-			{
-				float* roughness = ImageLoader::LoadImage32F(desc.roughnessPath, 1);
-				ImageUtil::CopyChannel<float>(roughness, ao, texelCount, 1, 4, 0, 1);
-				ImageLoader::FreeImage(roughness);
-			}
-
-			ImageLoader::FreeImage(metallic);
-			compDesc.image = ao;
+			ImageLoader::FreeImage(ao);
+			compDesc.image = roughnessMetallic;
 			compDesc.inputFormat = bitDepth == ImageBitDepth::SixteenBit ? ImageCompressionInputFormat::RGBA_16F : ImageCompressionInputFormat::RGBA_32F;	
 		}
 
 		char outputPath[TYR_MAX_PATH_TOTAL_SIZE];
-		snprintf(outputPath, sizeof(outputPath), "%s/%s%s%s", desc.outputFolderPath, desc.materialName, "_AORoughnessMetallic", c_TextureFileExtension);
+		snprintf(outputPath, sizeof(outputPath), "%s/%s%s%s", desc.outputFolderPath, desc.materialName, "_AORoughnessMetallic", AssetConstants::c_TextureFileExtension);
 
-		compDesc.assetID = AssetUtil::CreateAssetID();
 		compDesc.width = aoInfo.width;
 		compDesc.height = aoInfo.height;
 		compDesc.outputFormat = ImageCompressionOutputFormat::BC7;
-		compDesc.mipCount = 1;
+		compDesc.mipCount = RenderConstants::c_MaxMips;
 		compDesc.outputFilePath = outputPath;
 		compDesc.isSRGB = desc.isSRGB;
 
@@ -308,24 +340,22 @@ namespace tyr
 			return false;
 		}
 
-		AssetRegistry::Instance().AddAsset(compDesc.assetID, compDesc.outputFilePath, &material.assetID);
+		const AssetID textureID = AssetUtil::CreateAssetID();
 
-		material.textures[MaterialConstants::c_PbrAoRoughnessMetallicIndex] = compDesc.assetID;
+		AssetRegistry::Instance().AddAsset(textureID, compDesc.outputFilePath, &materialID, 1);
+
+		material.textures[MaterialConstants::c_PbrAoRoughnessMetallicIndex] = textureID;
 
 		return true;
 	}
 
-	bool MaterialImporter::CreateMaterialAssetInfo(const char* outputFolderPath, const char* materialName, MaterialAssetFile& material) const
+	bool MaterialImporter::CreateMaterialAssetInfo(const char* outputFolderPath, const char* materialPath, MaterialAssetFile& material) const
 	{
-		// Relative to the asset directory
-		char materialPath[PathConstants::c_MaxAssetPathTotalSize];
-		snprintf(materialPath, sizeof(materialPath), "%s/%s%s", outputFolderPath, materialName, c_MaterialFileExtension);
-
 		char absMaterialFolderPath[TYR_MAX_PATH_TOTAL_SIZE];
 		AssetUtil::CreateFullPath(absMaterialFolderPath, outputFolderPath);
 
 		bool exists;
-		const int refCount = AssetRegistry::Instance().GetAssetRefCount(materialPath);
+		const int refCount = AssetRegistry::Instance().GetAssetReferenceCount(materialPath);
 
 		if (refCount > 0)
 		{
@@ -359,9 +389,6 @@ namespace tyr
 			}
 		}
 
-		material.assetID = AssetUtil::CreateAssetID();
-		AssetRegistry::Instance().AddAsset(material.assetID, materialPath);
-
 		return true;
 	}
 
@@ -370,15 +397,22 @@ namespace tyr
 		MaterialAssetFile material;
 		material.type = MaterialType::PBR;
 
-		if (!CreateMaterialAssetInfo(desc.outputFolderPath, desc.materialName, material))
+		char materialPath[PathConstants::c_MaxAssetPathTotalSize];
+		snprintf(materialPath, sizeof(materialPath), "%s/%s%s", desc.outputFolderPath, desc.materialName, AssetConstants::c_MaterialFileExtension);
+
+		const AssetID materialID = AssetUtil::CreateAssetID();
+
+		if (!CreateMaterialAssetInfo(desc.outputFolderPath, materialPath, material))
 		{
 			return false;
 		}
 
-		if (!CreateAlbedo(desc, material) || !CreateNormalHeight(desc, material) || !CreateAORoughnessMetallic(desc, material))
+		if (!CreateAlbedo(desc, materialID, material) || !CreateNormalHeight(desc, materialID, material) || !CreateAORoughnessMetallic(desc, materialID, material))
 		{
 			return false;
 		}
+
+		AssetRegistry::Instance().AddAsset(materialID, materialPath, material.textures.Data(), material.textures.Size());
 
 		return SerializeMaterial(desc, material);
 	}
@@ -386,7 +420,7 @@ namespace tyr
 	bool MaterialImporter::SerializeMaterial(const PbrMaterialImportDesc& desc, const MaterialAssetFile& material) const
 	{
 		char materialPath[PathConstants::c_MaxAssetPathTotalSize];
-		snprintf(materialPath, sizeof(materialPath), "%s/%s%s", desc.outputFolderPath, desc.materialName, c_MaterialFileExtension);
+		snprintf(materialPath, sizeof(materialPath), "%s/%s%s", desc.outputFolderPath, desc.materialName, AssetConstants::c_MaterialFileExtension);
 
 		AssetUtil::SaveAsset<MaterialAssetFile>(materialPath, material);
 

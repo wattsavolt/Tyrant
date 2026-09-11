@@ -2,83 +2,92 @@
 
 #include "Base/Base.h"
 #include "Containers/LocalArray.h"
+#include "PoolAssert.h"
 
 namespace tyr
 {
     // Local object pool that stores a C-style array of objects.
-    template<class T, uint N, bool ClearOnFree = true>
+    template<class T, uint N, bool ReconstructOnFree = true>
     class LocalObjectPool final
     {
     public:
         LocalObjectPool() = default;
-       
+
         ~LocalObjectPool()
         {
             TYR_ASSERT(m_ObjectCount == 0);
         }
 
-        T* Create(uint& index)
+        bool IsValid(Handle h) const
+        {
+            return h.index < m_Pos && m_Generations[h.index] == h.generation;
+        }
+
+        Handle Create()
         {
             TYR_ASSERT(m_ObjectCount < N);
-            if (!m_FreeSpaces.IsEmpty()) 
+
+            uint index;
+            if (!m_FreeSpaces.IsEmpty())
             {
                 index = m_FreeSpaces.Back();
                 m_FreeSpaces.PopBack();
             }
-            else 
+            else
             {
                 index = m_Pos++;
             }
+
             m_ObjectCount++;
-            return &m_Pool[index];
+
+            return Handle{ index, m_Generations[index] };
         }
 
-        uint GetIndex(const T* object) const
+        void Delete(Handle h)
         {
-            TYR_ASSERT(object != nullptr && m_ObjectCount > 0);
-            return object - m_Pool;
-        }
+            TYR_ASSERT(IsValid(h));
 
-        const T* GetObject(uint index) const
-        {
-            return &m_Pool[index];
-        }
+            const uint index = h.index;
 
-        T* GetObject(uint index)
-        {
-            return &m_Pool[index];
-        }
-
-        const T& GetObjectRef(uint index) const
-        {
-            return m_Pool[index];
-        }
-
-        T& GetObjectRef(uint index)
-        {
-            return m_Pool[index];
-        }
-
-        void Delete(T* object)
-        {
-            TYR_ASSERT(object != nullptr && m_ObjectCount > 0);
-            const uint16 index = object - m_Pool;
+            m_Generations[index]++;
             m_FreeSpaces.Add(index);
             m_ObjectCount--;
-            if constexpr (ClearOnFree) 
+
+            if constexpr (ReconstructOnFree)
             {
-                *object = {};
+                m_Pool[index] = {};
             }
         }
 
-        void Delete(uint index)
+        T& operator[](Handle h)
         {
-            Delete(&m_Pool[index]);
+            TYR_POOL_VALIDATION_ASSERT(IsValid(h));
+            return m_Pool[h.index];
         }
 
+        const T& operator[](Handle h) const
+        {
+            TYR_POOL_VALIDATION_ASSERT(IsValid(h));
+            return m_Pool[h.index];
+        }
+
+        T& operator[](uint index)
+        {
+            return m_Pool[index];
+        }
+
+        const T& operator[](uint index) const
+        {
+            return m_Pool[index];
+        }
+
+        bool IsEmpty() const { return m_ObjectCount == 0; }
+
     private:
-        T m_Pool[N];
+        T m_Pool[N]{};
+        uint m_Generations[N]{};
         LocalArray<uint, N> m_FreeSpaces;
+
         uint m_Pos = 0;
         uint m_ObjectCount = 0;
     };

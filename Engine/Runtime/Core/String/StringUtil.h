@@ -4,7 +4,7 @@
 
 namespace tyr
 {
-	class TYR_CORE_EXPORT StringUtil 
+	class TYR_CORE_API StringUtil 
 	{
 	public:
 		template<typename ... Args>

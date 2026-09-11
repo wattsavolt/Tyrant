@@ -21,17 +21,17 @@ namespace tyr
 		delete m_InputManager;
 	}
 
-	void InputModule::InitializeModule()
+	void InputModule::Initialize()
 	{
 		m_InputManager->Initialize();
 	}
 
-	void InputModule::UpdateModule(float deltaTime)
+	void InputModule::Update(float deltaTime)
 	{
 		
 	}
 
-	void InputModule::ShutdownModule()
+	void InputModule::Shutdown()
 	{
 		m_InputManager->Shutdown();
 	}

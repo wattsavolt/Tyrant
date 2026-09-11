@@ -1,9 +1,11 @@
 #pragma once
 
 #include "Base/Base.h"
-#include "Callable.h"
+#include "Function/Function.h"
 #include "Containers/Containers.h"
-#include <memory>
+#include "Memory/PoolHandle.h"
+#include "Threading/ThreadTypes.h"
+#include "TaskID.h"
 
 namespace tyr
 {
@@ -15,18 +17,18 @@ namespace tyr
         Finished
     };
 
-    using TaskID = uint;
+    using TaskFunction = Function<void()>;
 
     class Task final
     {
     public:
         static constexpr uint16 c_MaxDependents = 8;
 
-        Task(Callable&& callable);
+        Task(TaskFunction&& fn);
 
         Task();
 
-        void SetCallable(Callable&& callable);
+        void SetFunction(TaskFunction&& fn);
 
         bool IsActive() const
         {
@@ -37,27 +39,9 @@ namespace tyr
         friend class PooledThread;
         void Run();
 
-        Callable m_Callable;
+        TaskFunction m_Function;
         Atomic<uint> m_DependencyCount;
         Atomic<TaskState> m_State;
         LocalArray<TaskID, c_MaxDependents> m_Dependents;
-    };
-   
-    class TaskScheduler final
-    {
-    public:
-        TaskScheduler();
-        ~TaskScheduler();
-
-        TaskID CreateTask(Callable&& callable); 
-
-        void AddDependency(TaskID task, TaskID dependency);
-
-        void Enqueue(TaskID task);
-
-        TaskID CreateAndEnqueueTask(Callable&& callable);
-
-    private:
-
     };
 }

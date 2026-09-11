@@ -16,17 +16,17 @@ namespace tyr
 		
 	}
 
-	void WorldModule::InitializeModule()
+	void WorldModule::Initialize()
 	{
 		m_WorldManager = new WorldManager();
 	}
 
-	void WorldModule::UpdateModule(float deltaTime)
+	void WorldModule::Update(float deltaTime)
 	{
 		m_WorldManager->Update(deltaTime);
 	}
 
-	void WorldModule::ShutdownModule()
+	void WorldModule::Shutdown()
 	{
 		delete m_WorldManager;
 	}

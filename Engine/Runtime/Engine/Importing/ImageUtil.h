@@ -1,7 +1,8 @@
 #pragma once
 
 #include <Base/Base.h>
-#include "Resources/Texture.h"
+#include "RenderResource/Texture.h"
+#include "RenderResource/TextureUtil.h"
 
 namespace tyr
 {

@@ -5,6 +5,7 @@
 #include "Math/Matrix4.h"
 #include "EngineMacros.h"
 #include "Rendering/Scene.h"
+#include "AssetSystem/AssetID.h"
 
 namespace tyr
 {
@@ -14,23 +15,26 @@ namespace tyr
 	{
 		Name name;
 		// TODO : Add window index later if required
-		SceneViewArea viewArea;
+		ViewArea viewArea;
 		// The world is provided the camera (will be a component later) but its dimensions will be updated by the world manager when the window resizes
 		Camera* camera = nullptr;
 	};
 
+	class Device;
+	class RendererAPI;
+	class RenderRegistry;
 	/// A class that represents a world / scene in an app.
-	class TYR_ENGINE_EXPORT World final
+	class TYR_ENGINE_API World final
 	{
 	public:
 		World();
 		~World();
 
-		void Initialize(const WorldConfig& config, uint8 sceneIndex);
+		void Initialize(const WorldConfig& config);
 
 		void Shutdown();
 
-		void Update(float deltaTime, SceneFrame& sceneFrame);
+		void Update(float deltaTime);
 
 		const char* GetName() const { return m_Name.CStr(); }
 
@@ -38,9 +42,9 @@ namespace tyr
 
 		void SetCamera(Camera* camera);
 
-		const SceneViewArea& GetViewArea() const { return m_ViewArea; }
+		const ViewArea& GetViewArea() const { return m_ViewArea; }
 
-		SceneViewArea& GetViewArea() { return m_ViewArea; }
+		ViewArea& GetViewArea() { return m_ViewArea; }
 
 		uint8 GetSceneIndex() const { return m_SceneIndex; }
 
@@ -57,7 +61,9 @@ namespace tyr
 
 		Name m_Name;
 		Camera* m_Camera;
-		SceneViewArea m_ViewArea;
+		Device* m_Device;
+		RendererAPI* m_RendererAPI;
+		ViewArea m_ViewArea;
 		uint m_SceneIndex;
 		bool m_Active;
 		bool m_Visible;

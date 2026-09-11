@@ -5,7 +5,7 @@ namespace tyr
 {
 	TYR_THREADLOCAL ScratchAllocator* FrameAllocator::s_Allocator = nullptr;
 
-	void FrameAllocator::Create(uint blockSize)
+	void FrameAllocator::Create(size_t blockSize)
 	{
 		if (s_Allocator != nullptr)
 		{
@@ -15,18 +15,18 @@ namespace tyr
 		s_Allocator = new ScratchAllocator(blockSize);
 	}
 
-	uint8* FrameAllocator::Alloc(uint amount)
+	uint8* FrameAllocator::Alloc(size_t size)
 	{
 		TYR_ASSERT(s_Allocator != nullptr);
 
-		return s_Allocator->Alloc(amount);
+		return s_Allocator->Alloc(size);
 	}
 
-	uint8* FrameAllocator::AllocAligned(uint amount, uint alignment)
+	uint8* FrameAllocator::AllocAligned(size_t size, size_t alignment)
 	{
 		TYR_ASSERT(s_Allocator != nullptr);
 
-		return s_Allocator->AllocAligned(amount, alignment);
+		return s_Allocator->AllocAligned(size, alignment);
 	}
 
 	void FrameAllocator::Reset()

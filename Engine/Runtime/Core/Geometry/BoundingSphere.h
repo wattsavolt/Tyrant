@@ -9,7 +9,7 @@ namespace tyr
 	class Plane;
 
 	/// A bounding sphere represented by a centre and radius 
-	class TYR_CORE_EXPORT BoundingSphere
+	class TYR_CORE_API BoundingSphere
 	{
 	public:
 		BoundingSphere() = default;

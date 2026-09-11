@@ -22,3 +22,7 @@
 
 # AppStudio Intermediate File
 *.aps
+
+# Claude Code
+.claude/
+

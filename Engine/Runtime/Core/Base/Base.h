@@ -3,11 +3,14 @@
 #include "CoreMacros.h"
 #include "Primitives.h"
 #include "INonCopyable.h"
+#include "TypeUtils.h"
 
 #include <filesystem>
 #include <optional>
 
 #include <initializer_list>
+
+#include <algorithm>
 
 // C limits
 #include <float.h>
@@ -78,8 +81,7 @@ extern "C" {
 
 namespace tyr
 {
-    typedef void* Handle;
-    typedef Handle FileHandle;
+    typedef void* FileHandle;
 
     template <typename T>
     using Optional = std::optional<T>;

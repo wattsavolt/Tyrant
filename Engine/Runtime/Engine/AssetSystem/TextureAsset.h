@@ -2,16 +2,14 @@
 
 #include "EngineMacros.h"
 #include "Core.h"
-#include "Resources/Texture.h"
+#include "RenderResource/TextureDesc.h"
+#include "AssetSystem/AssetID.h"
 
 namespace tyr
 {
-	static constexpr const char* c_TextureFileExtension = ".tex";
-
-	struct TextureMetadata
+	struct TextureHeader
 	{
-		AssetID assetID;
 		TextureInfo info;
-		uint dataSize;
+		size_t dataSize;
 	};
 }

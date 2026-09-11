@@ -22,7 +22,7 @@ namespace tyr
 		m_Handle = Platform::OpenOrCreateFile(filePath, access, creationMode);
 		m_Size = Platform::GetSizeOfFile(m_Handle);
 
-		// Opening exisitng file to write will set the pointer at the beginning so must be moved to the end.
+		// Opening existing file to write will set the pointer at the beginning so must be moved to the end.
 		if (!overwrite && m_Operation == Operation::Write)
 		{
 			Platform::SetFilePositionToEnd(m_Handle);

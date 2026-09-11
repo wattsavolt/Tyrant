@@ -4,7 +4,7 @@
 #include "VulkanSync.h"
 #include "VulkanBuffer.h"
 #include "VulkanImage.h"
-#include "VulkanDescriptorSetGroup.h"
+#include "VulkanDescriptorSet.h"
 #include "VulkanPipeline.h"
 #include "VulkanExtensions.h"
 
@@ -15,8 +15,8 @@ namespace tyr
 		, m_Device(device)
 	{
 		m_CommandPool = static_cast<VulkanCommandAllocator*>(desc.allocator)->GetCommandPool();
-		m_QueueType = m_Desc.allocator->GetDesc().queueType;
-		m_QueueFamilyIndex = device.GetQueueFamilyIndex(m_QueueType);
+		const CommandQueueType queueType = m_Desc.allocator->GetDesc().queueType;
+		m_QueueFamilyIndex = device.GetQueueFamilyIndex(queueType);
 		VkCommandBufferAllocateInfo info;
 		info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 		info.pNext = nullptr;
@@ -68,7 +68,7 @@ namespace tyr
 		{
 			vkSubresourceRanges[i].aspectMask = static_cast<VkImageAspectFlagBits>(subresourceRanges[i].aspect);
 			vkSubresourceRanges[i].baseMipLevel = subresourceRanges[i].baseMipLevel;
-			vkSubresourceRanges[i].levelCount = subresourceRanges[i].mipLevelCount;
+			vkSubresourceRanges[i].levelCount = subresourceRanges[i].mipCount;
 			vkSubresourceRanges[i].baseArrayLayer = subresourceRanges[i].baseArrayLayer;
 			vkSubresourceRanges[i].layerCount = subresourceRanges[i].arrayLayerCount;
 		}
@@ -86,7 +86,7 @@ namespace tyr
 		{
 			vkSubresourceRanges[i].aspectMask = static_cast<VkImageAspectFlagBits>(subresourceRanges[i].aspect);
 			vkSubresourceRanges[i].baseMipLevel = subresourceRanges[i].baseMipLevel;
-			vkSubresourceRanges[i].levelCount = subresourceRanges[i].mipLevelCount;
+			vkSubresourceRanges[i].levelCount = subresourceRanges[i].mipCount;
 			vkSubresourceRanges[i].baseArrayLayer = subresourceRanges[i].baseArrayLayer;
 			vkSubresourceRanges[i].layerCount = subresourceRanges[i].arrayLayerCount;
 		}
@@ -124,10 +124,9 @@ namespace tyr
 
 		StackAllocManager stack;
 
-		const uint colourAttachmentCount = static_cast<uint>(renderingInfo.colourAttachments.Size());
-		VkRenderingAttachmentInfo* vkColourAttachments = stack.Alloc<VkRenderingAttachmentInfo>(colourAttachmentCount);
+		VkRenderingAttachmentInfo* vkColourAttachments = stack.Alloc<VkRenderingAttachmentInfo>(renderingInfo.colourAttachmentCount);
 
-		for (uint i = 0; i < colourAttachmentCount; ++i)
+		for (uint i = 0; i < renderingInfo.colourAttachmentCount; ++i)
 		{
 			CreateVulkankRenderingAttachmentInfo(renderingInfo.colourAttachments[i], vkColourAttachments[i]);
 		}
@@ -156,7 +155,7 @@ namespace tyr
 		vkRenderingInfo.renderArea.extent.height = renderingInfo.renderArea.extents.height;
 		vkRenderingInfo.layerCount = renderingInfo.layerCount;
 		vkRenderingInfo.viewMask = renderingInfo.viewMask;
-		vkRenderingInfo.colorAttachmentCount = colourAttachmentCount;
+		vkRenderingInfo.colorAttachmentCount = renderingInfo.colourAttachmentCount;
 		vkRenderingInfo.pColorAttachments = vkColourAttachments;
 		vkRenderingInfo.pDepthAttachment = vkDepthAttachment;
 		vkRenderingInfo.pStencilAttachment = vkStencilAttachment;
@@ -209,7 +208,7 @@ namespace tyr
 				vkBufferBarriers[i].srcQueueFamilyIndex = bufferBarriers[i].srcQueueFamilyIndex;
 				if (vkBufferBarriers[i].srcQueueFamilyIndex != VK_QUEUE_FAMILY_IGNORED)
 				{
-					vkBufferBarriers[i].dstQueueFamilyIndex = m_QueueFamilyIndex;
+					vkBufferBarriers[i].dstQueueFamilyIndex = commandList.GetQueueFamilyIndex();
 				}
 				else
 				{
@@ -235,7 +234,7 @@ namespace tyr
 				vkImageBarriers[i].srcQueueFamilyIndex = imageBarriers[i].srcQueueFamilyIndex;
 				if (vkImageBarriers[i].srcQueueFamilyIndex != VK_QUEUE_FAMILY_IGNORED)
 				{
-					vkImageBarriers[i].dstQueueFamilyIndex = m_QueueFamilyIndex;
+					vkImageBarriers[i].dstQueueFamilyIndex = commandList.GetQueueFamilyIndex();
 				}
 				else
 				{
@@ -243,7 +242,7 @@ namespace tyr
 				}
 				vkImageBarriers[i].subresourceRange.aspectMask = static_cast<VkImageAspectFlagBits>(imageBarriers[i].subresourceRange.aspect);
 				vkImageBarriers[i].subresourceRange.baseMipLevel = imageBarriers[i].subresourceRange.baseMipLevel;
-				vkImageBarriers[i].subresourceRange.levelCount = imageBarriers[i].subresourceRange.mipLevelCount;
+				vkImageBarriers[i].subresourceRange.levelCount = imageBarriers[i].subresourceRange.mipCount;
 				vkImageBarriers[i].subresourceRange.baseArrayLayer = imageBarriers[i].subresourceRange.baseArrayLayer;
 				vkImageBarriers[i].subresourceRange.layerCount = imageBarriers[i].subresourceRange.arrayLayerCount;
 				vkImageBarriers[i].oldLayout = VulkanUtility::ToVulkanImageLayout(imageBarriers[i].srcLayout);
@@ -295,7 +294,7 @@ namespace tyr
 		vkCmdCopyBuffer(commandList.m_CommandBuffer, src.buffer, dst.buffer, 1, &vkBufferCopy);
 	}
 
-	void CommandList::CopyBufferToImage(BufferHandle buffer, ImageHandle image, ImageLayout targetLayout, const BufferImageCopyInfo* regions, uint regionCount)
+	void CommandList::CopyBufferToImage(BufferHandle buffer, ImageHandle image, ImageLayout layout, const BufferImageCopyInfo* regions, uint regionCount)
 	{
 		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 		Buffer& src = commandList.m_Device.GetBuffer(buffer);
@@ -313,7 +312,7 @@ namespace tyr
 			copy.imageOffset = { region.imageOffset.x, region.imageOffset.y, region.imageOffset.z };
 			copy.imageExtent = { region.imageExtent.width, region.imageExtent.height, region.imageExtent.depth };
 		}
-		VkImageLayout vkLayout = VulkanUtility::ToVulkanImageLayout(targetLayout);
+		VkImageLayout vkLayout = VulkanUtility::ToVulkanImageLayout(layout);
 		vkCmdCopyBufferToImage(commandList.m_CommandBuffer, src.buffer, dst.image, vkLayout, regionCount, copies);
 		StackFreeLast();
 	}
@@ -486,37 +485,37 @@ namespace tyr
 		vkCmdBindIndexBuffer(m_CommandBuffer, bufferData.buffer, static_cast<VkDeviceSize>(offset), type);
 	}
 
-	void CommandList::BindDescriptorSet(DescriptorSetGroupHandle group, GraphicsPipelineHandle pipeline)
+	void CommandList::BindDescriptorSet(DescriptorSetHandle set, GraphicsPipelineHandle pipeline)
 	{
 		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 
-		const DescriptorSetGroup& groupData = commandList.m_Device.GetDescriptorSetGroup(group);
+		const DescriptorSet& setData = commandList.m_Device.GetDescriptorSet(set);
 		const GraphicsPipeline& pipelineData = commandList.m_Device.GetGraphicsPipeline(pipeline);
 
-		vkCmdBindDescriptorSets(commandList.m_CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineData.pipelineLayout, 0, groupData.layouts.Size(),
-			groupData.sets.Data(), 0, nullptr);
+		vkCmdBindDescriptorSets(commandList.m_CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineData.pipelineLayout, 0, 1,
+			&setData.set, 0, nullptr);
 	}
 
-	void CommandList::BindDescriptorSet(DescriptorSetGroupHandle group, ComputePipelineHandle pipeline)
+	void CommandList::BindDescriptorSet(DescriptorSetHandle set, ComputePipelineHandle pipeline)
 	{
 		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 
-		const DescriptorSetGroup& groupData = commandList.m_Device.GetDescriptorSetGroup(group);
+		const DescriptorSet& setData = commandList.m_Device.GetDescriptorSet(set);
 		const ComputePipeline& pipelineData = commandList.m_Device.GetComputePipeline(pipeline);
 
-		vkCmdBindDescriptorSets(commandList.m_CommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineData.pipelineLayout, 0, groupData.layouts.Size(),
-			groupData.sets.Data(), 0, nullptr);
+		vkCmdBindDescriptorSets(commandList.m_CommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineData.pipelineLayout, 0, 1,
+			&setData.set, 0, nullptr);
 	}
 
-	void CommandList::BindDescriptorSet(DescriptorSetGroupHandle group, RayTracingPipelineHandle pipeline)
+	void CommandList::BindDescriptorSet(DescriptorSetHandle set, RayTracingPipelineHandle pipeline)
 	{
 		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 
-		const DescriptorSetGroup& groupData = commandList.m_Device.GetDescriptorSetGroup(group);
+		const DescriptorSet& setData = commandList.m_Device.GetDescriptorSet(set);
 		const RayTracingPipeline& pipelineData = commandList.m_Device.GetRayTracingPipeline(pipeline);
 
-		vkCmdBindDescriptorSets(commandList.m_CommandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipelineData.pipelineLayout, 0, groupData.layouts.Size(),
-			groupData.sets.Data(), 0, nullptr);
+		vkCmdBindDescriptorSets(commandList.m_CommandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipelineData.pipelineLayout, 0, 1,
+			&setData.set, 0, nullptr);
 	}
 
 	void CommandList::DrawIndexed(uint indexCount, uint instanceCount, uint firstIndex, int vertexOffset, uint firstInstance)
@@ -542,86 +541,5 @@ namespace tyr
 	{
 		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 		vkCmdDispatch(commandList.m_CommandBuffer, groupCountX, groupCountY, groupCountZ);
-	}
-
-	void CommandList::Execute(const CommndListExecuteDesc* executeDescs, uint executeDescCount, uint queueIndex, FenceHandle fence)
-	{
-		TYR_ASSERT(executeDescs && executeDescCount > 0);
-
-		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
-
-		StackAllocManager stack;
-		VkSubmitInfo* submitInfos = stack.Alloc<VkSubmitInfo>(executeDescCount);
-		for (uint i = 0; i < executeDescCount; ++i)
-		{
-			const CommndListExecuteDesc& executeDesc = executeDescs[i];
-			TYR_ASSERT(executeDesc.commandLists.Size() > 0);
-
-			// The command lists should include this one.
-			VkCommandBuffer* commandBuffers = stack.Alloc<VkCommandBuffer>(executeDesc.commandLists.Size());
-			for (size_t j = 0; j < executeDesc.commandLists.Size(); ++j)
-			{
-				const CommandListInternal* cmdList = static_cast<CommandListInternal*>(executeDesc.commandLists[j]);
-				commandBuffers[j] = cmdList->m_CommandBuffer;
-			}
-
-			VkSemaphore* waitSemaphores = nullptr;
-			if (executeDesc.waitSemaphores.Size() > 0)
-			{
-				waitSemaphores = stack.Alloc<VkSemaphore>(executeDesc.waitSemaphores.Size());
-				for (size_t j = 0; j < executeDesc.waitSemaphores.Size(); ++j)
-				{
-					const Semaphore& semaphore = commandList.m_Device.GetSemaphore(executeDesc.waitSemaphores[j]);
-					waitSemaphores[j] = semaphore.semaphore;
-				}
-			}
-
-			VkPipelineStageFlags* waitDstPipelineStages = nullptr;
-			if (executeDesc.waitDstPipelineStages.Size() > 0)
-			{
-				waitDstPipelineStages = stack.Alloc<VkPipelineStageFlags>(executeDesc.waitDstPipelineStages.Size());
-				for (size_t j = 0; j < executeDesc.waitDstPipelineStages.Size(); ++j)
-				{
-					waitDstPipelineStages[j] = static_cast<VkPipelineStageFlags>(executeDesc.waitDstPipelineStages[j]);
-				}
-			}
-
-			VkSemaphore* signalSemaphores = nullptr;
-			if (executeDesc.signalSemaphores.Size() > 0)
-			{
-				signalSemaphores = stack.Alloc<VkSemaphore>(executeDesc.signalSemaphores.Size());
-				for (size_t j = 0; j < executeDesc.signalSemaphores.Size(); ++j)
-				{
-					const Semaphore& semaphore = commandList.m_Device.GetSemaphore(executeDesc.signalSemaphores[j]);
-					signalSemaphores[j] = semaphore.semaphore;
-				}
-			}
-
-			VkTimelineSemaphoreSubmitInfo* timelineSemaphoreSubmitInfo = nullptr;
-			if (!executeDesc.waitValues.IsEmpty() || !executeDesc.signalValues.IsEmpty())
-			{
-				timelineSemaphoreSubmitInfo = stack.Alloc<VkTimelineSemaphoreSubmitInfo>();
-				timelineSemaphoreSubmitInfo->sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
-				timelineSemaphoreSubmitInfo->pNext = nullptr;
-				timelineSemaphoreSubmitInfo->waitSemaphoreValueCount = !executeDesc.waitValues.IsEmpty() ? static_cast<uint>(executeDesc.waitValues.Size()) : 0;
-				timelineSemaphoreSubmitInfo->pWaitSemaphoreValues = !executeDesc.waitValues.IsEmpty() ? executeDesc.waitValues.Data() : nullptr;
-				timelineSemaphoreSubmitInfo->signalSemaphoreValueCount = !executeDesc.signalValues.IsEmpty() ? static_cast<uint>(executeDesc.signalValues.Size()) : 0;
-				timelineSemaphoreSubmitInfo->pSignalSemaphoreValues = !executeDesc.signalValues.IsEmpty() ? executeDesc.signalValues.Data() : nullptr;
-			}
-
-			submitInfos[i].sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-			submitInfos[i].pNext = timelineSemaphoreSubmitInfo;
-			submitInfos[i].waitSemaphoreCount = static_cast<uint>(executeDesc.waitSemaphores.Size());
-			submitInfos[i].pWaitSemaphores = waitSemaphores;
-			submitInfos[i].pWaitDstStageMask = waitDstPipelineStages;
-			submitInfos[i].commandBufferCount = static_cast<uint>(executeDesc.commandLists.Size());
-			submitInfos[i].pCommandBuffers = commandBuffers;
-			submitInfos[i].signalSemaphoreCount = static_cast<uint>(executeDesc.signalSemaphores.Size());
-			submitInfos[i].pSignalSemaphores = signalSemaphores;
-		}
-
-		VkFence vkFence = fence ? commandList.m_Device.GetFence(fence).fence : VK_NULL_HANDLE;
-		VkQueue queue = commandList.m_Device.GetQueue(m_QueueType, queueIndex);
-		TYR_GASSERT(vkQueueSubmit(queue, executeDescCount, submitInfos, vkFence));
 	}
 }

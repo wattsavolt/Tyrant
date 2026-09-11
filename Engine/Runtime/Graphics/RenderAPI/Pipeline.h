@@ -4,17 +4,17 @@
 
 #include "GraphicsBase.h"
 #include "RenderAPITypes.h"
-#include "DescriptorSetGroup.h"
+#include "DescriptorSet.h"
 #include "Geometry/GeometryTypes.h"
 #include "Image.h"
 #include "ShaderModule.h"
 
 namespace tyr
 {
-	using RenderPassHandle = ResourceHandle;
-	struct GraphicsPipelineHandle : public ResourceHandle {};
-	struct ComputePipelineHandle : public ResourceHandle {};
-	struct RayTracingPipelineHandle : public ResourceHandle {};
+	TYR_CREATE_HANDLE_TYPE(RenderPassHandle);
+	TYR_CREATE_HANDLE_TYPE(GraphicsPipelineHandle);
+	TYR_CREATE_HANDLE_TYPE(ComputePipelineHandle);
+	TYR_CREATE_HANDLE_TYPE(RayTracingPipelineHandle);
 
 	struct VertexInputBindingDesc
 	{

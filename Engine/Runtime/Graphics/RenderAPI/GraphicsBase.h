@@ -28,9 +28,9 @@ namespace tyr
 	using GDebugString = LocalString<c_MaxGDebugString>;
 
 #if TYR_FINAL
-#	define TYR_DECLARE_GDEBUGSTRING(name)
+#	define TYR_DECLARE_GDEBUGNAME(name)
 #else
-#	define TYR_DECLARE_GDEBUGSTRING(name) GDebugString name
+#	define TYR_DECLARE_GDEBUGNAME(name) const char* name
 #endif
 
 }

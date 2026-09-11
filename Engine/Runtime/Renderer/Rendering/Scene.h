@@ -3,10 +3,10 @@
 #include "RendererMacros.h"
 #include "Core.h"
 #include "Math/Vector3.h"
-#include "Math/Quaternion.h"
-#include "Math/Matrix4.h"
 #include "RenderAPI/RenderAPITypes.h"
-#include "RenderDataTypes/RenderDataTypes.h"
+#include "Rendering/RenderConstants.h"
+#include "RenderBase/RenderHandles.h"
+#include "RenderTransfer/UploadRequest.h"
 
 namespace tyr
 {
@@ -23,61 +23,60 @@ namespace tyr
 
 	struct SceneView
 	{
-		SceneViewArea viewArea;
 		SceneCamera camera;
+		// Relative to the scene view area
+		ViewArea viewArea;
+		uint id;
 	};
-
-	constexpr uint c_MaxDirectionalLights = 3;
-	constexpr uint c_MaxPointLights = 20;
-	constexpr uint c_MaxSpotLights = 10;
 
 	struct SceneContent
 	{
-		Array<RigidMeshInstance> rigidMeshInstances;
-		Array<SkeletalMeshInstance> skeletalModelInstances;
-		LocalArray<DirectionalLight, c_MaxDirectionalLights> dirLights;
-		LocalArray<PointLight, c_MaxPointLights> pointLights;
-		LocalArray<SpotLight, c_MaxSpotLights> spotLights;
+		Array<MeshInstanceHandle> meshInstances;
+		Array<SkeletalMeshInstanceHandle> skeletalMeshInstances;
+		Array<DirLightHandle> dirLights;
+		Array<PointLightHandle> pointLights;
+		Array<SpotLightHandle> spotLights;
+	
+		SceneContent()
+		{
+			meshInstances.Reserve(RenderConstants::c_MaxMeshInstances);
+			skeletalMeshInstances.Reserve(RenderConstants::c_MaxSkeletalMeshInstances);
+			dirLights.Reserve(RenderConstants::c_MaxDirLights);
+			pointLights.Reserve(RenderConstants::c_MaxPointLights);
+			spotLights.Reserve(RenderConstants::c_MaxSpotLights);
+		}
 
 		void Clear()
 		{
-			rigidMeshInstances.Clear();
-			skeletalModelInstances.Clear();
+			meshInstances.Clear();
+			skeletalMeshInstances.Clear();
 			dirLights.Clear();
 			pointLights.Clear();
 			spotLights.Clear();
 		}
 	};
 
+	// Note: There can be multiple scenes but only one scene will be rendered at a time
 	struct Scene
 	{
-#if TYR_EDITOR
-		static constexpr uint8 c_MaxScenes = 4;
-#else
-		static constexpr uint8 c_MaxScenes = 1;
-#endif
-		uint8 id;
-		bool active;
-		bool visible;
-		const char* name;
-		SceneView view;
+		const char* name{};
+		RenderWindowHandle windowHandle{};
+		uint id;
+		bool inUse = false;
+		Array<BufferUploadRequest> frameUploadRequests;
+		LocalArray<SceneView, RenderConstants::c_MaxViewsPerScene> views;
 		SceneContent content;
 
-		void Clear()
+		Scene()
 		{
-			content.Clear();
+			frameUploadRequests.Reserve(128);
 		}
-	};
-
-	struct SceneFrame
-	{
-		bool visible = true;
-		SceneView view;
-		// TODO : Add scene updates
 
 		void Clear()
 		{
-
+			frameUploadRequests.Clear();
+			views.Clear();
+			content.Clear();
 		}
 	};
 }

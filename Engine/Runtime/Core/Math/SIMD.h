@@ -19,7 +19,9 @@ namespace tyr
     using RegI = __m256i;   // Integer SIMD register (8 x int32)
     using Reg = __m256;     // Float SIMD register (8 x float)
     using RegD = __m256d;   // Double SIMD register (4 x double)
-
+    using Reg128I = __m128i;   // Integer SIMD register (4 x int32)
+    using Reg128 = __m128;     // Float SIMD register (4 x float)
+    using Reg128D = __m128d;   // Double SIMD register (2 x double)
 #endif
 
     class SIMD
@@ -161,6 +163,17 @@ namespace tyr
         {
             return _mm256_sqrt_pd(a);
         }
+
+        static inline Reg128I FloatToHalf(Reg f)
+        {
+            return _mm256_cvtps_ph(f, 0); // F16C intrinsic, returns 128-bit packed half
+        }
+
+        static inline uint ExtractLowI(Reg128I v)
+        {
+            return static_cast<uint>(_mm_cvtsi128_si32(v));
+        }
+
     };
 #endif
 } 

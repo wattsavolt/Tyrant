@@ -1,7 +1,6 @@
 /// Copyright (c) 2023 Aidan Clear 
 
 #include "App.h"
-#include "Engine.h"
 #include "World/World.h"
 
 using namespace tyr;
@@ -26,7 +25,7 @@ App::~App()
 
 void App::Initialize()
 {
-	m_Engine = Engine::Instance();
+	
 }
 
 void App::Update(float deltaTime)
@@ -36,5 +35,12 @@ void App::Update(float deltaTime)
 
 void App::Shutdown()
 {
-	m_Engine = nullptr;
+
+}
+
+bool App::WantsExit() const
+{
+#if TYR_EDITOR
+	return false;
+#endif
 }

@@ -4,6 +4,7 @@
 #include "AssetSystem/TextureAsset.h"
 #include "AssetSystem/AssetUtil.h"
 #include "ImageUtil.h"
+#include "Rendering/RenderConstants.h"
 
 namespace tyr
 {
@@ -13,7 +14,7 @@ namespace tyr
         return buffer;
     }
 
-    // Custom MemoryOutputHandler uses the thread-local static buffer
+    // Custom MemoryOutputHandler uses the thread-local static buffer. Data is not gpu ready
     class MemoryOutputHandler : public nvtt::OutputHandler
     {
     public:
@@ -42,6 +43,117 @@ namespace tyr
 
     private:
         Array<uint8>* m_Data = nullptr;
+    };
+
+    // Important Note: Good enough for textures up to 16K × 16K megatextures but if bigger textures than this are needed, endImage should be changed to write the current data to a file
+    // to save RAM and Array has capacity limit of UINT2_MAX
+    class GpuReadyMemoryOutputHandler : public nvtt::OutputHandler
+    {
+    public:
+        static constexpr uint c_MaxRowAlignment = RenderConstants::c_RowPitchAlignment;
+
+        GpuReadyMemoryOutputHandler(uint blockSize = 16, uint rowAlignment = RenderConstants::c_RowPitchAlignment, uint mipAlignment = RenderConstants::c_UploadAlignment)
+            : m_BlockSize(blockSize)
+            , m_RowAlignment(rowAlignment)
+            , m_MipAlignment(mipAlignment)
+            , m_BlockRows(0)
+            , m_RowBytes(0)
+            , m_AlignedRowBytes(0)
+            , m_CurrentOffset(0)
+            , m_MipOffset(0)
+            , m_WriteIndex(0)
+            , m_RowCursor(0)
+            , m_CurrentRow(0)
+        {
+            m_Data = &GetThreadLocalBuffer();
+            m_Data->Clear();
+        }
+
+        void beginImage(int /*size*/, int width, int height, int /*depth*/, int /*face*/, int /*miplevel*/) override
+        {
+            const uint blocksX = (width + 3) / 4;
+            m_BlockRows = (height + 3) / 4;
+
+            m_RowBytes = blocksX * m_BlockSize;
+            m_AlignedRowBytes = MemoryUtil::Align(m_RowBytes, m_RowAlignment);
+
+            m_MipOffset = MemoryUtil::Align<size_t>(m_CurrentOffset, m_MipAlignment);
+
+            const uint mipSize = m_AlignedRowBytes * m_BlockRows;
+
+            m_Data->Reserve(m_MipOffset + mipSize);
+
+            m_WriteIndex = m_MipOffset;
+            m_RowCursor = 0;
+            m_CurrentRow = 0;
+        }
+
+        bool writeData(const void* data, int size) override
+        {
+            const uint8* src = reinterpret_cast<const uint8*>(data);
+            uint remaining = size;
+
+            uint8 pad[c_MaxRowAlignment] = {};
+
+            while (remaining > 0)
+            {
+                const uint spaceInRow = m_RowBytes - m_RowCursor;
+                const uint toCopy = std::min(spaceInRow, remaining);
+
+                m_Data->Insert((uint)m_WriteIndex, src, toCopy);
+
+                src += toCopy;
+                remaining -= toCopy;
+
+                m_WriteIndex += toCopy;
+                m_RowCursor += toCopy;
+
+                if (m_RowCursor == m_RowBytes)
+                {
+                    // Pad row
+                    const uint padBytes = m_AlignedRowBytes - m_RowBytes;
+                    if (padBytes > 0)
+                    {
+                        m_Data->Insert((uint)m_WriteIndex, pad, padBytes);
+                        m_WriteIndex += padBytes;
+                    }
+
+                    m_RowCursor = 0;
+                    ++m_CurrentRow;
+
+                    if (m_CurrentRow == m_BlockRows)
+                        break;
+                }
+            }
+
+            return true;
+        }
+
+        void endImage() override
+        {
+            m_CurrentOffset = m_WriteIndex;
+        }
+
+        const void* getData() const { return m_Data->Data(); }
+        size_t getDataSize() const { return m_CurrentOffset; }
+
+    private:
+        Array<uint8>* m_Data = nullptr;
+
+        uint m_BlockSize;
+        uint m_RowAlignment;
+        uint m_MipAlignment;
+
+        uint m_BlockRows;
+        uint m_RowBytes;
+        uint m_AlignedRowBytes;
+
+        size_t m_CurrentOffset;
+        size_t m_MipOffset;
+        size_t m_WriteIndex;
+
+        uint m_RowCursor;
+        uint m_CurrentRow;
     };
 
     nvtt::InputFormat ToNvttInputFormat(ImageCompressionInputFormat format)
@@ -80,19 +192,19 @@ namespace tyr
         return PF_BC3_SRGB;
     }
 
-    static void SerializeCompressedImage(const AssetID& assetID, const TextureInfo& textureInfo, const char* filePath)
+    static void SerializeCompressedImage(const TextureInfo& textureInfo, const char* filePath)
     {
-        TextureMetadata metadata;
-        metadata.assetID = assetID;
-        metadata.info = textureInfo;
-
+        TextureHeader metadata;
+  
         const Array<uint8>& buffer = GetThreadLocalBuffer();
         metadata.dataSize = buffer.Size();
+
+        metadata.info = textureInfo;
 
         char absFilePath[TYR_MAX_PATH_TOTAL_SIZE];
         AssetUtil::CreateFullPath(absFilePath, filePath);
 
-        Serializer::Instance().SerializeToFile<TextureMetadata>(absFilePath, metadata);
+        Serializer::Instance().SerializeToFile<TextureHeader>(absFilePath, metadata);
         FileStream::WriteFile(absFilePath, buffer.Data(), metadata.dataSize, false);
     }
 
@@ -124,7 +236,7 @@ namespace tyr
 
         compressionOptions.setFormat(ToNvttOutputFormat(desc.outputFormat));
 
-        MemoryOutputHandler outputHandler;
+        GpuReadyMemoryOutputHandler outputHandler;
         outputOptions.setOutputHandler(&outputHandler);
 
         for (uint8 mip = 0; mip < desc.mipCount; ++mip)
@@ -148,11 +260,11 @@ namespace tyr
         textureInfo.width = desc.width;
         textureInfo.height = desc.height;
         textureInfo.depth = 1;
-        textureInfo.mipLevelCount = desc.mipCount;
+        textureInfo.mipCount = desc.mipCount;
         textureInfo.type = ImageType::Image2D;
         textureInfo.format = ToOutputPixelFormat(desc.outputFormat, desc.isSRGB);
 
-        SerializeCompressedImage(desc.assetID, textureInfo, desc.outputFilePath);
+        SerializeCompressedImage(textureInfo, desc.outputFilePath);
 
         return true;
     }
@@ -171,7 +283,7 @@ namespace tyr
 
         outputOptions.setOutputHeader(false);
 
-        MemoryOutputHandler outputHandler;
+        GpuReadyMemoryOutputHandler outputHandler;
         outputOptions.setOutputHandler(&outputHandler);
 
         compressionOptions.setFormat(ToNvttOutputFormat(desc.outputFormat));
@@ -186,11 +298,11 @@ namespace tyr
         textureInfo.width = surface.width();
         textureInfo.height = surface.height();
         textureInfo.depth = 1;
-        textureInfo.mipLevelCount = 1;
+        textureInfo.mipCount = 1;
         textureInfo.type = ImageType::Cubemap;
         textureInfo.format = ToOutputPixelFormat(desc.outputFormat, desc.isSRGB);
 
-        SerializeCompressedImage(desc.assetID, textureInfo, desc.outputFilePath);
+        SerializeCompressedImage(textureInfo, desc.outputFilePath);
 
         return true;
     }

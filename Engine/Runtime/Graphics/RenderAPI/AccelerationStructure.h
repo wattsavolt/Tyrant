@@ -6,9 +6,8 @@
 
 namespace tyr
 {
+	TYR_CREATE_HANDLE_TYPE(AccelerationStructureHandle);
 	
-	using AccelerationStructureHandle = ResourceHandle;
-
 	// TODO: Implement
 	struct AccelerationStructureDesc
 	{

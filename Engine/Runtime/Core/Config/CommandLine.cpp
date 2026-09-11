@@ -8,7 +8,7 @@ namespace tyr
 	CommandLine::CommandLine(const char* filePath)
 		: m_Map(c_MaxEntries)
 	{
-		
+		// TODO Implement support for loading .ini
 	}
 
 	const CommandLine::Value& CommandLine::GetValue(const char* name) const

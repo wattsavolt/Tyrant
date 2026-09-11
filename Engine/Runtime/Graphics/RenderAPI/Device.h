@@ -5,15 +5,17 @@
 #include "RenderAPI/Buffer.h"
 #include "RenderAPI/Image.h"
 #include "RenderAPI/AccelerationStructure.h"
-#include "RenderAPI/DescriptorSetGroup.h"
+#include "RenderAPI/DescriptorSet.h"
 #include "RenderAPI/ShaderModule.h"
 #include "RenderAPI/Sync.h"
 #include "RenderAPI/Pipeline.h"
 
 namespace tyr
 {
+	struct SwapChainDesc;
 	struct CommandAllocatorDesc;
 	struct CommandListDesc;
+	class SwapChain;
 	class CommandAllocator;
 	class CommandList;
 
@@ -23,7 +25,7 @@ namespace tyr
 	};
 
 	/// Class repesenting a logical device 
-	class TYR_GRAPHICS_EXPORT Device
+	class TYR_GRAPHICS_API Device
 	{
 	public:
 		static constexpr uint16 c_MaxBuffers = 20;
@@ -38,7 +40,7 @@ namespace tyr
 		static constexpr uint16 c_MaxAccelerationStructures = 20;
 		static constexpr uint16 c_MaxDescriptorPools = 5;
 		static constexpr uint16 c_MaxDescriptorSetLayouts = 20;
-		static constexpr uint16 c_MaxDescriptorSetGroups = 20;
+		static constexpr uint16 c_MaxDescriptorSets = 20;
 		static constexpr uint16 c_MaxFences = 20;
 		static constexpr uint16 c_MaxSemaphores = 20;
 		static constexpr uint16 c_MaxEvents = 20;
@@ -48,6 +50,7 @@ namespace tyr
 		virtual ~Device();
 		
 		// No virtuals as implementations determined at compile time for faster performance
+		SwapChain* CreateSwapChain(void* windowOSHandle, const SwapChainDesc& desc);
 		CommandAllocator* CreateCommandAllocator(const CommandAllocatorDesc& desc);
 		CommandList* CreateCommandList(const CommandListDesc& desc);
 		BufferHandle CreateBuffer(const BufferDesc& desc);
@@ -74,9 +77,8 @@ namespace tyr
 		void DeleteDescriptorPool(DescriptorPoolHandle handle);
 		DescriptorSetLayoutHandle CreateDescriptorSetLayout(const DescriptorSetLayoutDesc& desc);
 		void DeleteDescriptorSetLayout(DescriptorSetLayoutHandle handle);
-		// Potentially add CreateDescriptorSetGroups function that can batch allocate multiple group sets on vulkan
-		DescriptorSetGroupHandle CreateDescriptorSetGroup(const DescriptorSetGroupDesc& desc);
-		void DeleteDescriptorSetGroup(DescriptorSetGroupHandle handle);
+		DescriptorSetHandle CreateDescriptorSet(const DescriptorSetDesc& desc);
+		void DeleteDescriptorSet(DescriptorSetHandle handle);
 		FenceHandle CreateFence(const FenceDesc& desc);
 		void DeleteFence(FenceHandle handle);
 		// "Resource" is appended to the name of the below four functions to avoid conflict with winapi functions
@@ -91,14 +93,15 @@ namespace tyr
 		size_t GetBufferSize(BufferHandle handle) const;
 		// Gets the size of the allocation made for the buffer (can be bigger than the size)
 		size_t GetBufferAllocationSize(BufferHandle handle) const;
-		uint8* MapBuffer(BufferHandle handle);
+		void* MapBuffer(BufferHandle handle);
 		void UnmapBuffer(BufferHandle handle);
 		void WriteBuffer(BufferHandle handle, const void* data, size_t offset, size_t size);
+		void FlushBufferAllocation(BufferHandle handle, size_t offset, size_t size);
 		void ReadBuffer(BufferHandle handle, void* data, size_t offset, size_t size);
 
 		size_t GetImageAllocationSize(ImageHandle handle);
 
-		void UpdateDescriptorSetGroup(DescriptorSetGroupHandle handle, const BufferBindingUpdate* bufferUpdates, uint bufferUpdateCount, const ImageBindingUpdate* imageUpdates = nullptr,
+		void UpdateDescriptorSet(DescriptorSetHandle handle, const BufferBindingUpdate* bufferUpdates, uint bufferUpdateCount, const ImageBindingUpdate* imageUpdates = nullptr,
 			uint imageUpdateCount = 0, const AccelerationStructureBindingUpdate* accelerationStructureUpdates = nullptr, uint accelerationStructureUpdateCount = 0);
 
 		void ResetFence(FenceHandle handle);

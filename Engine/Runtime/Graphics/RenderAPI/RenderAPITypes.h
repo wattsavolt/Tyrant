@@ -78,7 +78,7 @@ namespace tyr
 		PF_COUNT
 	};
 
-	enum ColorSpace
+	enum ColorSpace : uint8
 	{
 		CP_SRGB_NONLINEAR = 0,
 		CP_BT709_LINEAR,
@@ -197,6 +197,22 @@ namespace tyr
 		BARRIER_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT = 0x00400000,
 		BARRIER_ACCESS_FRAGMENT_DENSITY_MAP_READ_BIT = 0x01000000,
 		BARRIER_ACCESS_FRAGMENT_SHADING_RATE_ATTACHMENT_READ_BIT = 0x00800000
+	};
+
+	enum DescriptorPoolFlags
+	{
+		DESCRIPTOR_POOL_CREATE_NONE = 0,
+		DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT = 0x00000001,
+		DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT = 0x00000002,
+		DESCRIPTOR_POOL_CREATE_HOST_ONLY_BIT = 0x00000004
+	};
+
+	enum DescriptorBindingFlags
+	{
+		DESCRIPTOR_BINDING_NONE = 0,
+		DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT = 0x00000001,
+		DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT = 0x00000002,
+		DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT = 0x00000004
 	};
 
 	enum DescriptorSetLayoutFlags
@@ -446,11 +462,11 @@ namespace tyr
 		RaytracingPipelineStackSize
 	};
 
-	enum class DescriptorType : uint
+	enum class DescriptorType : uint8
 	{
-		SamplerHandle = 0,
+		Sampler = 0,
 		CombinedImageSampler,
-		SampledTwice,
+		SampledImage,
 		StorageImage,
 		UniformTexelBuffer,
 		StorageTexelBuffer,
@@ -545,9 +561,9 @@ namespace tyr
 		IntOpaqueWhite
 	};
 
-	struct SceneViewArea
+	struct ViewArea
 	{
-		// Values are in NDC space with min 0 and max 1
+		// Values are in normalized viewport coordinates with min 0 and max 1
 		float x = 0.0f;
 		float y = 0.0f;
 		float width = 1.0f;
@@ -556,7 +572,7 @@ namespace tyr
 
 	struct Viewport
 	{
-		// x and y values are in NDC space with min 0 and max 1
+		// x and y are in normalized viewport coordinates with min 0 and max 1
 		float x = 0.0f;
 		float y = 0.0f;
 		float width = 1920;
@@ -569,18 +585,6 @@ namespace tyr
 	{
 		Vector2I offset;
 		Extents2 extents;
-	};
-
-	static constexpr uint c_InvalidGraphicsResourceID = UINT_MAX;
-
-	struct ResourceHandle
-	{
-		uint id = c_InvalidGraphicsResourceID;
-
-		operator bool() const
-		{
-			return id != c_InvalidGraphicsResourceID;
-		}
 	};
 }
 

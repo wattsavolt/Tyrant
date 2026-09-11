@@ -3,31 +3,35 @@
 #include "EngineMacros.h"
 #include "Core.h"
 #include "World.h"
-#include "RenderUpdate/RenderFrame.h"
+#include "RenderInstance/RenderInstances.h"
 
 namespace tyr
 {
-	class Renderer;
-	class TYR_ENGINE_EXPORT WorldManager final
+	class RendererAPI;
+	class TYR_ENGINE_API WorldManager final
 	{
 	public:
-		static constexpr uint8 c_MaxWorlds = Scene::c_MaxScenes;
+		static constexpr uint8 c_MaxWorlds = RenderConstants::c_MaxScenes;
 
 		WorldManager();
 		~WorldManager();
 
 		void Update(float deltaTime);
 
-		World* AddWorld(const WorldConfig& params);
+		Handle AddWorld(const WorldConfig& params);
 
-		void RemoveWorld(World* world);
+		const World& GetWorld(Handle worldHandle) const;
+
+		World& GetWorld(Handle worldHandle);
+
+		void RemoveWorld(Handle worldHandle);
 
 		void RemoveWorlds();
 
 	private:
+		RendererAPI* m_RendererAPI;
 		LocalObjectPool<World, c_MaxWorlds, false> m_WorldPool;
-		LocalArray<World*, c_MaxWorlds> m_Worlds;
-		Renderer* m_Renderer;
+		LocalArray<Handle, c_MaxWorlds> m_Worlds;
 	};
 	
 }

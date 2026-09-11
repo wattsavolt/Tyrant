@@ -7,17 +7,17 @@
 namespace tyr
 {
 	class WorldManager;
-	class TYR_ENGINE_EXPORT WorldModule final : public IModule
+	class TYR_ENGINE_API WorldModule final : public IModule
 	{
 	public:
 		WorldModule();
 		~WorldModule();
 
-		void InitializeModule() override;
+		void Initialize() override;
 
-		void ShutdownModule() override;
+		void Shutdown() override;
 
-		void UpdateModule(float deltaTime) override;
+		void Update(float deltaTime) override;
 
 		const WorldManager* GetWorldManager() const { return m_WorldManager; }
 

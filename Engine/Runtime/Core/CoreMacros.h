@@ -18,6 +18,7 @@
 #define TYR_ENDIAN_LITTLE 1
 #define TYR_ENDIAN_BIG 2
 #define TYR_ENDIAN TYR_ENDIAN_LITTLE
+#define TYR_THREADLOCAL thread_local
 
 // Finds the compiler type and version.
 #if defined(__clang__)
@@ -42,11 +43,9 @@
 #	define TYR_STDCALL __stdcall
 #	define TYR_CDECL __cdecl
 #	define TYR_FALLTHROUGH
-	// TYR_THREADLOCAL define is down below because Intel compiler defines it differently based on platform
 #elif defined(_MSC_VER) // Check after Clang and Intel, since we could be building with either within VS
 #	define TYR_COMPILER TYR_COMPILER_MSVC
 #	define TYR_COMP_VER _MSC_VER
-#	define TYR_THREADLOCAL __declspec(thread)
 #	define TYR_STDCALL __stdcall
 #	define TYR_CDECL __cdecl
 #	define TYR_FALLTHROUGH
@@ -101,10 +100,6 @@
 #	else
 #		define TYR_DEBUG 0
 #	endif
-
-#	if TYR_COMPILER == TYR_COMPILER_INTEL
-#		define TYR_THREADLOCAL __declspec(thread)
-#	endif
 #endif
 
 // Linux/Mac Settings
@@ -114,16 +109,12 @@
 #	else
 #		define TYR_DEBUG 0
 #	endif
-
-#	if TYR_COMPILER == TYR_COMPILER_INTEL
-#		define TYR_THREADLOCAL __thread
-#	endif
 #endif
 
 #if defined(TYR_CORE_EXPORTS)
-#		define TYR_CORE_EXPORT TYR_EXPORT
+#		define TYR_CORE_API TYR_EXPORT
 #else
-#		define TYR_CORE_EXPORT TYR_IMPORT
+#		define TYR_CORE_API TYR_IMPORT
 #endif
 
 // Windows Force Inline

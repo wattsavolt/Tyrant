@@ -9,7 +9,7 @@ namespace tyr
 	class Quaternion;
 
 	/// Class representing a row major 3x3 matrix.
-	class TYR_CORE_EXPORT Matrix3
+	class TYR_CORE_API Matrix3
 	{
 	private:
 		struct EulerAngleOrderData

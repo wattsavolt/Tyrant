@@ -1,21 +1,26 @@
 #pragma once
 
-#include "Window/Window.h"
-
+#include "Base/Base.h"
 #include <windows.h>
 
 namespace tyr
 {
-	class TYR_CORE_EXPORT PCWindow final : public Window
+	struct WindowDesc;
+	struct Window;
+
+	class PCWindow final 
 	{
 	public:
-		PCWindow(const WindowProperties& properties);
-		void PollEvents() override;
+		static void InitializeWindow(const WindowDesc& desc, Window& window);
+		static void PollEvents(Window& window);
+		static bool IsWindowActive(const Window& window);
 
 	private:
-		static ATOM RegisterWindowClass(const WindowProperties& properties);
+		static ATOM RegisterWindowClass(uint16 iconResourceId);
 		static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 		static INT_PTR CALLBACK About(HWND, UINT, WPARAM, LPARAM);
+
+		static LRESULT HandleMessage(HWND, UINT, WPARAM, LPARAM, Window&);
 
 		static HINSTANCE m_HInstance;
 		static LPCSTR m_WindowClass;

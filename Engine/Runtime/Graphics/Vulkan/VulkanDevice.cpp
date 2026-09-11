@@ -1,5 +1,6 @@
 #include "VulkanDevice.h"
 #include "VulkanHelper.h"
+#include "VulkanSwapChain.h"
 #include "VulkanCommandAllocator.h"
 #include "VulkanCommandList.h"
 
@@ -23,6 +24,7 @@ namespace tyr
 
 	DeviceInternal::DeviceInternal(VkInstance instance, VkPhysicalDevice device, uint index)
 		: Device(index)
+		, m_Instance(instance)
 		, m_PhysicalDevice(device)
 	{
 		// Set to default
@@ -47,7 +49,7 @@ namespace tyr
 		const float defaultQueuePriorities[c_MaxQueuesPerType] = { };
 		LocalArray<VkDeviceQueueCreateInfo, CommandQueueType::CQ_COUNT> queueCreateInfos;
 
-		auto PopulateQueueInfo = [&](CommandQueueType type, uint32_t familyIndex)
+		auto PopulateQueueInfo = [&](CommandQueueType type, uint familyIndex)
 		{
 			VkDeviceQueueCreateInfo& createInfo = queueCreateInfos.ExpandOne();
 			createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -304,6 +306,12 @@ namespace tyr
 		const DeviceInternal& device = static_cast<const DeviceInternal&>(*this);
 		const VkPhysicalDeviceProperties& devProperties = device.GetDeviceProperties();
 		return devProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+	}
+
+	SwapChain* Device::CreateSwapChain(void* windowOSHandle, const SwapChainDesc& desc)
+	{
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		return new VulkanSwapChain(windowOSHandle, &device, desc);
 	}
 
 	CommandAllocator* Device::CreateCommandAllocator(const CommandAllocatorDesc& desc)

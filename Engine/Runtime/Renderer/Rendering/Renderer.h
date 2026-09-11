@@ -3,98 +3,121 @@
 #include "Core.h"
 #include "RendererMacros.h"
 #include "Containers/SPSCRingBuffer.h"
-#include "RenderDataTypes/RenderDataTypes.h"
 #include "Shaders/ShaderTypes.h"
 #include "RendererConfig.h"
 #include "RenderAPI/CommandList.h"
 #include "Shader/ShaderCreator.h"
-#include "Resources/RenderBuffer.h"
-#include "RenderUpdate/RenderFrame.h"
+#include "RenderResource/RenderBuffer.h"
+#include "RenderFrame.h"
+#include "RenderWindow.h"
+#include "RenderContext.h"
+#include "RenderResources.h"
+#include "RenderData.h"
+#include "RenderRegistry.h"
+#include "RenderAllocationManager.h"
+#include "Window/WindowConstants.h"
 
 namespace tyr
 {
 	class RenderAPI;
 	class Device;
+	class SwapChain;
 	class CommandAllocator;
+	class TransferPass;
+	class GeometryPass;
+	class RenderSubmissionThread;
 	struct BufferBindingUpdate;
 
-	struct MaterialData
+	struct RenderSyncData
 	{
-		Vector3 albedo;
-		float roughness;
-		float metallic;
+		// Used for signalling resource upload allocators and these uploads done on transfer queue
+		uint64 resourceTransferTimelineValue = 0;
+		// The last timeline value when this frame was rendered
+		// Also used for signalling frame upload allocator as frame uploads done on graphics queue
+		uint64 graphicsTimelineValue = 0;
 	};
 
-	class TYR_RENDERER_EXPORT Renderer final : INonCopyable
+	class Renderer final : INonCopyable
 	{
 	public:
-		Renderer(const RendererConfig& rendererConfig, Ref<RenderAPI>& renderAPI);
+		Renderer(const RendererConfig& rendererConfig, RenderAPI* renderAPI);
 		~Renderer();
 
-		void Render(double deltaTime);
+		// Needs to be called each frame
+		void Render(float deltaTime);
 
-		RenderFrame& GetRenderFrame();
+		// Needs to be called at end of each frame
+		void PrepareForNextFrame();
 
 		// Wait for all rendering operations to be complete
 		void WaitForCompletion();
 
-		uint8 AddScene();
+		RenderWindowHandle AddWindow(void* osHandle);
 
-		void RemoveScene(uint8 index);
-	
+		void RemoveWindow(RenderWindowHandle window);
+
+		void ResizeWindow(RenderWindowHandle window, uint width, uint height);
+
+		ShaderCreator& GetShaderCreator() { return m_ShaderCreator; }
+
+		RenderFrame& GetRenderFrame()
+		{
+			return m_RenderFrames[m_RenderFrameIndex];
+		}
+
+		RenderFrame& GetPrevRenderFrame()
+		{
+			const uint index = Utility::GetPrevCircularIndex(m_RenderFrameIndex, RenderConstants::c_BufferedFrameCount);
+			return m_RenderFrames[index];
+		}
+
+		RenderResources& GetRenderResources() { return m_Resources; }
+
+		RenderData& GetRenderData() { return m_Data; }
+
+		RenderAllocationManager& GetAllocationManager() { return m_AllocManager; }
+
 	private:
-		RenderPassHandle CreateRenderPass();
+		void RenderAsync(uint renderFrameIndex);
+		void BuildAndExecuteRenderGraph(uint renderFrameIndex);
+
 		void CreateShaders();
-		void CreatePipeline();
+		void DeleteShaders();
+		// No CreateSwapChains function as they are created as needed but reused so need to be deleted at the end
+		void DeleteSwapChains();
+		void CreateCommandObjects();
+		void DeleteCommandObjects();
+		void CreatePipelines();
+		void DeletePipelines();
 		void CreateBuffers();
-		void PerformStaticTransfers();
-		void PeformDynamicTransfers();
-		void AddRenderBarriers();
-		void CreateCommandAllocators();
-		void CreateCommandLists();
-		void CreateBufferBindingUpdate(BufferBindingUpdate& bindingUpdate, BufferViewHandle bufferView, uint descriptorIndex, uint bindingIndex);
+		void DeleteBuffers();
+		void CreateSamplers();
+		void DeleteSamplers();
+		void CreatePasses();
+		void DeletePasses();
+
+		// Probably only ever useful if supporting mobile devices. Unused but kept as an example
+		RenderPassHandle CreateRenderPass();
 
 		static bool s_Instantiated;
 
-		Ref<RenderAPI> m_RenderAPI;
-		SwapChain* m_SwapChain;
-		Device* m_Device;
-		ShaderCreator m_ShaderCreator;
-		GraphicsPipelineHandle m_Pipeline;
-		RenderBuffer m_VertexBuffer;
-		RenderBuffer m_IndexBuffer;
-		RenderBuffer m_InstanceBuffer;
-		RenderBuffer m_SpotLightBuffer;
-		RenderBuffer m_MaterialBuffer;
-		RenderBuffer m_SceneInfoBuffer;
-		RenderBuffer m_TransferBuffers[6];
-		Array<BufferHandle> m_VertexBuffers;
-		ShaderModuleHandle m_VertexShader;
-		ShaderModuleHandle m_PixelShader;
-		DescriptorPoolHandle m_DescriptorPool;
-		DescriptorSetLayoutHandle m_DescriptorSetLayout;
-		DescriptorSetGroupHandle m_DescriptorSetGroup;
-		CommandAllocator* m_CommandAllocator{ nullptr };
-		CommandList* m_CommandList{ nullptr };
-		MaterialTextureData m_MaterialTextureData;
+		RenderAPI* m_RenderAPI;
+		RenderSubmissionThread* m_RenderSubmissionThread;
+		ShaderCreator m_ShaderCreator;	
+		ShaderMaterial m_ShaderMaterial;
 		RendererConfig m_Config;
-		ShaderSceneInfo m_SceneInfo;
-		RenderingInfo m_RenderingInfo;
-		CommndListExecuteDesc m_ExecuteDesc;
-		FenceHandle m_Fence;
-		SemaphoreHandle m_AquireSwapChainImageSemaphores[3];
-		SemaphoreHandle m_ExecuteCompleteSemaphores[3];
-		SemaphoreHandle m_CompletionSemaphore;
-		uint64 m_CompletionSemaphoreSignalValue;
-		uint8 m_SemaphoreIndex;
-		Viewport m_Viewport;
-		uint m_SwapChainImageIndex;
-		RenderFrame m_RenderFrames[RenderFrame::c_MaxRenderFrames];
-		Scene m_Scenes[Scene::c_MaxScenes];
-		uint8 m_SceneCount;
-		uint8 m_RenderFrameIndex;
-		bool m_FirstRender;
-		bool m_SceneUpdated;
+		RenderRegistry m_Registry;
+		RenderAllocationManager m_AllocManager{};
+		RenderFrame m_RenderFrames[RenderConstants::c_BufferedFrameCount];
+		RenderSyncData m_SyncDatas[RenderConstants::c_BufferedFrameCount];
+		LocalObjectPool<RenderWindow, WindowConstants::c_MaxWindows> m_WindowPool;
+		Array<SwapChain*> m_SwapChains;
+		HashMap<uint, uint> m_ViewIdIndexMap;
+		RenderContext m_Ctx{};
+		RenderResources m_Resources{};
+		RenderData m_Data{};
+		uint m_RenderFrameIndex = 0;
+		bool m_FirstRender = false;
 	};
 	
 }

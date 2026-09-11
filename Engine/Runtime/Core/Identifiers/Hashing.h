@@ -50,4 +50,9 @@ namespace tyr
 
         return hash;
     }
+
+    constexpr void HashCombine(size_t& seed, size_t h)
+    {
+        seed ^= h + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    }
 }

@@ -16,7 +16,7 @@ struct VS_OUTPUT
 	float3 normal : NORMAL;
 };
 
-struct Material
+struct MaterialData
 {
     float3 albedo;
     float ambientOcclusion;
@@ -38,8 +38,13 @@ float3 EncodeSRGB(float3 c)
     return clamp(lerp(lt, gt, step(0.0031308, c)), 0.0, 1.0);
 }
 
-
-//StructuredBuffer<PointLight> pointLights : register(t0);
+float3 DecodeOct(float2 e)
+{
+    float3 v = float3(e.xy, 1.0 - abs(e.x) - abs(e.y));
+    float2 t = saturate(-v.z).xx;
+    v.xy += t * -sign(v.xy); // sign(0) returns 0 in HLSL, matching the >=0 branch's -t case closely enough in practice
+    return normalize(v);
+}
 
 #endif
 

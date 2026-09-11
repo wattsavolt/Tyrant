@@ -22,10 +22,35 @@ namespace tyr
 		}
 	}
 
+	void ImageLoader::LoadImageInfoFromMem(const uchar* mem, size_t size, ImageInfo& fileInfo)
+	{
+		TYR_ASSERT(stbi_info_from_memory(mem, size, &fileInfo.width, &fileInfo.height, &fileInfo.channelCount) != 0);
+		if (stbi_is_16_bit_from_memory(mem, size))
+		{
+			fileInfo.bitDepth = ImageBitDepth::SixteenBit;
+		}
+		else if (stbi_is_hdr_from_memory(mem, size))
+		{
+			fileInfo.bitDepth = ImageBitDepth::ThirtyTwoBit;
+		}
+		else
+		{
+			fileInfo.bitDepth = ImageBitDepth::EightBit;
+		}
+	}
+
 	uint8* ImageLoader::LoadImage8U(const char* filePath, int channelCount)
 	{
 		int width, height, origChannelCount;
 		uint8* image = stbi_load(filePath, &width, &height, &origChannelCount, channelCount);
+		TYR_ASSERT(image != nullptr);
+		return image;
+	}
+
+	uint8* ImageLoader::LoadImage8UFromMem(const uchar* mem, size_t size, int channelCount)
+	{
+		int width, height, origChannelCount;
+		uint8* image = stbi_load_from_memory(mem, size, &width, &height, &origChannelCount, channelCount);
 		TYR_ASSERT(image != nullptr);
 		return image;
 	}
@@ -38,10 +63,26 @@ namespace tyr
 		return image;
 	}
 
+	uint16* ImageLoader::LoadImage16UFromMem(const uchar* mem, size_t size, int channelCount)
+	{
+		int width, height, origChannelCount;
+		uint16* image = stbi_load_16_from_memory(mem, size, &width, &height, &origChannelCount, channelCount);
+		TYR_ASSERT(image != nullptr);
+		return image;
+	}
+
 	float* ImageLoader::LoadImage32F(const char* filePath, int channelCount)
 	{
 		int width, height, origChannelCount;
 		float* image = stbi_loadf(filePath, &width, &height, &origChannelCount, channelCount);
+		TYR_ASSERT(image != nullptr);
+		return image;
+	}
+
+	float* ImageLoader::LoadImage32FFromMem(const uchar* mem, size_t size, int channelCount)
+	{
+		int width, height, origChannelCount;
+		float* image = stbi_loadf_from_memory(mem, size, &width, &height, &origChannelCount, channelCount);
 		TYR_ASSERT(image != nullptr);
 		return image;
 	}

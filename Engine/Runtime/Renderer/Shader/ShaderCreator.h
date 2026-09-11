@@ -28,7 +28,7 @@ namespace tyr
     class Device;
 
     // Class that compiles shaders (if necessary), loads shader byte code and creates shader modules
-	class TYR_RENDERER_EXPORT ShaderCreator final : public INonCopyable
+	class TYR_RENDERER_API ShaderCreator final : public INonCopyable
 	{
 	public:
         ShaderCreator(Device& device, const ShaderCreatorConfig& config);
@@ -61,7 +61,7 @@ namespace tyr
 #ifdef TYR_USE_DXCOMPILER
         static constexpr const char* c_CompilerCreationFunctionName = "DxcCreateInstance";
 #endif
-        static Handle s_CompilerLibrary;
-        static Handle s_SignatureLibrary;
+        static void* s_CompilerLibrary;
+        static void* s_SignatureLibrary;
 	};
 }

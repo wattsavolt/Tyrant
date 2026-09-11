@@ -7,7 +7,7 @@ namespace tyr
 {
 
 	/// A two dimensional vector.
-	class TYR_CORE_EXPORT Vector2
+	class TYR_CORE_API Vector2
 	{
 	public:
 		Vector2() = default;

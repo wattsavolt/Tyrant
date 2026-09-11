@@ -1,5 +1,3 @@
-
-
 #include "GraphicsManager.h"
 
 #if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
@@ -9,19 +7,24 @@
 namespace tyr
 {
 	// TODO:: Support more graphics apis.
-	Ref<RenderAPI> GraphicsManager::CreateRenderAPI(const RenderAPICreateConfig& config)
+	RenderAPI* GraphicsManager::CreateRenderAPI(const RenderAPICreateConfig& config)
 	{
-		Ref<RenderAPI> api;
+		RenderAPI* renderAPI;
 
 #if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
 		if (config.backend == RenderAPIBackend::Vulkan)
 		{
-			api = MakeRef<VulkanRenderAPI>();
+			renderAPI = new VulkanRenderAPI();
 		}
 #else
-		api = MakeRef<VulkanRenderAPI>();
+		renderAPI = new VulkanRenderAPI();
 #endif
 
-		return api;
+		return renderAPI;
+	}
+
+	void GraphicsManager::DestroyRenderAPI(RenderAPI* renderAPI)
+	{
+		delete renderAPI;
 	}
 }

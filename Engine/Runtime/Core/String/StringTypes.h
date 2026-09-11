@@ -2,6 +2,7 @@
 
 #include <string>
 #include <sstream>
+#include "ConstexprString.h"
 #include "LocalString.h"
 #include "Path.h"
 #include "Name.h"

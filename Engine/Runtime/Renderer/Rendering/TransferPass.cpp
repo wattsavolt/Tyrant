@@ -1,9 +1,11 @@
 #include "TransferPass.h"
+#include "Rendering/RenderData.h"
 
 namespace tyr
 {
-	TransferPass::TransferPass()
-		: Pass()
+	TransferPass::TransferPass(const TransferPassArgs& args)
+		: m_Device(args.device)
+		, m_Data(args.data)
 	{
 	
 	}
@@ -13,8 +15,5 @@ namespace tyr
 	
 	}
 
-	void TransferPass::CreateRenderGraphDependencies(RGArray<RenderGraphDependencyInput>& inputs, RGArray<RenderGraphDependencyOutput>& outputs)
-	{
 
-	}
 }

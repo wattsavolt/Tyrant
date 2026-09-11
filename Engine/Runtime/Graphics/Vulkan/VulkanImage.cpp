@@ -5,9 +5,10 @@ namespace tyr
 {
 	ImageHandle Device::CreateImage(const ImageDesc& desc)
 	{
-		ImageHandle handle;
+		
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
-		Image& image = *device.m_ImagePool.Create(handle.id);
+		const ImageHandle handle(device.m_ImagePool.Create());
+		Image& image = device.m_ImagePool[handle.h];
 		VkImageCreateInfo imageCI;
 		imageCI.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
 		imageCI.pNext = nullptr;
@@ -35,11 +36,11 @@ namespace tyr
 		
 		imageCI.format = VulkanUtility::ToVulkanPixelFormat(desc.format);
 		imageCI.extent = { desc.width, desc.height, desc.depth };
-		imageCI.mipLevels = desc.mipLevelCount;
+		imageCI.mipLevels = desc.mipCount;
 		imageCI.arrayLayers = desc.arrayLayerCount;
 		imageCI.samples = static_cast<VkSampleCountFlagBits>(desc.sampleCount);
 		imageCI.tiling = VK_IMAGE_TILING_OPTIMAL;
-		imageCI.usage = static_cast<VkImageUsageFlags>(desc.usage) | (desc.mipLevelCount > 1 ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
+		imageCI.usage = static_cast<VkImageUsageFlags>(desc.usage) | (desc.mipCount > 1 ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
 		imageCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 		imageCI.queueFamilyIndexCount = 0;
 		imageCI.pQueueFamilyIndices = nullptr;
@@ -62,7 +63,7 @@ namespace tyr
 			image.allocation = device.AllocateMemory(image.image, image.memoryProperty);
 			image.isExternal = false;
 		}
-		TYR_SET_GFX_DEBUG_NAME(device.m_LogicalDevice, desc.debugName.CStr(), VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64>(image.image));
+		TYR_SET_GFX_DEBUG_NAME(device.m_LogicalDevice, desc.debugName, VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64>(image.image));
 		return handle;
 	}
 	
@@ -78,14 +79,14 @@ namespace tyr
 			device.FreeMemory(image.allocation);
 		}
 
-		device.m_ImagePool.Delete(handle.id);
+		device.m_ImagePool.Delete(handle.h);
 	}
 
 	ImageViewHandle Device::CreateImageView(const ImageViewDesc& desc)
 	{
-		ImageViewHandle handle;
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
-		ImageView& imageView = *device.m_ImageViewPool.Create(handle.id);
+		const ImageViewHandle handle(device.m_ImageViewPool.Create());
+		ImageView& imageView = device.m_ImageViewPool[handle.h];
 		Image& image = device.GetImage(desc.image);
 
 		VkImageViewCreateInfo imageViewCI;
@@ -98,12 +99,12 @@ namespace tyr
 		imageViewCI.components = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY };
 		imageViewCI.subresourceRange.aspectMask = static_cast<VkImageAspectFlags>(desc.subresourceRange.aspect);
 		imageViewCI.subresourceRange.baseMipLevel = desc.subresourceRange.baseMipLevel;
-		imageViewCI.subresourceRange.levelCount = desc.subresourceRange.mipLevelCount;
+		imageViewCI.subresourceRange.levelCount = desc.subresourceRange.mipCount;
 		imageViewCI.subresourceRange.baseArrayLayer = desc.subresourceRange.baseArrayLayer;
 		imageViewCI.subresourceRange.layerCount = desc.subresourceRange.arrayLayerCount;
 
 		vkCreateImageView(device.m_LogicalDevice, &imageViewCI, g_VulkanAllocationCallbacks, &imageView.imageView);
-		TYR_SET_GFX_DEBUG_NAME(device.m_LogicalDevice, desc.debugName.CStr(), VK_OBJECT_TYPE_IMAGE_VIEW, reinterpret_cast<uint64>(imageView.imageView));
+		TYR_SET_GFX_DEBUG_NAME(device.m_LogicalDevice, desc.debugName, VK_OBJECT_TYPE_IMAGE_VIEW, reinterpret_cast<uint64>(imageView.imageView));
 
 		imageView.image = desc.image;
 
@@ -116,14 +117,14 @@ namespace tyr
 		ImageView& imageView = device.GetImageView(handle);
 		Image& image = device.GetImage(imageView.image);
 		vkDestroyImageView(device.m_LogicalDevice, imageView.imageView, g_VulkanAllocationCallbacks);
-		device.m_ImageViewPool.Delete(handle.id);
+		device.m_ImageViewPool.Delete(handle.h);
 	}
 
 	SamplerHandle Device::CreateSampler(const SamplerDesc& desc)
 	{
-		SamplerHandle handle;
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
-		Sampler& sampler = *device.m_SamplerPool.Create(handle.id);
+		const SamplerHandle handle(device.m_SamplerPool.Create());
+		Sampler& sampler = device.m_SamplerPool[handle.h];
 
 		VkSamplerCreateInfo samplerCI;
 		samplerCI.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -146,7 +147,7 @@ namespace tyr
 		samplerCI.unnormalizedCoordinates = desc.unnormalisedCoords;
 
 		vkCreateSampler(device.m_LogicalDevice, &samplerCI, g_VulkanAllocationCallbacks, &sampler.sampler);
-		TYR_SET_GFX_DEBUG_NAME(device.m_LogicalDevice, desc.debugName.CStr(), VK_OBJECT_TYPE_SAMPLER, reinterpret_cast<uint64>(sampler.sampler));
+		TYR_SET_GFX_DEBUG_NAME(device.m_LogicalDevice, desc.debugName, VK_OBJECT_TYPE_SAMPLER, reinterpret_cast<uint64>(sampler.sampler));
 		return handle;
 	}
 
@@ -155,6 +156,6 @@ namespace tyr
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
 		Sampler& sampler = device.GetSampler(handle);
 		vkDestroySampler(device.m_LogicalDevice, sampler.sampler, g_VulkanAllocationCallbacks);
-		device.m_SamplerPool.Delete(handle.id);
+		device.m_SamplerPool.Delete(handle.h);
 	}
 }

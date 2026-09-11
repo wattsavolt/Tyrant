@@ -11,7 +11,7 @@ namespace tyr
 	class BoundingSphere;
 
 	/// A ray represented by a direction and origin in 3D space 
-	class TYR_CORE_EXPORT Ray
+	class TYR_CORE_API Ray
 	{
 
 	public:

@@ -6,15 +6,15 @@
 
 namespace tyr
 {
-    // Hash map thast uses linear probing for collisions and keeps the load factor at 50% max
-    template <typename Key, typename Value, bool Fixed = false, typename Hash = std::hash<Key>, typename A = HeapAllocator>
+    // Hash map that uses linear probing for collisions and keeps the load factor at 50% max
+    template <typename Key, typename Value, bool FixedCapacity = false, typename Hash = std::hash<Key>, typename A = HeapAllocator>
     class HashMap final
     {
     private:
         struct Bucket
         {
-            Key Key;
-            Value Value;
+            Key key;
+            Value value;
             bool occupied = false;
             bool deleted = false;
         };
@@ -42,17 +42,17 @@ namespace tyr
             {
                 if (m_Buckets[i].occupied && !m_Buckets[i].deleted)
                 {
-                    const Key& key = m_Buckets[i].Key;
-                    const Value& value = m_Buckets[i].Value;
-                    uint hash = Hash{}(key);
+                    Key& key = m_Buckets[i].key;
+                    Value& value = m_Buckets[i].value;
+                    const uint hash = static_cast<uint>(Hash{}(key));
 
                     for (uint j = 0; j < newCapacity; ++j)
                     {
-                        uint index = (hash + j) & (newCapacity - 1);
+                        const uint index = (hash + j) & (newCapacity - 1);
                         if (!newBuckets[index].occupied)
                         {
-                            newBuckets[index].Key = key;
-                            newBuckets[index].Value = value;
+                            newBuckets[index].key = std::move(key);
+                            newBuckets[index].value = std::move(value);
                             newBuckets[index].occupied = true;
                             break;
                         }
@@ -70,9 +70,9 @@ namespace tyr
 
             if (requiredCapacity > m_Capacity)
             {
-                if constexpr (Fixed)
+                if constexpr (FixedCapacity)
                 {
-                    TYR_LOG_FATAL("Attempt to increase capacity of fixed hash map.");
+                    TYR_LOG_FATAL("Cannot increase capacity of a fixed capacity hash map.");
                 }
                 Rehash(Math::NextPowerOfTwo(requiredCapacity));
             }
@@ -91,9 +91,9 @@ namespace tyr
                     return nullptr;
                 }
 
-                if (bucket.occupied && !bucket.deleted && bucket.Key == key)
+                if (bucket.occupied && !bucket.deleted && bucket.key == key)
                 {
-                    return &bucket.Value;
+                    return &bucket.value;
                 }
             }
             return nullptr;
@@ -122,18 +122,18 @@ namespace tyr
             uint hash = Hash{}(key);
             for (uint i = 0; i < m_Capacity; ++i)
             {
-                uint index = ProbeIndex(hash, i);
+                const uint index = ProbeIndex(hash, i);
                 Bucket& bucket = m_Buckets[index];
 
-                if (bucket.occupied && !bucket.deleted && bucket.Key == key)
+                if (bucket.occupied && !bucket.deleted && bucket.key == key)
                 {
-                    return bucket.Value;
+                    return bucket.value;
                 }
 
                 if (!bucket.occupied || bucket.deleted)
                 {
                     EnsureCapacity(m_Size + 1); // Ensure BEFORE insert!
-                    hash = Hash{}(key); // In case rehash changed capacity
+                    hash = static_cast<uint>(Hash{}(key)); // In case rehash changed capacity
 
                     for (uint j = 0; j < m_Capacity; ++j)
                     {
@@ -141,12 +141,12 @@ namespace tyr
                         Bucket& insertBucket = m_Buckets[insertIndex];
                         if (!insertBucket.occupied || insertBucket.deleted)
                         {
-                            insertBucket.Key = key;
-                            insertBucket.Value = Value();
+                            insertBucket.key = key;
+                            insertBucket.value = Value();
                             insertBucket.occupied = true;
                             insertBucket.deleted = false;
                             ++m_Size;
-                            return insertBucket.Value;
+                            return insertBucket.value;
                         }
                     }
                 }
@@ -167,16 +167,16 @@ namespace tyr
                 uint index = ProbeIndex(hash, i);
                 Bucket& bucket = m_Buckets[index];
 
-                if (bucket.occupied && !bucket.deleted && bucket.Key == key)
+                if (bucket.occupied && !bucket.deleted && bucket.key == key)
                 {
-                    bucket.Value = value;
+                    bucket.value = value;
                     return;
                 }
 
                 if (!bucket.occupied || bucket.deleted)
                 {
-                    bucket.Key = key;
-                    bucket.Value = value;
+                    bucket.key = key;
+                    bucket.value = value;
                     bucket.occupied = true;
                     bucket.deleted = false;
                     ++m_Size;
@@ -204,7 +204,7 @@ namespace tyr
         
         void Erase(const Key& key)
         {
-            uint hash = Hash{}(key);
+            const uint hash = static_cast<uint>(Hash{}(key));
             for (uint i = 0; i < m_Capacity; ++i)
             {
                 uint index = ProbeIndex(hash, i);
@@ -215,7 +215,7 @@ namespace tyr
                     return;
                 }
 
-                if (bucket.occupied && !bucket.deleted && bucket.Key == key)
+                if (bucket.occupied && !bucket.deleted && bucket.key == key)
                 {
                     bucket.deleted = true;
                     --m_Size;
@@ -256,9 +256,9 @@ namespace tyr
                 return *this;
             }
 
-            std::pair<const Key&, Value&> operator*() const
+            std::pair<const Key&, Value&> operator*() 
             {
-                return { m_Ptr->Key, m_Ptr->Value };
+                return { m_Ptr->key, m_Ptr->value };
             }
 
             bool operator!=(const Iterator& other) const
@@ -297,7 +297,7 @@ namespace tyr
 
             std::pair<const Key&, const Value&> operator*() const
             {
-                return { m_Ptr->Key, m_Ptr->Value };
+                return { m_Ptr->key, m_Ptr->value };
             }
 
             bool operator!=(const ConstIterator& other) const
@@ -317,7 +317,8 @@ namespace tyr
                 }
             }
         };
-
+        
+        // Each non-const iterator resolves to a key value pair copy with references inside it. The value is a non-const reference so it can be modified
         Iterator begin() { return Iterator(m_Buckets.Data(), m_Buckets.Data() + m_Capacity); }
         Iterator end() { return Iterator(m_Buckets.Data() + m_Capacity, m_Buckets.Data() + m_Capacity); }
 

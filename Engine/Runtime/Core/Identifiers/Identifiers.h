@@ -9,9 +9,12 @@ namespace tyr
     class Identifier final
     {
     public:
-        constexpr Identifier() : m_Hash(0) {}
+        constexpr Identifier(T hash = 0)
+            : m_Hash(hash)
+        {
+        }
 
-        constexpr Identifier(const char* str)
+        constexpr explicit Identifier(const char* str)
         {
             m_Hash = FNV1aHash<T, offsetBasis, prime>(str);
         }
@@ -25,11 +28,6 @@ namespace tyr
         constexpr Identifier(const Guid& guid)
         {
             m_Hash = FNV1aHash<T, offsetBasis, prime>(guid);
-        }
-
-        constexpr Identifier(T hash)
-            : m_Hash(hash)
-        {
         }
 
         Identifier& operator=(const Identifier<T, offsetBasis, prime>& other)
@@ -77,8 +75,6 @@ namespace tyr
     using Id32 = Identifier<uint, c_FNVOffsetBasis32, c_FNVPrime32>;
 
     using Id64 = Identifier<uint64, c_FNVOffsetBasis64, c_FNVPrime64>;
-
-    using AssetID = Id64;
 }
 
 namespace std

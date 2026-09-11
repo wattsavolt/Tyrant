@@ -1,10 +1,15 @@
-
-
 #include "Math/Vector3.h"
 #include "Math/Vector4.h"
+#include "Reflection/Reflection.h"
 
 namespace tyr
 {
+	TYR_REFL_CLASS_START(Vector3, 0);
+		TYR_REFL_FIELD(&Vector3::x, "X", true, true, true);
+		TYR_REFL_FIELD(&Vector3::y, "Y", true, true, true);
+		TYR_REFL_FIELD(&Vector3::z, "Z", true, true, true);
+	TYR_REFL_CLASS_END();
+
 	const Vector3 Vector3::c_Zero(ArgZero::Zero);
 	const Vector3 Vector3::c_One(1, 1, 1);
 	const Vector3 Vector3::c_Infinity(Math::c_Infinity, Math::c_Infinity, Math::c_Infinity);
@@ -23,10 +28,9 @@ namespace tyr
 	{
 		float lenProduct = Length() * dest.Length();
 
-		// Divide by zero check
 		if (lenProduct < 1e-6f)
 		{
-			lenProduct = 1e-6f;
+			return 0.0f;
 		}
 
 		auto d = Dot(dest) / lenProduct;

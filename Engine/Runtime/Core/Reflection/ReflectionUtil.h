@@ -23,8 +23,8 @@ namespace tyr
 	template<typename T>
 	struct IsHashMap : std::false_type {};
 
-	template<typename K, typename V, bool F, typename H>
-	struct IsHashMap<HashMap<K, V, F, H>> : std::true_type {};
+	template<typename K, typename V, bool FC, typename H>
+	struct IsHashMap<HashMap<K, V, FC, H>> : std::true_type {};
 
     template<typename T>
     struct IsLocalString : std::false_type {};
@@ -63,12 +63,12 @@ namespace tyr
     template<typename T>
     struct HashMapTraits;
 
-    template <typename K, typename V, bool F, typename H, typename C>
-    struct HashMapTraits<HashMap<K, V, F, H, C>>
+    template <typename K, typename V, bool FC, typename H, typename C>
+    struct HashMapTraits<HashMap<K, V, FC, H, C>>
     {
         using keyType = K;
         using valueType = V;
-        static constexpr bool c_Fixed = F;
+        static constexpr bool c_HasFixedCapacity = FC;
         using hashType = H;
         using compareType = C;
     };
@@ -173,22 +173,23 @@ namespace tyr
     }
 
     template<typename T>
-    constexpr Id64 GetTypeID()
+    constexpr Id64 ResolveTypeID()
     {
         const StringView typeName = GetTypeName<T>();
         return Id64(typeName.data(), static_cast<uint>(typeName.size()));
+    }
+
+    template<typename T>
+    constexpr Id64 GetTypeID()
+    {
+        static Id64 id = ResolveTypeID<T>();
+        return id;
     }
 
     template <typename T>
     constexpr StringView GetTypeName(const T&)
     {
         return GetTypeName<T>();
-    }
-
-    template <typename T>
-    constexpr Id64 GetTypeID(const T&)
-    {
-        return GetTypeID<T>();
     }
 
     template<typename T>

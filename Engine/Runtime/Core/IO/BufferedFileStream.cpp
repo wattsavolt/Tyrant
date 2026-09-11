@@ -40,9 +40,10 @@ namespace tyr
 			FileStream::Write(m_Buffer, m_BufferSize);
 			const size_t remaining = count - bufferSizeRemaining;
 			const uint8* remainingData = &((const uint8*)buffer)[bufferSizeRemaining];
-			// This if condition shouldn't occur because the buffer size should be big enough
+			// Handle the case of a size that is bigger than the buffer
 			if (remaining > m_BufferSize)
 			{
+				// Write directly to file
 				FileStream::Write(remainingData, remaining);
 				m_BufferOffset = 0;
 			}
@@ -66,19 +67,22 @@ namespace tyr
 		const size_t memoryRemaining = m_MemoryRead - m_BufferOffset;
 		if (count > memoryRemaining)
 		{
-			memcpy(buffer, &m_Buffer[0], memoryRemaining);	
+			memcpy(buffer, &m_Buffer[m_BufferOffset], memoryRemaining);
 			const size_t remaining = count - memoryRemaining;
 			uint8* remainingData = &((uint8*)buffer)[memoryRemaining];
-			// This if condition shouldn't actually occur because the buffer size should be made big enough by the caller
+			// Handle the case of a size that is bigger than the buffer
 			if (remaining > m_BufferSize)
 			{
+				// Read directly into the buffer passed in
 				const size_t memoryRead = FileStream::Read(remainingData, remaining);
 				TYR_ASSERT(memoryRead >= remaining);
+				// Refill buffer for future read calls
 				m_MemoryRead = FileStream::Read(m_Buffer, m_BufferSize);
 				m_BufferOffset = 0;
 			}
 			else
 			{
+				// Refill buffer to read what remains and for future read calls
 				m_MemoryRead = FileStream::Read(m_Buffer, m_BufferSize);
 				TYR_ASSERT(m_MemoryRead >= remaining);
 				memcpy(remainingData, &m_Buffer[0], remaining);

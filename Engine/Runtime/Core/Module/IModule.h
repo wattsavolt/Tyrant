@@ -11,13 +11,17 @@ namespace tyr
         virtual ~IModule() = default;
 
         // Called when the engine is booting up
-        virtual void InitializeModule() = 0;
+        virtual void Initialize() = 0;
 
         // Called before engine shutdown
-        virtual void ShutdownModule() = 0;
+        virtual void Shutdown() = 0;
+
+        virtual void BeginFrame() {};
 
         // Called every frame by the engine. Should schedule async tasks for this module
-        virtual void UpdateModule(float deltaTime) = 0;
+        virtual void Update(float deltaTime) = 0;
+
+        virtual void EndFrame() {};
     };
 	
 }

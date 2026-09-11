@@ -1,6 +1,7 @@
 #include "RendererModule.h"
 #include "BuildConfig.h"
 #include "GraphicsManager.h"
+#include "Rendering/RendererAPI.h"
 #include "Rendering/Renderer.h"
 #include "RenderAPI/SwapChain.h"
 #include "Window/Window.h"
@@ -18,12 +19,10 @@ namespace tyr
 
 	}
 
-	void RendererModule::InitializeModule()
+	void RendererModule::Initialize()
 	{
-		WindowModule* windowModule;
-		TYR_GET_MODULE(WindowModule, windowModule);
+		TYR_GET_MODULE(WindowModule, m_WindowModule);
 		RendererConfig rendererConfig;
-		rendererConfig.renderAPIConfig.windowHandle = windowModule->GetPrimaryWindow()->GetHandle();
 		rendererConfig.renderAPIConfig.appName = c_AppName;
 		rendererConfig.renderAPICreateConfig.backend = RenderAPIBackend::Vulkan;
 
@@ -42,20 +41,26 @@ namespace tyr
 		m_RenderAPI->Initialize(rendererConfig.renderAPIConfig);
 
 		m_Renderer = new Renderer(rendererConfig, m_RenderAPI);
+		m_RendererAPI = new RendererAPI(*m_Renderer);
 	}
 
-	void RendererModule::UpdateModule(float deltaTime)
+	void RendererModule::Update(float deltaTime)
 	{
-		// This runs on main thread
-
-		// TODO: This won't need to be called as the renderer will be running on its own thread
 		m_Renderer->Render(deltaTime);
 	}
 
-	void RendererModule::ShutdownModule()
+	void RendererModule::EndFrame()
 	{
+		m_Renderer->PrepareForNextFrame();
+	}
+
+	void RendererModule::Shutdown()
+	{
+		TYR_SAFE_DELETE(m_RendererAPI);
 		TYR_SAFE_DELETE(m_Renderer);
 		m_RenderAPI->Shutdown();
+		GraphicsManager::DestroyRenderAPI(m_RenderAPI);
+		m_WindowModule = nullptr;
 	}
 
 	Device* RendererModule::GetDevice() const

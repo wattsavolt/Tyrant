@@ -1,9 +1,8 @@
 #pragma once
 
 #include "Base/Base.h"
-#include "Containers/Containers.h"
-#include "Threading.h"
-#include "Base/INonCopyable.h"
+#include "Containers/Array.h"
+#include "ThreadTypes.h"
 
 namespace tyr
 {
@@ -13,29 +12,7 @@ namespace tyr
         uint threadCount = static_cast<uint>(Thread::hardware_concurrency());
     };
 
-    struct Task;
-    class PooledThread final : public INonCopyable
-    {
-    public:
-        PooledThread();
-        ~PooledThread();
-
-        void Start(Task* task);
-        void Wait();
-        bool IsAvailable();
-
-    private:
-        void Run();
-
-        Thread m_Thread;
-        Mutex m_Mutex;
-        ConditionVariable m_CV;
-
-        Task* m_Task;
-        std::atomic<bool> m_Stop = false;
-        bool m_IsRunningTask = false;
-    };
-
+    class PooledThread;
     class ThreadPool final
     {
     public:
@@ -45,7 +22,7 @@ namespace tyr
         PooledThread* GetAvailableThread();
 
     private:
-        LocalArray<PooledThread, 64> m_Threads;
+        Array<PooledThread> m_Threads;
         Mutex m_Mutex;
     };
 

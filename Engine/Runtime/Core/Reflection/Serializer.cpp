@@ -1,11 +1,10 @@
 #include "Serializer.h"
-#include "TypeRegistry.h"
 
 namespace tyr
 {
     Serializer::Serializer(bool serializeNonFinal)
         : m_SerializeNonFinal(serializeNonFinal)
-        , m_Buffer{}
+        , m_Buffer(65536) 
     { }
 
     Serializer& Serializer::Instance()
@@ -27,7 +26,7 @@ namespace tyr
     {
         if (field.customSerializer)
         {
-            field.customSerializer->Serialize(stream, &data[field.dataOffset]);
+            field.customSerializer->SerializeObject(stream, &data[field.dataOffset]);
         }
         else
         {
@@ -97,7 +96,7 @@ namespace tyr
     {
         if (field.customSerializer)
         {
-            field.customSerializer->Deserialize(stream, &data[field.dataOffset]);
+            field.customSerializer->DeserializeObject(stream, &data[field.dataOffset]);
         }
         else
         {

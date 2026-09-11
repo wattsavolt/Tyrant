@@ -7,7 +7,7 @@
 
 namespace tyr
 {
-	class TYR_CORE_EXPORT TypeRegistry final
+	class TYR_CORE_API TypeRegistry final
 	{
 	public:
 		static TypeRegistry& Instance();

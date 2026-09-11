@@ -7,17 +7,17 @@
 namespace tyr
 {
 	class AssetManager;
-	class TYR_ENGINE_EXPORT AssetModule final : public IModule
+	class TYR_ENGINE_API AssetModule final : public IModule
 	{
 	public:
 		AssetModule();
 		~AssetModule();
 
-		void InitializeModule() override;
+		void Initialize() override;
 
-		void ShutdownModule() override;
+		void Shutdown() override;
 
-		void UpdateModule(float deltaTime) override;
+		void Update(float deltaTime) override;
 
 		const AssetManager* GetAssetManager() const { return m_AssetManager; }
 

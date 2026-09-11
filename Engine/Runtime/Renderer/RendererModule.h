@@ -8,28 +8,35 @@
 namespace tyr
 {
 	class Renderer;
+	class RendererAPI;
 	class Device;
+	class RenderAPI;
+	class WindowModule;
 	struct RenderUpdateData;
 
-	class TYR_RENDERER_EXPORT RendererModule final : public IModule
+	class TYR_RENDERER_API RendererModule final : public IModule
 	{
 	public:
 		RendererModule();
 		~RendererModule();
 
-		void InitializeModule() override;
+		void Initialize() override;
 
-		void ShutdownModule() override;
+		void Shutdown() override;
 
-		void UpdateModule(float deltaTime) override;
+		void Update(float deltaTime) override;
+
+		void EndFrame() override;
 	
 		Device* GetDevice() const;
 
-		Renderer* GetRenderer() const { return m_Renderer; }
+		RendererAPI* GetRendererAPI() const { return m_RendererAPI; }
 
 	private:
-		Ref<RenderAPI> m_RenderAPI;
-		Renderer* m_Renderer;
+		RenderAPI* m_RenderAPI{};
+		Renderer* m_Renderer{};
+		RendererAPI* m_RendererAPI{};
+		WindowModule* m_WindowModule{};
 	};
 	
 }

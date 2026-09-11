@@ -28,17 +28,17 @@ namespace tyr
 		struct QueueFamilyIndices 
 		{
 			int graphicsFamily = -1;
-			int presentFamily = -1;
+			// Maybe add present family back later and check if phsical device has a queue family with suuport for present.
+
 
 			bool IsComplete()
 			{
-				return graphicsFamily > -1 && presentFamily > -1;
+				return graphicsFamily > -1;
 			}
 		};
 
 		void CreateInstance();
 		void SetupDebugMessenger();
-		void CreateSurface();
 		void SelectPhysicalDevice();
 		int RatePhysicalDevice(VkPhysicalDevice device);
 		QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device);
@@ -51,7 +51,6 @@ namespace tyr
 
 		VkInstance m_Instance = VK_NULL_HANDLE;
 		VkDebugUtilsMessengerEXT m_DebugMessenger = VK_NULL_HANDLE;
-		VkSurfaceKHR m_Surface = VK_NULL_HANDLE;
 		// Implicitly destroyed automatically when instance is destroyed.
 		VkPhysicalDevice m_PhysicalDevice = VK_NULL_HANDLE;
 		uint m_PhysicalDeviceIndex = UINT32_MAX;

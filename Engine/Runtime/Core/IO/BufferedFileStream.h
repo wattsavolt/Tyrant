@@ -5,7 +5,7 @@
 
 namespace tyr
 {
-	class TYR_CORE_EXPORT BufferedFileStream final : public FileStream
+	class TYR_CORE_API BufferedFileStream final : public FileStream
 	{
 	public:
 		BufferedFileStream(uint8* buffer, size_t bufferSize, const char* filePath, Operation op = Operation::Read, bool overwrite = true);

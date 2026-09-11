@@ -1,9 +1,15 @@
 #include "BoundingSphere.h"
 #include "Ray.h"
 #include "Plane.h"
+#include "Reflection/Reflection.h"
 
 namespace tyr
 {
+	TYR_REFL_CLASS_START(BoundingSphere, 0);
+		TYR_REFL_FIELD(&BoundingSphere::m_Centre, "Centre", true, true, true);
+		TYR_REFL_FIELD(&BoundingSphere::m_Radius, "Radius", true, true, true);
+	TYR_REFL_CLASS_END();
+
 	BoundingSphere::BoundingSphere(const Vector3& centre, float radius)
 		: m_Centre(centre), m_Radius(radius)
 	{ }
@@ -56,7 +62,7 @@ namespace tyr
 
 	bool BoundingSphere::Intersects(const Plane& plane, float& distance) const
 	{
-		// Signed distance from sphere center to plane
+		// Signed distance from sphere centre to plane
 		distance = plane.m_Normal.Dot(m_Centre) + plane.m_Distance;
 
 		// Intersection occurs when sphere overlaps or touches the plane

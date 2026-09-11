@@ -10,7 +10,7 @@ namespace tyr
 	class Matrix3;
 
 	/// Represents a quaternion used for 3D rotations. 
-	class TYR_CORE_EXPORT Quaternion
+	class TYR_CORE_API Quaternion
 	{
 	private:
 		struct EulerAngleOrderData

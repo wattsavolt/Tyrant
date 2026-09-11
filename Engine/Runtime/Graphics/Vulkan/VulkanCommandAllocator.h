@@ -7,7 +7,7 @@
 namespace tyr
 {
 	class DeviceInternal;
-	class VulkanCommandAllocator : public CommandAllocator
+	class VulkanCommandAllocator final : public CommandAllocator
 	{
 	public:
 		VulkanCommandAllocator(DeviceInternal& device, const CommandAllocatorDesc& desc);

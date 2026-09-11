@@ -7,7 +7,7 @@
 namespace tyr
 {
 	/// Allocates blocks of memory as required and all memory is freed at once. 
-	class TYR_CORE_EXPORT ScratchAllocator final
+	class TYR_CORE_API ScratchAllocator final
 	{
 	private:
 		/// A single block of memory of BlockSize size. A pointer to the first free address is stored, and a remaining
@@ -15,17 +15,17 @@ namespace tyr
 		class Block final
 		{
 		public:
-			Block(uint size)
+			Block(size_t size)
 				: m_Size(size) { }
 
 			~Block() = default;
 
 			/// Returns the first free address and increments the free pointer. Caller needs to ensure the remaining block
 			/// size is adequate before calling.
-			uint8* Alloc(uint amount)
+			uint8* Alloc(size_t size)
 			{
 				uint8* ptr = &m_Data[m_Pos];
-				m_Pos += amount;
+				m_Pos += size;
 				return ptr;
 			}
 
@@ -37,34 +37,34 @@ namespace tyr
 
 			uint8* m_Data = nullptr;
 			// Pointer to current memory location
-			uint m_Pos = 0;
-			uint m_Size = 0;
+			size_t m_Pos = 0;
+			size_t m_Size = 0;
 		};
 
 	public:
-		ScratchAllocator(uint blockSize = 1024 * 1024);
+		ScratchAllocator(size_t blockSize = 1024 * 1024);
 		~ScratchAllocator();
 
 		/// Allocates memory of the size provided using 16 byte alignment.
-		uint8* Alloc(uint amount);
+		uint8* Alloc(size_t size);
 
 		/// Allocates memory of the size provided with the specified alignment as the boundary.
 		/// @note The alignment must be a power of 2
-		uint8* AllocAligned(uint amount, uint alignment);
+		uint8* AllocAligned(size_t size, size_t alignment);
 
 		/// Clears all allocations, combines all blocks into one and starts a new period from scratch.
 		void Reset();
 
-		uint GetTotalSize() const;
+		size_t GetTotalSize() const;
 
 	private:
 		/// Allocates a new block of memory of the specified size.
-		void AllocBlock(uint amount);
+		void AllocBlock(size_t size);
 
 		/// Deallocates the block's memory
 		void FreeBlock(Block* block);
 
-		uint m_MinBlockSize;
+		size_t m_MinBlockSize;
 		Array<Block*> m_Blocks;
 		Block* m_CurBlock;
 	};
@@ -91,15 +91,15 @@ namespace tyr
 		}
 
 		/// @see ScratchAllocator Alloc
-		uint8* Alloc(uint amount)
+		uint8* Alloc(size_t size)
 		{
-			return m_Allocators[m_AllocatorIndex]->Alloc(amount);
+			return m_Allocators[m_AllocatorIndex]->Alloc(size);
 		}
 
 		/// @see ScratchAllocator AllocAligned
-		uint8* AllocAligned(uint amount, uint alignment)
+		uint8* AllocAligned(size_t size, size_t alignment)
 		{
-			return m_Allocators[m_AllocatorIndex]->AllocAligned(amount, alignment);
+			return m_Allocators[m_AllocatorIndex]->AllocAligned(size, alignment);
 		}
 
 		void Next()

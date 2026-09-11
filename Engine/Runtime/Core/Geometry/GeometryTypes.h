@@ -6,7 +6,7 @@
 
 namespace tyr
 {
-	class TYR_CORE_EXPORT Rectangle
+	class TYR_CORE_API Rectangle
 	{
 	public:
 		Vector2 m_Offset;

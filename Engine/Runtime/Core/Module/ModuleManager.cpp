@@ -42,20 +42,40 @@ namespace tyr
 
         for (IModule* module : m_Modules)
         {
-            module->InitializeModule();
+            module->Initialize();
         }
 
         m_ModulesInitialized = true;
     }
 
-    void ModuleManager::UpdateModules(float deltaTime)
+    void ModuleManager::BeginFrame()
     {
         TYR_ASSERT(m_ModulesInitialized);
 
-        // TODO: Okay to update linearly as each module should declare tasks and have a completion task that is waited on by modules that depend on it
         for (int i = m_Modules.Size() - 1; i >= 0; --i)
         {
-            m_Modules[i]->UpdateModule(deltaTime);
+            m_Modules[i]->BeginFrame();
+        }
+    }
+
+    void ModuleManager::Update(float deltaTime)
+    {
+        TYR_ASSERT(m_ModulesInitialized);
+
+        // Okay to update linearly as each module should declare tasks and have a completion task that is waited on by modules that depend on it
+        for (int i = m_Modules.Size() - 1; i >= 0; --i)
+        {
+            m_Modules[i]->Update(deltaTime);
+        }
+    }
+
+    void ModuleManager::EndFrame()
+    {
+        TYR_ASSERT(m_ModulesInitialized);
+
+        for (int i = m_Modules.Size() - 1; i >= 0; --i)
+        {
+            m_Modules[i]->EndFrame();
         }
     }
 
@@ -65,7 +85,7 @@ namespace tyr
 
         for (int i = m_Modules.Size() - 1; i >= 0; --i)
         {
-            m_Modules[i]->ShutdownModule();
+            m_Modules[i]->Shutdown();
         }
 
         m_ModulesInitialized = false;

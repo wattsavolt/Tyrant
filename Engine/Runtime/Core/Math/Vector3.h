@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "Math/Math.h"
@@ -8,7 +7,7 @@ namespace tyr
 	class Vector4;
 
 	/// A three dimensional vector. 
-	class TYR_CORE_EXPORT Vector3
+	class TYR_CORE_API Vector3
 	{
 	public:
 		Vector3() = default;
@@ -92,8 +91,8 @@ namespace tyr
 		{
 			TYR_ASSERT(val != 0.0);
 
-			float fInv = 1.0f / val;
-			return Vector3(x * fInv, y * fInv, z * fInv);
+			const float inv = 1.0f / val;
+			return Vector3(x * inv, y * inv, z * inv);
 		}
 
 		Vector3 operator/ (const Vector3& rhs) const
@@ -258,7 +257,7 @@ namespace tyr
 
 		float Normalize()
 		{
-			float length = Length();
+			const float length = Length();
 			*this *= 1.0f / length;
 
 			return length;
@@ -266,8 +265,8 @@ namespace tyr
 
 		float SafeNormalize(float tolerance = 1e-04f)
 		{
-			float length = Length();
-			if (length > (tolerance * tolerance))
+			const float length = Length();
+			if (length > tolerance)
 				*this *= 1.0f / length;
 
 			return length;
@@ -282,7 +281,7 @@ namespace tyr
 		static Vector3 SafeNormalize(const Vector3& v, float tolerance = 1e-04f)
 		{
 			float sqrLen = v.x * v.x + v.y * v.y + v.z * v.z;
-			if (sqrLen > tolerance)
+			if (sqrLen > tolerance * tolerance)
 			{
 				return v * Math::InvSqrt(sqrLen);
 			}
@@ -313,7 +312,7 @@ namespace tyr
 		bool isZeroLength(float tolerance = 1e-04f) const
 		{
 			float sqrdLen = x * x + y * y + z * z;
-			return sqrdLen < tolerance;
+			return sqrdLen < tolerance * tolerance;
 		}
 
 		/// Calculates a reflection vector to the plane with the given normal. 

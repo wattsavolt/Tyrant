@@ -12,7 +12,7 @@ namespace tyr
 	class Quaternion;
 
 	/// Class representing a row-major 4x4 matrix. 
-	class TYR_CORE_EXPORT Matrix4
+	class TYR_CORE_API Matrix4
 	{
 	public:
 		Matrix4() = default;

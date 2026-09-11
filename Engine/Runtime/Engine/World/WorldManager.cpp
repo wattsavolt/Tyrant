@@ -1,7 +1,7 @@
 #include "WorldManager.h"
 #include "BuildConfig.h"
 #include "RendererModule.h"
-#include "Rendering/Renderer.h"
+#include "Rendering/RendererAPI.h"
 
 namespace tyr
 {
@@ -9,7 +9,7 @@ namespace tyr
 	{
 		RendererModule* rendererModule;
 		TYR_GET_MODULE(RendererModule, rendererModule);
-		m_Renderer = rendererModule->GetRenderer();
+		m_RendererAPI = rendererModule->GetRendererAPI();
 	}
 
 	WorldManager::~WorldManager()
@@ -19,47 +19,54 @@ namespace tyr
 
 	void WorldManager::Update(float deltaTime)
 	{
-		RenderFrame& renderFrame = m_Renderer->GetRenderFrame();
-		renderFrame.Clear();
-
-		// TODO: Set this if window has resized
-		renderFrame.windowResize = false;
-		for (World* world : m_Worlds)
+		for (Handle worldHandle : m_Worlds)
 		{
-			world->Update(deltaTime, renderFrame.sceneFrames[world->GetSceneIndex()]);
+			World& world = m_WorldPool[worldHandle];
+			world.Update(deltaTime);
 		}
 	}
 
-	World* WorldManager::AddWorld(const WorldConfig& params)
+	Handle WorldManager::AddWorld(const WorldConfig& params)
 	{
-		uint8 sceneIndex = m_Renderer->AddScene();
-		uint index;
-		World* world = m_WorldPool.Create(index);
-		world->Initialize(params, sceneIndex);
-		m_Worlds.Add(world);
-		return world;
+		const Handle worldHandle = m_WorldPool.Create();
+		World& world = m_WorldPool[worldHandle];
+		world.Initialize(params);
+		m_Worlds.Add(worldHandle);
+		return worldHandle;
 	}
 
-	void WorldManager::RemoveWorld(World* world)
+	const World& WorldManager::GetWorld(Handle worldHandle) const
 	{
-		world->Shutdown();
+		return m_WorldPool[worldHandle];
+	}
+
+	World& WorldManager::GetWorld(Handle worldHandle)
+	{
+		return m_WorldPool[worldHandle];
+	}
+
+	void WorldManager::RemoveWorld(Handle worldHandle)
+	{
+		World& world = m_WorldPool[worldHandle];
+		world.Shutdown();
 		for (uint i = 0; i < m_Worlds.Size(); ++i)
 		{
-			if (world == m_Worlds[i])
+			if (worldHandle == m_Worlds[i])
 			{
 				m_Worlds.Erase(i);
 				break;
 			}
 		}
-		m_WorldPool.Delete(world);
+		m_WorldPool.Delete(worldHandle);
 	}
 
 	void WorldManager::RemoveWorlds()
 	{
-		for (World* world : m_Worlds)
+		for (Handle worldHandle : m_Worlds)
 		{
-			world->Shutdown();
-			m_WorldPool.Delete(world);
+			World& world = m_WorldPool[worldHandle];
+			world.Shutdown();
+			m_WorldPool.Delete(worldHandle);
 		}
 		m_Worlds.Clear();
 	}

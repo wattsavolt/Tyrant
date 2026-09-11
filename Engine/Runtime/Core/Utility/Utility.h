@@ -9,7 +9,11 @@ namespace tyr
 	#define TYR_VALUE(arg) #arg
 	#define TYR_TO_LITERAL(arg) TYR_VALUE(arg)
 
-	#define TYR_CONCAT(first, second) first second
+	#define TYR_CONCAT2(first, second) first second
+
+	#define TYR_CONCAT3(first, second, third) first second third
+
+	#define TYR_CONCAT4(first, second, third, fourth) first second third fourth
 
 	#if defined(_DEBUG) || defined(TYR_ENABLE_PROFILING)
 	#define TYR_LOG(level, desc, ...)                                                                \
@@ -41,7 +45,7 @@ namespace tyr
 	}
 
 	/// Class providing general utility functions 
-	class TYR_CORE_EXPORT Utility
+	class TYR_CORE_API Utility
 	{
 	public:
 
@@ -59,5 +63,11 @@ namespace tyr
 		{
 			return (flags & flag) == flag;
 		};
+
+		template <typename T>
+		static T GetPrevCircularIndex(T current, T count)
+		{
+			return (current + count - 1) % count;
+		}
 	};
 }

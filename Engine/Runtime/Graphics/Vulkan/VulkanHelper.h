@@ -15,6 +15,6 @@ namespace tyr
 		static void LoadInstanceExtensionFunctions(VkInstance instance);
 		static VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* createInfo, VkDebugUtilsMessengerEXT* debugMessenger);
 		static void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT debugMessenger);
-		static void CreateWindowSurface(void* windowHandle, VkInstance instance, VkSurfaceKHR* surface);
+		static void CreateWindowSurface(void* windowOSHandle, VkInstance instance, VkSurfaceKHR* surface);
 	};
 }

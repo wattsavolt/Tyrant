@@ -26,7 +26,6 @@ namespace tyr
 		void* image;
 		// Path relative to assets folder
 		const char* outputFilePath;
-		AssetID assetID;
 		uint width;
 		uint height;
 		ImageCompressionInputFormat inputFormat;
@@ -44,14 +43,13 @@ namespace tyr
 		const char* inputFilePath;
 		// Path relative to assets folder
 		const char* outputFilePath;
-		AssetID assetID;
 		ImageCompressionOutputFormat outputFormat;
 		uint8 mip = 0;
 		// Is the input and output in sSRGB colour space
 		bool isSRGB = false;
 	};
 
-	class TYR_ENGINE_EXPORT ImageCompressor final
+	class TYR_ENGINE_API ImageCompressor final
 	{
 	public:
 		static bool CompressImage2D(const Image2DCompressionDesc& desc);

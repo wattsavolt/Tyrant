@@ -7,9 +7,9 @@
 
 namespace tyr
 {
-	using FenceHandle = ResourceHandle;
-	using SemaphoreHandle = ResourceHandle;
-	using EventHandle = ResourceHandle;
+	TYR_CREATE_HANDLE_TYPE(FenceHandle);
+	TYR_CREATE_HANDLE_TYPE(SemaphoreHandle);
+	TYR_CREATE_HANDLE_TYPE(EventHandle);
 
 	// Memory barrier in vulkan
 	struct PipelineBarrier
@@ -51,25 +51,19 @@ namespace tyr
 
 	struct FenceDesc
 	{
-#if !TYR_FINAL
-		GDebugString debugName;
-#endif
+		TYR_DECLARE_GDEBUGNAME(debugName);
 		uint64 timeout = 5; // nanoseconds
 		bool signalled = false;
 	};
 
 	struct SemaphoreDesc
 	{
-#if !TYR_FINAL
-		GDebugString debugName;
-#endif
+		TYR_DECLARE_GDEBUGNAME(debugName);
 		SemaphoreType type = SemaphoreType::Binary;
 	};
 
 	struct EventDesc
 	{
-#if !TYR_FINAL
-		GDebugString debugName;
-#endif
+		TYR_DECLARE_GDEBUGNAME(debugName);
 	};
 }

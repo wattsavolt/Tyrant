@@ -87,103 +87,128 @@ function(copy_binaries targetName srcDir)
 endfunction()
 
 function(add_common_properties target)
-	get_target_property(target_type ${target} TYPE)
+    get_target_property(target_type ${target} TYPE)
 
-	if(MSVC)
-		# Linker
-		# The VS generator seems picky about how the linker flags are passed: we have to make sure
-		# the options are quoted correctly and with append_string or random semicolons will be
-		# inserted in the command line; and unrecognised options are only treated as warnings
-		# and not errors so they won't be caught by CI. Make sure the options are separated by
-		# spaces too.
-		# For some reason this does not apply to the compiler options...
+    if(MSVC)
+        # -------------------------
+        # Linker options
+        # -------------------------
+        target_link_options(${target} PRIVATE
+            /DYNAMICBASE
+            /NOLOGO
+        )
 
-		set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS "/DYNAMICBASE /NOLOGO")
+        target_link_options(${target} PRIVATE
+            $<$<CONFIG:Debug>:/DEBUG>
+            $<$<CONFIG:RelWithDebInfo>:/DEBUG /LTCG:incremental /INCREMENTAL:NO /OPT:REF>
+            $<$<CONFIG:MinSizeRel>:/DEBUG /LTCG /INCREMENTAL:NO /OPT:REF>
+            $<$<CONFIG:Release>:/DEBUG /LTCG /INCREMENTAL:NO /OPT:REF>
+        )
 
-		set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS_DEBUG "/DEBUG")
-		set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS_RELWITHDEBINFO "/DEBUG /LTCG:incremental /INCREMENTAL:NO /OPT:REF")
-		set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS_MINSIZEREL "/DEBUG /LTCG /INCREMENTAL:NO /OPT:REF")
-		set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS_RELEASE "/DEBUG /LTCG /INCREMENTAL:NO /OPT:REF")
+        if(TYR_64BIT)
+            target_link_options(${target} PRIVATE
+                $<$<CONFIG:RelWithDebInfo>:/OPT:ICF>
+                $<$<CONFIG:MinSizeRel>:/OPT:ICF>
+                $<$<CONFIG:Release>:/OPT:ICF>
+            )
+        endif()
 
-		if(TYR_64BIT)
-			set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS_RELWITHDEBINFO " /OPT:ICF")
-			set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS_MINSIZEREL " /OPT:ICF")
-			set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS_RELEASE " /OPT:ICF")
-		endif()
+        if(${target_type} STREQUAL "SHARED_LIBRARY" OR ${target_type} STREQUAL "MODULE_LIBRARY")
+            target_link_options(${target} PRIVATE /DLL)
+        endif()
 
-		if (${target_type} STREQUAL "SHARED_LIBRARY" OR ${target_type} STREQUAL "MODULE_LIBRARY")
-			set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS " /DLL")
-		endif()
+        # -------------------------
+        # Compiler options
+        # -------------------------
+        target_compile_options(${target} PRIVATE
+            /GS-
+            /W3
+            /WX-
+            /MP
+            /nologo
+            /bigobj
+            /wd4577
+            /wd4530
+            /wd4251   # suppress C4251 warnings for STL/private containers
+            -DWIN32
+            -D_WINDOWS
+            -D_ITERATOR_DEBUG_LEVEL=0
+        )
 
-		# Compiler
-		set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS /GS- /W3 /WX- /MP /nologo /bigobj /wd4577 /wd4530)
-		set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS -DWIN32 -D_WINDOWS)
+        # Debug configuration
+        if(TYR_64BIT)
+            target_compile_options(${target} PRIVATE $<$<CONFIG:Debug>:/Od /RTC1 /MDd -DDEBUG /ZI>)
+        else()
+            target_compile_options(${target} PRIVATE $<$<CONFIG:Debug>:/Od /RTC1 /MDd -DDEBUG /Zi>)
+        endif()
 
-		# Set character set of the project to unicode. Use multi-byte for now.
-		#set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS /UMBCS /D_UNICODE /DUNICODE)
+        # RelWithDebInfo configuration
+        target_compile_options(${target} PRIVATE $<$<CONFIG:RelWithDebInfo>:/GL /Gy /Zi /O2 /Oi /MD -DDEBUG>)
 
-		set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS $<$<CONFIG:Debug>:/Od /RTC1 /MDd -DDEBUG>)
+        # MinSizeRel configuration
+        target_compile_options(${target} PRIVATE $<$<CONFIG:MinSizeRel>:/GL /Gy /Zi /O2 /Oi /MD -DNDEBUG>)
 
-		if(TYR_64BIT) # Debug edit and continue for 64-bit
-			set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS $<$<CONFIG:Debug>:/ZI>)
-		else() # Normal debug for 32-bit
-			set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS $<$<CONFIG:Debug>:/Zi>)
-		endif()
+        # Release configuration
+        target_compile_options(${target} PRIVATE $<$<CONFIG:Release>:/GL /Gy /Zi /O2 /Oi /MD -DNDEBUG>)
 
-		set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS $<$<CONFIG:RelWithDebInfo>:/GL /Gy /Zi /O2 /Oi /MD -DDEBUG>)
-		set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS $<$<CONFIG:MinSizeRel>:/GL /Gy /Zi /O2 /Oi /MD -DNDEBUG>)
-		set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS $<$<CONFIG:Release>:/GL /Gy /Zi /O2 /Oi /MD -DNDEBUG>)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "AppleClang" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+        # Compiler options for Clang/GCC
+        target_compile_options(${target} PRIVATE
+            -Wall
+            -Wextra
+            -Wno-unused-parameter
+            -fpic
+            -fno-strict-aliasing
+            -msse4.1
+        )
 
-		# Disable to improve performance when using STL containers in debug
-		set_property(TARGET ${target} APPEND PROPERTY COMPILE_DEFINITIONS "_ITERATOR_DEBUG_LEVEL=0")
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "AppleClang")
+            target_compile_options(${target} PRIVATE -fno-ms-compatibility)
 
-		# Global defines
-		#add_definitions(-D_HAS_EXCEPTIONS=0)
+            if(APPLE)
+                target_compile_options(${target} PRIVATE -fobjc-arc $<$<COMPILE_LANGUAGE:CXX>:-std=c++1z>)
+            endif()
+        endif()
 
-	elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "AppleClang" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-		# Note: Optionally add -ffunction-sections, -fdata-sections, but with linker option --gc-sections
-		# TODO: Use link-time optimization -flto. Might require non-default linker.
-		set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS -Wall -Wextra -Wno-unused-parameter -fpiC -fno-strict-aliasing -msse4.1)
+        # Per-configuration options
+        target_compile_options(${target} PRIVATE $<$<CONFIG:Debug>:-ggdb -O0 -DDEBUG>)
+        target_compile_options(${target} PRIVATE $<$<CONFIG:RelWithDebInfo>:-ggdb -O2 -DDEBUG -Wno-unused-variable>)
+        target_compile_options(${target} PRIVATE $<$<CONFIG:MinSizeRel>:-ggdb -O2 -DNDEBUG -Wno-unused-variable>)
+        target_compile_options(${target} PRIVATE $<$<CONFIG:Release>:-ggdb -O2 -DNDEBUG -Wno-unused-variable>)
 
-		if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "AppleClang")
-			set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS -fno-ms-compatibility)
+        if(${target_type} STREQUAL "EXECUTABLE")
+            target_link_options(${target} PRIVATE
+                $<$<CONFIG:Debug>:-no-pie>
+                $<$<CONFIG:RelWithDebInfo>:-no-pie>
+                $<$<CONFIG:MinSizeRel>:-no-pie>
+                $<$<CONFIG:Release>:-no-pie>
+            )
+        endif()
 
-			if(APPLE)
-				set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS -fobjc-arc $<$<COMPILE_LANGUAGE:CXX>:-std=c++1z>)
-			endif()
-		endif()
+    else()
+        # TODO: Other compilers
+    endif()
 
-		set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS $<$<CONFIG:Debug>:-ggdb -O0 -DDEBUG>)
-		set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS $<$<CONFIG:RelWithDebInfo>:-ggdb -O2 -DDEBUG -Wno-unused-variable>)
-		set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS $<$<CONFIG:MinSizeRel>:-ggdb -O2 -DNDEBUG -Wno-unused-variable>)
-		set_property(TARGET ${target} APPEND PROPERTY COMPILE_OPTIONS $<$<CONFIG:Release>:-ggdb -O2 -DNDEBUG -Wno-unused-variable>)
+    # -------------------------
+    # Shared library versioning
+    # -------------------------
+    if(${target_type} STREQUAL "SHARED_LIBRARY")
+        set_property(TARGET ${target} PROPERTY VERSION ${TYR_FRAMEWORK_VERSION_MAJOR}.${TYR_FRAMEWORK_VERSION_MINOR}.${TYR_FRAMEWORK_VERSION_PATCH})
+        set_property(TARGET ${target} PROPERTY SOVERSION ${TYR_FRAMEWORK_VERSION_MAJOR})
+    endif()
 
-		if (${target_type} STREQUAL "EXECUTABLE")
-			if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-				set_property(TARGET ${target} APPEND PROPERTY LINK_FLAGS_DEBUG -no-pie)
-				set_property(TARGET ${target} APPEND PROPERTY LINK_FLAGS_RELWITHDEBINFO -no-pie)
-				set_property(TARGET ${target} APPEND PROPERTY LINK_FLAGS_MINSIZEREL -no-pie)
-				set_property(TARGET ${target} APPEND PROPERTY LINK_FLAGS_RELEASE -no-pie)
-			endif()
-		endif()
-	else()
-		# TODO_OTHER_COMPILERS_GO_HERE
-	endif()
-
-	if (${target_type} STREQUAL "SHARED_LIBRARY")
-		set_property(TARGET ${target} PROPERTY VERSION ${TYR_FRAMEWORK_VERSION_MAJOR}.${TYR_FRAMEWORK_VERSION_MINOR}.${TYR_FRAMEWORK_VERSION_PATCH})
-		set_property(TARGET ${target} PROPERTY SOVERSION ${TYR_FRAMEWORK_VERSION_MAJOR})
-	endif()
-
-	if(APPLE)
-		set_property(TARGET ${target} PROPERTY INSTALL_RPATH "@loader_path;@loader_path/../lib;@loader_path/tyr-${TYR_FRAMEWORK_VERSION_MAJOR}.${TYR_FRAMEWORK_VERSION_MINOR}.${TYR_FRAMEWORK_VERSION_PATCH}")
-	else()
-		if (${target_type} STREQUAL "EXECUTABLE")
-			set_property(TARGET ${target} PROPERTY INSTALL_RPATH "\$ORIGIN/../lib:\$ORIGIN/../lib/tyr-${TYR_FRAMEWORK_VERSION_MAJOR}.${TYR_FRAMEWORK_VERSION_MINOR}.${TYR_FRAMEWORK_VERSION_PATCH}")
-		else()
-			set_property(TARGET ${target} PROPERTY INSTALL_RPATH "\$ORIGIN:\$ORIGIN/tyr-${TYR_FRAMEWORK_VERSION_MAJOR}.${TYR_FRAMEWORK_VERSION_MINOR}.${TYR_FRAMEWORK_VERSION_PATCH}")
-		endif()
-	endif()
+    # -------------------------
+    # RPATH
+    # -------------------------
+    if(APPLE)
+        set_property(TARGET ${target} PROPERTY INSTALL_RPATH "@loader_path;@loader_path/../lib;@loader_path/tyr-${TYR_FRAMEWORK_VERSION_MAJOR}.${TYR_FRAMEWORK_VERSION_MINOR}.${TYR_FRAMEWORK_VERSION_PATCH}")
+    else()
+        if(${target_type} STREQUAL "EXECUTABLE")
+            set_property(TARGET ${target} PROPERTY INSTALL_RPATH "\$ORIGIN/../lib:\$ORIGIN/../lib/tyr-${TYR_FRAMEWORK_VERSION_MAJOR}.${TYR_FRAMEWORK_VERSION_MINOR}.${TYR_FRAMEWORK_VERSION_PATCH}")
+        else()
+            set_property(TARGET ${target} PROPERTY INSTALL_RPATH "\$ORIGIN:\$ORIGIN/tyr-${TYR_FRAMEWORK_VERSION_MAJOR}.${TYR_FRAMEWORK_VERSION_MINOR}.${TYR_FRAMEWORK_VERSION_PATCH}")
+        endif()
+    endif()
 endfunction()
 
 # Returns all suitable files in the current and child directories.

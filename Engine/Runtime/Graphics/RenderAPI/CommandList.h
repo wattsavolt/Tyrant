@@ -23,13 +23,12 @@ namespace tyr
 
 	struct RenderingInfo
 	{
-		static constexpr uint8 c_MaxColourAttachments = 4;
-
-		RenderingInfoFlags flags = RENDERING_INFO_NONE;
 		GraphicsRect renderArea;
+		RenderingInfoFlags flags = RENDERING_INFO_NONE;
 		uint layerCount;
 		uint viewMask;
-		LocalArray<RenderingAttachmentInfo, c_MaxColourAttachments>	colourAttachments;
+		uint colourAttachmentCount = 0;
+		RenderingAttachmentInfo* colourAttachments;
 		RenderingAttachmentInfo depthAttachment;
 		RenderingAttachmentInfo stencilAttachment;
 		bool hasDepthAttachment = false;
@@ -38,23 +37,13 @@ namespace tyr
 
 	struct CommandListDesc
 	{
-		LocalString<30> debugName; 
+		GDebugString debugName;
 		CommandListType type = CommandListType::Primary;
 		CommandAllocator* allocator;
 	};
 
-	struct CommndListExecuteDesc
-	{
-		LocalArray<CommandList*, 6> commandLists;
-		LocalArray<SemaphoreHandle, 10> waitSemaphores;
-		LocalArray<SemaphoreHandle, 10> signalSemaphores;
-		LocalArray<PipelineStage, 10> waitDstPipelineStages;
-		LocalArray<uint64, 10> waitValues;
-		LocalArray<uint64, 10> signalValues;
-	};
-
 	/// Class repesenting a command buffer 
-	class TYR_GRAPHICS_EXPORT CommandList
+	class TYR_GRAPHICS_API CommandList
 	{
 	public:
 		CommandList(const CommandListDesc& desc);
@@ -87,22 +76,17 @@ namespace tyr
 		void BindVertexBuffers(const BufferViewHandle* vertexBufferViews, uint bufferViewCount);
 		void BindIndexBuffer(BufferHandle indexBuffer, size_t offset);
 		void BindIndexBuffer(BufferViewHandle indexBufferView);
-		void BindDescriptorSet(DescriptorSetGroupHandle group, GraphicsPipelineHandle pipeline);
-		void BindDescriptorSet(DescriptorSetGroupHandle group, ComputePipelineHandle pipeline);
-		void BindDescriptorSet(DescriptorSetGroupHandle group, RayTracingPipelineHandle pipeline);
+		void BindDescriptorSet(DescriptorSetHandle set, GraphicsPipelineHandle pipeline);
+		void BindDescriptorSet(DescriptorSetHandle set, ComputePipelineHandle pipeline);
+		void BindDescriptorSet(DescriptorSetHandle set, RayTracingPipelineHandle pipeline);
 		void DrawIndexed(uint indexCount, uint instanceCount, uint firstIndex, int vertexOffset, uint firstInstance);
 		void Draw(uint vertexCount, uint instanceCount, uint firstVertex, uint firstInstance);
 		void DrawMeshTasks(uint groupCountX, uint groupCountY, uint groupCountZ);
 		void Dispatch(uint groupCountX, uint groupCountY, uint groupCountZ);
-		void Execute(const CommndListExecuteDesc* executeDescs, uint executeDescCount, uint queueIndexu, FenceHandle fence);
 
 		const CommandListDesc& GetDesc() const { return m_Desc; }
-		CommandQueueType GetQueueType() const { return m_QueueType; }
-		uint GetQueueFamilyIndex() const { return m_QueueFamilyIndex; }
 
 	protected:
 		CommandListDesc m_Desc;
-		CommandQueueType m_QueueType;
-		uint m_QueueFamilyIndex;
 	};
 }

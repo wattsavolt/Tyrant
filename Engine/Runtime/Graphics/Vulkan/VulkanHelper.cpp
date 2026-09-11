@@ -102,7 +102,7 @@ namespace tyr
 		}
 	}
 
-	void VulkanHelper::CreateWindowSurface(void* windowHandle, VkInstance instance, VkSurfaceKHR* surface)
+	void VulkanHelper::CreateWindowSurface(void* windowOSHandle, VkInstance instance, VkSurfaceKHR* surface)
 	{
 #if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
 		VkWin32SurfaceCreateInfoKHR createInfo{};
@@ -122,7 +122,7 @@ namespace tyr
 
 		createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
 		createInfo.pNext = nullptr;
-		createInfo.hwnd = static_cast<HWND>(windowHandle);
+		createInfo.hwnd = static_cast<HWND>(windowOSHandle);
 		createInfo.hinstance = GetModuleHandle(nullptr);
 
 		if (TYR_VULKAN_ERROR(vkCreateWin32SurfaceKHR(instance, &createInfo, g_VulkanAllocationCallbacks, surface)))

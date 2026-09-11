@@ -5,14 +5,12 @@
 
 namespace tyr
 {
-	struct BufferHandle : public ResourceHandle {};
-	struct BufferViewHandle : public ResourceHandle {};
+	TYR_CREATE_HANDLE_TYPE(BufferHandle);
+	TYR_CREATE_HANDLE_TYPE(BufferViewHandle);
 
 	struct BufferDesc
 	{
-#if !TYR_FINAL
-		GDebugString debugName;
-#endif
+		TYR_DECLARE_GDEBUGNAME(debugName);
 		BufferUsage usage = BUFFER_USAGE_UNKNOWN;
 		MemoryProperty memoryProperty;
 		SharingMode sharingMode = SharingMode::Exclusive;
@@ -34,9 +32,7 @@ namespace tyr
 
 	struct BufferViewDesc
 	{
-#if !TYR_FINAL
-		GDebugString debugName;
-#endif
+		TYR_DECLARE_GDEBUGNAME(debugName);
 		BufferHandle buffer;
 		size_t offset;
 		size_t size;

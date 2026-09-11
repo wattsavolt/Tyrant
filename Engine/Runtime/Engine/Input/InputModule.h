@@ -7,17 +7,17 @@
 namespace tyr
 {
 	class InputManager;
-	class TYR_ENGINE_EXPORT InputModule final : public IModule
+	class TYR_ENGINE_API InputModule final : public IModule
 	{
 	public:
 		InputModule();
 		~InputModule();
 
-		void InitializeModule() override;
+		void Initialize() override;
 
-		void ShutdownModule() override;
+		void Shutdown() override;
 
-		void UpdateModule(float deltaTime) override;
+		void Update(float deltaTime) override;
 
 		InputManager* GetInputManager() const { return m_InputManager; }
 

@@ -1,59 +1,72 @@
 #pragma once
 
-#include "EngineMacros.h"
 #include "Core.h"
+#include "EngineMacros.h"
 #include "TextureAsset.h"
 #include "MaterialAsset.h"
-#include "Resources/Texture.h"
-#include "RenderDataTypes/Material.h"
+#include "AssetDataTypes.h"
+#include "Level/Level.h"
+#include "RenderBase/RenderHandles.h"
+#include "AssetConstants.h"
+#include "Rendering/RenderConstants.h"
 
 namespace tyr
 {
-	struct AssetData
-	{
-		uint poolIndex;
-		uint refCount;
-	};
+	class Device;
+	class RendererAPI;
 
-	struct TextureMetadataLoadData
-	{
-		TextureMetadata metadata;
-		const char* filePath;
-	};
-
-	struct MaterialLoadData
-	{
-		MaterialAssetFile material;
-		LocalArray<TextureMetadataLoadData, MaterialConstants::c_MaxTextures> textures;
-		const char* filePath;
-		TaskID taskID;
-	};
-
-	class TYR_ENGINE_EXPORT AssetManager final
+	class TYR_ENGINE_API AssetManager final
 	{
 	public:
-		static constexpr uint c_MaxTextures = 3000;
-		static constexpr uint c_MaxMaterials = 1000;
-		static constexpr uint c_MaxAssets = c_MaxTextures + c_MaxMaterials;
+		static constexpr uint c_MaxAssets = RenderConstants::c_MaxTextures + RenderConstants::c_MaxMaterials;
 
 		AssetManager();
 		~AssetManager();
 
 		void Update(float deltaTime);
 
-		// Paths relative to asset directory
-		void LoadTexture(const char* filePath);
+		void LoadTexture(AssetID assetID);
 
-		void LoadMaterial(const char* filePath);
+		void DeleteTexture(AssetID assetID);
+
+		void LoadMaterial(AssetID assetID);
+
+		void DeleteMaterial(AssetID assetID);
+
+		void LoadMesh(AssetID assetID);
+
+		void DeleteMesh(AssetID assetID);
+
+		void LoadLocation(AssetID assetID);
+
+		const char* GetDefaultMaterialPath() const { return c_DefaultMaterialPath; }
+
+		AssetID GetDefaultMaterialAssetID() const { return c_DefaultMaterialAssetID; }
+
+		// Temporary function until mesh loading and mesh components are supported
+		Handle GetDefaultMaterial() const { return m_AssetMap.Find(c_DefaultMaterialAssetID)->resourceHandle; }
 
 	private:
-		LocalObjectPool<Texture, c_MaxTextures> m_TexturePool;
-		LocalObjectPool<Material, c_MaxMaterials> m_MaterialPool;
-		LocalObjectPool<MaterialLoadData, 100> m_MaterialLoadDataPool;
-		Array<Texture*> m_NewTextures;
-		Array<Material*> m_NewMaterials;
-		HashMap<AssetID, uint> m_AssetMap;
-		LocalObjectPool<AssetData, c_MaxAssets> m_AssetDataPool;
+		void ProcessPendingAssets();
+		void CreateTexture(TextureHeaderLoadData* ld);
+		void UploadTexture(TexturePixelLoadData* ld);
+		void CreateMaterial(MaterialLoadData* ld);
+		void CreateMesh(MeshHeaderLoadData* ld);
+		HashMap<AssetID, AssetData> m_AssetMap;
+		LocalObjectPool<Location, 9, false> m_LocationPool;
+		LocalObjectPool<MeshHeader, RenderConstants::c_MaxMeshes, false> m_MeshHeaderPool;
+		// Loaded batches ready to be processed
+		MPSCRingBuffer<AssetLoadBatch*, 32> m_BatchesLoadedQueue;
+		// Textures that have had their header and raw data loaded but yet to be uploaded to the GPU
+		MPSCRingBuffer<TexturePixelLoadData*, 32> m_TexturesLoadedQueue;
+		MPSCRingBuffer<MeshGeometryLoadData*, 32> m_MeshesLoadedQueue;
+		// Materials that have had the file loaded but waiting on their textures to load
+		Array<MaterialLoadData*> m_MaterialsAwaitingTextures;
+		Handle m_CurrentBatch;
+		Device* m_Device;
+		RendererAPI* m_RendererAPI;
+		char c_DefaultMaterialPath[PathConstants::c_MaxAssetPathTotalSize];
+		AssetID c_DefaultMaterialAssetID;
 	};
 	
 }

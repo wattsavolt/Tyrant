@@ -6,7 +6,7 @@
 
 namespace tyr
 {
-	class TYR_CORE_EXPORT BinaryStream : private INonCopyable
+	class TYR_CORE_API BinaryStream : private INonCopyable
 	{
 	public:
 		enum class Operation

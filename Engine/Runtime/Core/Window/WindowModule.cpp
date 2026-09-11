@@ -1,16 +1,29 @@
 #include "WindowModule.h"
 
+#include "WindowDesc.h"
+#include "Window.h"
+
 #if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
 #include "Win32/PCWindow.h"
 #endif
 
-#include "BuildConfig.h"
-
 namespace tyr
 {
+	struct WindowModulePrivate
+	{
+		LocalObjectPool<Window, WindowConstants::c_MaxWindows> windowPool;
+		Array<WindowHandle> windows;
+
+		WindowModulePrivate()
+			: windows(WindowConstants::c_MaxWindows)
+		{
+
+		}
+	};
+
 	WindowModule::WindowModule()
 	{
-
+		
 	}
 
 	WindowModule::~WindowModule()
@@ -18,27 +31,68 @@ namespace tyr
 		
 	}
 
-	void WindowModule::InitializeModule()
+	void WindowModule::Initialize()
 	{
-		// Get project related properties from the config later
-		WindowProperties windowProperties;
-		windowProperties.showFlag = 1;
-		windowProperties.name = c_AppName;
-		Window::GetMaxResolution(windowProperties.width, windowProperties.height);
-
-#if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
-		m_PrimaryWindow = new PCWindow(windowProperties);
-#endif
+		m_Private = new WindowModulePrivate();
+		
 		//TODO: Other platforms
 	}
 
-	void WindowModule::UpdateModule(float deltaTime)
+	void WindowModule::Shutdown()
 	{
-		
+		delete m_Private;
 	}
 
-	void WindowModule::ShutdownModule()
+	void WindowModule::Update(float deltaTime)
 	{
-		delete m_PrimaryWindow;
+		for (const WindowHandle window : m_Private->windows)
+		{
+#if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
+			PCWindow::PollEvents(m_Private->windowPool[window.h.index]);
+#endif
+		}
+	}
+
+	WindowHandle WindowModule::MakeWindow(const WindowDesc& desc)
+	{
+		const WindowHandle handle = WindowHandle(m_Private->windowPool.Create());
+#if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
+		PCWindow::InitializeWindow(desc, m_Private->windowPool[handle.h.index]);
+#endif
+		m_Private->windows.Add(handle);
+		return handle;
+	}
+
+	void WindowModule::DestroyWindow(WindowHandle handle)
+	{
+		for (uint i = 0; i < m_Private->windows.Size(); ++i)
+		{
+			if (handle == m_Private->windows[i])
+			{
+				m_Private->windows.Erase(i);
+				break;
+			}
+		}
+		m_Private->windowPool.Delete(handle.h);
+	}
+
+	const Window& WindowModule::GetWindow(WindowHandle handle) const
+	{
+		return m_Private->windowPool[handle.h];
+	}
+
+	const uint WindowModule::GetWindowWidth(WindowHandle handle) const
+	{
+		return m_Private->windowPool[handle.h].width;
+	}
+
+	const uint WindowModule::GetWindowHeight(WindowHandle handle) const
+	{
+		return m_Private->windowPool[handle.h].height;
+	}
+
+	const bool WindowModule::IsWindowActive(WindowHandle handle) const
+	{
+		return m_Private->windowPool[handle.h].handle != nullptr;
 	}
 }

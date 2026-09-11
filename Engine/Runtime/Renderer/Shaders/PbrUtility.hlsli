@@ -65,7 +65,7 @@ float GeometrySmith(float3 N, float3 V, float3 L, float roughness)
 // halfVec = (lightDir + viewDir) / abs(lightDir + viewDir)
 // lightRadiance = light colour * light intensity
 // See https://typhomnt.github.io/teaching/ray_tracing/pbr_intro/ 
-float3 ComputeReflectance(Material mat, float3 normal, float3 viewDir, float3 lightDir, float3 halfVec, float3 lightRadiance)
+float3 ComputeReflectance(MaterialData mat, float3 normal, float3 viewDir, float3 lightDir, float3 halfVec, float3 lightRadiance)
 {
     // F0 is base reflectivity of the material
     
@@ -97,7 +97,7 @@ float3 ComputeReflectance(Material mat, float3 normal, float3 viewDir, float3 li
 }
 
 // viewDir = view direction from point to camera (ie. canera world position - pixel world position)
-float3 PBR(Material mat, float3 pos, float3 normal, float3 viewDir, float3 lightColour, float lightIntensity, float3 lightDir)
+float3 PBR(MaterialData mat, float3 position, float3 normal, float3 viewDir, float3 lightColour, float lightIntensity, float3 lightDir)
 {
     // TODO : Calculate ambient occlusion 
     float ao = 0.0;

@@ -4,13 +4,12 @@
 
 namespace tyr
 {
-    Task::Task(Callable&& callable)
-        : m_Callable(std::move(callable))
+    Task::Task(TaskFunction&& fn)
+        : m_Function(std::move(fn))
     {
 
     }
 
-    // CallableUtil::Execute( will assert if the callable's Execute function is nullptr
     Task::Task()
         : m_State(TaskState::Inactive)
     {
@@ -19,49 +18,17 @@ namespace tyr
 
     void Task::Run()
     {
-        TYR_ASSERT(m_Callable && !IsActive());
+        TYR_ASSERT(m_Function && !IsActive());
        
         m_State.store(TaskState::Running, std::memory_order_release);
 
-        m_Callable.Invoke();
+        m_Function.Invoke();
 
         m_State.store(TaskState::Finished, std::memory_order_release);
     }
 
-    void Task::SetCallable(Callable&& callable)
+    void Task::SetFunction(TaskFunction&& callable)
     {
-        m_Callable = std::move(callable);
-    }
-
-
-    TaskScheduler::TaskScheduler()
-    {
-
-
-    }
-
-    TaskScheduler::~TaskScheduler()
-    {
-
-    }
-
-    TaskID TaskScheduler::CreateTask(Callable&& callable)
-    {
-        return 0;
-    }
-
-    void TaskScheduler::AddDependency(TaskID task, TaskID dependency)
-    {
-
-    }
-
-    void TaskScheduler::Enqueue(TaskID task)
-    {
-
-    }
-
-    TaskID TaskScheduler::CreateAndEnqueueTask(Callable&& callable)
-    {
-        return 0;
+        m_Function = std::move(callable);
     }
 }

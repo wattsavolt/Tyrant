@@ -1,4 +1,6 @@
 #include "PCWindow.h"
+#include "Window/WindowDesc.h"
+#include "Window/Window.h"
 #include "resource.h"
 #include <Utility/Utility.h>
 #include <String/StringUtil.h>
@@ -8,12 +10,12 @@ namespace tyr
     HINSTANCE PCWindow::m_HInstance;
     LPCSTR PCWindow::m_WindowClass = "Tyrant";
 
-    PCWindow::PCWindow(const WindowProperties& properties)
-        : Window(properties)
+    void PCWindow::InitializeWindow(const WindowDesc& desc, Window& window)
     {
-        if (!m_Properties.iconResourceId)
+        uint16 iconResourceId = desc.iconResourceId;
+        if (!iconResourceId)
         {
-            m_Properties.iconResourceId = IDI_ENGINE;
+            iconResourceId = IDI_ENGINE;
         }
 
         // Following should just be executed for the first/main window
@@ -32,7 +34,7 @@ namespace tyr
                 TYR_LOG_FATAL(ss.str().c_str());
             }
 
-            ATOM result = RegisterWindowClass(m_Properties);
+            ATOM result = RegisterWindowClass(iconResourceId);
             if (!result)
             {
                 DWORD e = GetLastError();
@@ -45,10 +47,10 @@ namespace tyr
         // The title bar text
         //CHAR szTitle[MAX_LOADSTRING];                  
         // Switch from char* to LPCWSTR
-        //mbstowcs(szTitle, properties.name, strlen(properties.name) + 1);//Plus null
+        //mbstowcs(szTitle, desc.name, strlen(desc.name) + 1);//Plus null
 
-        HWND hwnd = CreateWindow(m_WindowClass, properties.name, WS_OVERLAPPEDWINDOW,
-            CW_USEDEFAULT, 0, properties.width, properties.height, nullptr, nullptr, m_HInstance, nullptr);
+        HWND hwnd = CreateWindow(m_WindowClass, desc.name, WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT, 0, desc.width, desc.height, nullptr, nullptr, m_HInstance, &window);
 
         if (!hwnd)
         {
@@ -58,10 +60,10 @@ namespace tyr
             TYR_LOG_FATAL(ss.str().c_str());
         }
         
-        ShowWindow(hwnd, properties.showFlag);
+        ShowWindow(hwnd, desc.showFlag);
         UpdateWindow(hwnd);
 
-        m_Handle = static_cast<void*>(hwnd);
+        window.handle = static_cast<void*>(hwnd);
     }
 
     //
@@ -69,7 +71,7 @@ namespace tyr
     //
     //  PURPOSE: Registers the window class.
     //
-    ATOM PCWindow::RegisterWindowClass(const WindowProperties& properties)
+    ATOM PCWindow::RegisterWindowClass(uint16 iconResourceId)
     {
         WNDCLASSEX wcex = { 0 };
         wcex.cbSize = sizeof(WNDCLASSEX);
@@ -78,7 +80,7 @@ namespace tyr
         wcex.cbClsExtra = 0;
         wcex.cbWndExtra = 0;
         wcex.hInstance = m_HInstance; 
-        wcex.hIcon = LoadIcon(m_HInstance, MAKEINTRESOURCE(properties.iconResourceId));
+        wcex.hIcon = LoadIcon(m_HInstance, MAKEINTRESOURCE(iconResourceId));
         wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
         wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
         wcex.lpszMenuName = 0;
@@ -100,40 +102,22 @@ namespace tyr
     //
     LRESULT CALLBACK PCWindow::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
-        switch (message)
+        Window* window = reinterpret_cast<Window*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
+
+        if (message == WM_NCCREATE)
         {
-        case WM_COMMAND:
+            CREATESTRUCT* createStruct = reinterpret_cast<CREATESTRUCT*>(lParam);
+            window = static_cast<Window*>(createStruct->lpCreateParams);
+
+            SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(window));
+        }
+
+        if (window)
         {
-            int wmId = LOWORD(wParam);
-            // Parse the menu selections:
-            switch (wmId)
-            {
-            case IDM_ABOUT:
-                DialogBox(m_HInstance, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
-                break;
-            case IDM_EXIT:
-                DestroyWindow(hWnd);
-                break;
-            default:
-                return DefWindowProc(hWnd, message, wParam, lParam);
-            }
+            return HandleMessage(hWnd, message, wParam, lParam, *window);
         }
-        break;
-        case WM_PAINT:
-        {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hWnd, &ps);
-            // TODO: Add any drawing code that uses hdc here...
-            EndPaint(hWnd, &ps);
-        }
-        break;
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            break;
-        default:
-            return DefWindowProc(hWnd, message, wParam, lParam);
-        }
-        return 0;
+
+        return DefWindowProc(hWnd, message, wParam, lParam);
     }
 
     // Message handler for about box.
@@ -156,14 +140,64 @@ namespace tyr
         return (INT_PTR)FALSE;
     }
 
-    void PCWindow::PollEvents()
+    LRESULT PCWindow::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam, Window& window)
+    {
+        switch (message)
+        {
+        case WM_SIZE:
+        {
+            window.width = LOWORD(lParam);
+            window.height = HIWORD(lParam);
+            break;
+        }
+        case WM_COMMAND:
+        {
+            int wmId = LOWORD(wParam);
+
+            switch (wmId)
+            {
+            case IDM_ABOUT:
+                DialogBox(m_HInstance, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
+                break;
+            case IDM_EXIT:
+                DestroyWindow(hWnd);
+                break;
+            default:
+                return DefWindowProc(hWnd, message, wParam, lParam);
+            }
+        }
+        break;
+
+        case WM_PAINT:
+        {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hWnd, &ps);
+
+            // TODO: Add any drawing code that uses hdc here...
+
+            EndPaint(hWnd, &ps);
+        }
+        break;
+
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            break;
+
+        default:
+            return DefWindowProc(hWnd, message, wParam, lParam);
+        }
+
+        return 0;
+    }
+
+    void PCWindow::PollEvents(Window& window)
     {
         MSG msg;
         if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
         {
             if (msg.message == WM_QUIT)
             {
-                m_Handle = nullptr;
+                window.handle = nullptr;
             }
             else
             {
@@ -171,6 +205,11 @@ namespace tyr
                 DispatchMessage(&msg);
             }
         }
+    }
+
+    bool PCWindow::IsWindowActive(const Window& window)
+    {
+        return window.handle != nullptr;
     }
 }
 

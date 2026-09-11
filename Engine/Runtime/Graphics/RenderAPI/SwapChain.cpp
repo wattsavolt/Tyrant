@@ -1,11 +1,14 @@
 #include "SwapChain.h"
+#include "Device.h"
 
 namespace tyr
 {
-	SwapChain::SwapChain(Device& device, const SwapChainDesc& desc)
-		: m_Device(device)
-		, m_Desc(desc)
-		, m_Resized(false)
+	SwapChain::SwapChain(Device* device)
+		: m_Device(device) 
+	{
+	}
+
+	void SwapChain::CreateSyncData()
 	{
 		if (m_Desc.createDepth)
 		{
@@ -25,68 +28,79 @@ namespace tyr
 		}
 	}
 
-	SwapChain::~SwapChain()
-	{
-
-	}
-	
-	void SwapChain::CreateSwapChainImagesAndViews(Handle* imageHandles, uint imageCount)
+	void SwapChain::CreateSwapChainImagesAndViews(SwapChainImageData& imageData, void** imageHandles, uint imageCount)
 	{
 		for (uint i = 0; i < imageCount; ++i)
 		{
 			ImageDesc imageDesc;
 #if !TYR_FINAL
-			imageDesc.debugName = GDebugString("SwapChainImage_") + static_cast<int>(i);
+			const GDebugString imageDebugName = GDebugString("SwapChainImage_") + static_cast<int>(i);
+			imageDesc.debugName = imageDebugName.CStr();
 #endif
-			imageDesc.width = m_Width;
-			imageDesc.height = m_Height;
+			imageDesc.width = imageData.width;
+			imageDesc.height = imageData.height;
 			imageDesc.type = ImageType::Image2D;
 			imageDesc.externalImage = imageHandles[i];
 			imageDesc.format = m_Desc.pixelFormat;
 			imageDesc.layout = m_RenderingLayout;
 			imageDesc.usage = m_ImageUsage;
-			m_Images.Add(m_Device.CreateImage(imageDesc));
+			imageData.images.Add(m_Device->CreateImage(imageDesc));
 
 			ImageViewDesc viewDesc;
 #if !TYR_FINAL
-			viewDesc.debugName = GDebugString("SwapChainImageView_") + static_cast<int>(i);
+			const GDebugString viewDebugName = GDebugString("SwapChainImageView_") + static_cast<int>(i);
+			viewDesc.debugName = viewDebugName.CStr();
 #endif
 			viewDesc.isSwapChainView = true;
-			viewDesc.image = m_Images[i];
+			viewDesc.image = imageData.images[i];
 			viewDesc.viewType = ImageType::Image2D;
 			viewDesc.subresourceRange.aspect = SUBRESOURCE_ASPECT_COLOUR_BIT;
 			viewDesc.subresourceRange.baseMipLevel = 0;
-			viewDesc.subresourceRange.mipLevelCount = 1;
+			viewDesc.subresourceRange.mipCount = 1;
 			viewDesc.subresourceRange.baseArrayLayer = 0;
 			viewDesc.subresourceRange.arrayLayerCount = 1; // Use 2 for stereoscopic (VR).
-			m_ImageViews.Add(m_Device.CreateImageView(viewDesc));
+			imageData.imageViews.Add(m_Device->CreateImageView(viewDesc));
 		}
 	}
 
-	void SwapChain::DeleteSwapChainImagesAndViews()
+	void SwapChain::DeleteSwapChainImagesAndViews(SwapChainImageData& imageData)
 	{
-		for (ImageViewHandle handle : m_ImageViews)
+		for (ImageViewHandle handle : imageData.imageViews)
 		{
-			m_Device.DeleteImageView(handle);
+			m_Device->DeleteImageView(handle);
 		}
-		m_ImageViews.Clear();
-		for (ImageHandle handle : m_Images)
+		imageData.imageViews.Clear();
+		for (ImageHandle handle : imageData.images)
 		{
-			m_Device.DeleteImage(handle);
+			m_Device->DeleteImage(handle);
 		}
-		m_Images.Clear();
+		imageData.images.Clear();
 	}
 
-	void SwapChain::CreateRenderingImageBarrier(ImageBarrier& barrier, uint imageIndex, uint srcQueueFamilyIndex)
+	void SwapChain::DeleteOtherSwapChainImagesAndViews()
+	{
+		for (ImageViewHandle handle : m_OldImageData.imageViews)
+		{
+			m_Device->DeleteImageView(handle);
+		}
+		m_OldImageData.imageViews.Clear();
+		for (ImageHandle handle : m_OldImageData.images)
+		{
+			m_Device->DeleteImage(handle);
+		}
+		m_OldImageData.images.Clear();
+	}
+
+	void SwapChain::CreateRenderingImageBarrier(ImageBarrier& barrier, ImageHandle imageHandle, uint srcQueueFamilyIndex)
 	{
 		barrier.srcAccess = BARRIER_ACCESS_NONE;
 		barrier.dstAccess = m_RenderingWriteAccess;
 		barrier.srcLayout = IMAGE_LAYOUT_UNKNOWN;
 		barrier.dstLayout = m_RenderingLayout;
-		barrier.image = m_Images[imageIndex];
+		barrier.image = imageHandle;
 		barrier.subresourceRange.aspect = m_SubresourceAspect; 
 		barrier.subresourceRange.baseMipLevel = 0;
-		barrier.subresourceRange.mipLevelCount = 1;
+		barrier.subresourceRange.mipCount = 1;
 		barrier.subresourceRange.baseArrayLayer = 0;
 		barrier.subresourceRange.arrayLayerCount = 1;
 		barrier.srcStage = PIPELINE_STAGE_TOP_OF_PIPE_BIT;
@@ -94,16 +108,16 @@ namespace tyr
 		barrier.srcQueueFamilyIndex = srcQueueFamilyIndex;
 	}
 
-	void SwapChain::CreatePresentingImageBarrier(ImageBarrier& barrier, uint imageIndex, uint srcQueueFamilyIndex)
+	void SwapChain::CreatePresentingImageBarrier(ImageBarrier& barrier, ImageHandle imageHandle, uint srcQueueFamilyIndex)
 	{
 		barrier.srcAccess = m_RenderingWriteAccess;
 		barrier.dstAccess = BARRIER_ACCESS_NONE;
 		barrier.srcLayout = m_RenderingLayout;
 		barrier.dstLayout = IMAGE_LAYOUT_PRESENT_SRC;
-		barrier.image = m_Images[imageIndex];
+		barrier.image = imageHandle;
 		barrier.subresourceRange.aspect = m_SubresourceAspect;
 		barrier.subresourceRange.baseMipLevel = 0;
-		barrier.subresourceRange.mipLevelCount = 1;
+		barrier.subresourceRange.mipCount = 1;
 		barrier.subresourceRange.baseArrayLayer = 0;
 		barrier.subresourceRange.arrayLayerCount = 1;
 		barrier.srcStage = PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;

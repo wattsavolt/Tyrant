@@ -1,28 +1,33 @@
 #pragma once
 
-#include "Pass.h"
+#include "Core.h"
+#include "RendererMacros.h"
 #include "RenderAPI/Pipeline.h"
 
 namespace tyr
 {
-	struct GeometryPassParams
+	class Device;
+	struct Scene;
+
+	struct GeometryPassArgs
 	{
+		Device* device;
 		Scene* scene;
+		GraphicsPipelineHandle pipeline;
 	};
 
-	// A render pass
-	class GeometryPass final : public Pass
+	class GeometryPass final : public INonCopyable
 	{
 	public:
-		// The scene passed can be nullptr if this pass instance is needed by more than one scene
-		GeometryPass(GeometryPassParams params);
+		GeometryPass(const GeometryPassArgs& args);
 		~GeometryPass();
 
-		void CreateRenderGraphDependencies(RGArray<RenderGraphDependencyInput>& inputs, RGArray<RenderGraphDependencyOutput>& outputs);
+		void Recreate(const GeometryPassArgs& args);
 
 	private:
-		GraphicsPipelineHandle m_Pipeline;
+		Device* m_Device;
 		Scene* m_Scene;
+		GraphicsPipelineHandle m_Pipeline;
 	};
 	
 }

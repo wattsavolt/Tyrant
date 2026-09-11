@@ -16,17 +16,17 @@ namespace tyr
 		
 	}
 
-	void AssetModule::InitializeModule()
+	void AssetModule::Initialize()
 	{
 		m_AssetManager = new AssetManager();
 	}
 
-	void AssetModule::UpdateModule(float deltaTime)
+	void AssetModule::Update(float deltaTime)
 	{
 		m_AssetManager->Update(deltaTime);
 	}
 
-	void AssetModule::ShutdownModule()
+	void AssetModule::Shutdown()
 	{
 		delete m_AssetManager;
 	}

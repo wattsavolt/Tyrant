@@ -1,4 +1,5 @@
 #include "Renderer.h"
+#include "RenderSubmissionThread.h"
 #include "GraphicsManager.h"
 #include "RenderAPI/GraphicsUtility.h"
 #include "RenderAPI/Device.h"
@@ -6,56 +7,51 @@
 #include "RenderAPI/Pipeline.h"
 #include "RenderAPI/Buffer.h"
 #include "RenderAPI/ShaderModule.h"
+#include "RenderAPI/CommandQueue.h"
 #include "RenderAPI/CommandAllocator.h"
 #include "RenderAPI/CommandList.h"
-#include "RenderAPI/DescriptorSetGroup.h"
+#include "RenderAPI/DescriptorSet.h"
 #include "RenderAPI/Sync.h"
 #include "Math/Matrix4.h"
+#include "RenderResource/RenderResourceUtil.h"
+#include "RenderTransfer/GPUTransferUtil.h"
+#include "RenderTransfer/RenderTransferTypes.h"
+#include "RenderResource/Shapes.h"
+#include "TransferPass.h"
+#include "GeometryPass.h"
 
 namespace tyr
 {
 	bool Renderer::s_Instantiated = false;
 
-	Renderer::Renderer(const RendererConfig& rendererConfig, Ref<RenderAPI>& renderAPI)
+	Renderer::Renderer(const RendererConfig& rendererConfig, RenderAPI* renderAPI)
 		: m_Config(rendererConfig)
-		, m_SwapChainImageIndex(0)
-		, m_FirstRender(true)
-		, m_SceneUpdated(false)
 		, m_RenderAPI(renderAPI)
-		// Value must be greater than the initial value (0) the semaphore was created with 
-		, m_CompletionSemaphoreSignalValue(1)
-		, m_SemaphoreIndex(0)
-		, m_Device(m_RenderAPI->GetDevice())
-		, m_SwapChain(m_RenderAPI->GetSwapChain())
-		, m_ShaderCreator(*m_Device, rendererConfig.shaderConfig)
-		, m_SceneCount(0)
-		, m_RenderFrameIndex(0)
+		, m_ShaderCreator(*m_RenderAPI->GetDevice(), rendererConfig.shaderConfig)
+		, m_Registry(*m_RenderAPI->GetDevice())
+		, m_ViewIdIndexMap(RenderConstants::c_MaxViewsPerFrame)
+		, m_SwapChains(WindowConstants::c_MaxWindows)
 	{
 		TYR_ASSERT(!s_Instantiated);
 
+		m_Ctx.device = m_RenderAPI->GetDevice();
+
 		CreateShaders();
-		CreatePipeline();
+		CreateCommandObjects();
+		CreatePipelines();
 		CreateBuffers();
-		CreateCommandAllocators();
-		CreateCommandLists();
+		CreateSamplers();
+		CreatePasses();
 
-		m_SceneInfo.viewProj = Matrix4::c_Identity;
-		m_SceneInfo.camPos = Vector3::c_Zero;
-		m_SceneInfo.ambient = 0.0f;
-
-		m_RenderingInfo.renderArea.offset = { 0, 0 };
-		m_RenderingInfo.renderArea.extents = { static_cast<uint>(m_SwapChain->GetWidth()),
-			static_cast<uint>(m_SwapChain->GetHeight()) };
-		m_RenderingInfo.viewMask = 0;
-		m_RenderingInfo.layerCount = 1;
-
-		RenderingAttachmentInfo colourAttachment;
-		colourAttachment.loadOp = AttachmentLoadOp::Clear;
-		colourAttachment.storeOp = AttachmentStoreOp::Store;
-		colourAttachment.resolveMode = RESOLVE_MODE_NONE;
-		colourAttachment.imageLayout = m_SwapChain->GetRenderingLayout();
-		colourAttachment.clearValue.colour = { 0.0f, 0.0f, 0.0f, 0.0f };
-		m_RenderingInfo.colourAttachments.Add(std::move(colourAttachment));
+		{
+			RenderSubmissionThreadArgs args;
+			args.device = m_Ctx.device;
+			args.graphicsQueue = m_Ctx.graphicsQueue;
+			args.computeQueue = m_Ctx.computeQueue;
+			args.transferQueue = m_Ctx.transferQueue;
+			m_RenderSubmissionThread = new RenderSubmissionThread(args);
+			// TODO: Start the render thread
+		}
 
 		s_Instantiated = true;
 	}
@@ -64,217 +60,461 @@ namespace tyr
 	{
 		WaitForCompletion();
 
-		TYR_SAFE_DELETE(m_CommandList);
-		TYR_SAFE_DELETE(m_CommandAllocator);
-		m_Device->DeleteGraphicsPipeline(m_Pipeline);
-		m_Device->DeleteDescriptorSetGroup(m_DescriptorSetGroup);
-		m_Device->DeleteDescriptorSetLayout(m_DescriptorSetLayout);
-		m_Device->DeleteDescriptorPool(m_DescriptorPool);
-		for (uint i = 0; i < 6; ++i)
-		{
-			RenderBufferUtil::DeleteBuffer(m_TransferBuffers[i], *m_Device);
-		}
-		RenderBufferUtil::DeleteBuffer(m_VertexBuffer, *m_Device);
-		RenderBufferUtil::DeleteBuffer(m_IndexBuffer, *m_Device);
-		RenderBufferUtil::DeleteBuffer(m_InstanceBuffer, *m_Device);
-		RenderBufferUtil::DeleteBuffer(m_SpotLightBuffer, *m_Device);
-		RenderBufferUtil::DeleteBuffer(m_MaterialBuffer, *m_Device);
-		RenderBufferUtil::DeleteBuffer(m_SceneInfoBuffer, *m_Device);
-		for (uint i = 0; i < 3; ++i)
-		{
-			m_Device->DeleteSemaphoreResource(m_AquireSwapChainImageSemaphores[i]);
-			m_Device->DeleteSemaphoreResource(m_ExecuteCompleteSemaphores[i]);
-		}
-		m_Device->DeleteSemaphoreResource(m_CompletionSemaphore);
-		m_Device->DeleteFence(m_Fence);
-		m_Device->DeleteShaderModule(m_VertexShader);
-		m_Device->DeleteShaderModule(m_PixelShader);
-		ShaderCreator::UnloadCompilerLibs();
+		// TODO: Stop the thread
+		delete m_RenderSubmissionThread;
+
+		DeletePasses();
+		DeleteSamplers();
+		DeleteBuffers();
+		DeletePipelines();
+		DeleteCommandObjects();
+		DeleteShaders();
+		DeleteSwapChains();
+
 		s_Instantiated = false;
 	}
 
-	void Renderer::Render(double deltaTime)
+	void Renderer::Render(float deltaTime)
 	{
-		m_SwapChainImageIndex = m_SwapChain->AcquireNextImage(m_AquireSwapChainImageSemaphores[m_SemaphoreIndex]);
+		RenderFrame& renderFrame = GetRenderFrame();
+		renderFrame.deltaTime = deltaTime;
 
-		const float windowWidth = m_SwapChain->GetWidth();
-		const float windowHeight = m_SwapChain->GetHeight();
-		m_Viewport.width = windowWidth;
-		m_Viewport.height = windowHeight;
-
-		const RenderFrame& renderFrame = GetRenderFrame();
-
-		m_RenderFrameIndex = (m_RenderFrameIndex + 1) % RenderFrame::c_MaxRenderFrames;
-
-		const SceneFrame& sceneFrame = renderFrame.sceneFrames[0];
-		const SceneView& sceneView = sceneFrame.view;
-		const Matrix4 view = Matrix4::CreateView(sceneView.camera.position, sceneView.camera.forward, sceneView.camera.up);
-		// Do reverse-z for greater floating-point precision
-		const Matrix4 projection = Matrix4::CreatePerspective(sceneView.camera.fov, windowWidth / windowHeight, sceneView.camera.farZ, sceneView.camera.nearZ);
-		m_SceneInfo.viewProj = view * projection;
-		m_SceneInfo.camPos = sceneView.camera.position;
-		m_RenderingInfo.renderArea.offset = 
-		{ 
-			static_cast<int>(sceneView.viewArea.x * windowWidth),
-			static_cast<int>(sceneView.viewArea.y * windowHeight)
-		};
-		m_RenderingInfo.renderArea.extents =
+		if (renderFrame.activeSceneIndex == RenderFrame::c_InvalidSceneIndex)
 		{
-			static_cast<uint>(sceneView.viewArea.width * windowWidth),
-			static_cast<uint>(sceneView.viewArea.height * windowHeight)
-		};
-		m_SceneUpdated = true;
-		
+			return;
+		}
+
+		SceneFrame& sceneFrame = renderFrame.sceneFrame;
+
+		uint shaderViewIndex = m_RenderFrameIndex * RenderConstants::c_MaxViewsPerFrame;
+
+		const Scene& scene = m_Data.scenes[renderFrame.activeSceneIndex];
 
 		if (!m_FirstRender)
 		{
-			m_Device->WaitForFence(m_Fence, UINT32_MAX);
-			m_Device->ResetFence(m_Fence);
+			const RenderFrame& prevRenderFrame = GetPrevRenderFrame();
+			const Scene& prevScene = m_Data.scenes[prevRenderFrame.activeSceneIndex];
+			if (scene.id != prevScene.id)
+			{
+				m_ViewIdIndexMap.Clear();
+			}
 		}
 
-		m_RenderingInfo.colourAttachments[0].imageView = m_SwapChain->GetImageViews()[m_SwapChainImageIndex];
+		ShaderSceneInfo sceneInfo{};
+		sceneInfo.ambient = sceneFrame.ambient;
+		LocalArray<ShaderView, RenderConstants::c_MaxViewsPerFrame> shaderViews;
 
-		m_CommandList->Reset(true);
-		m_CommandList->Begin(CommandBufferUsage::COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
-		
+		RenderWindowHandle windowHandle = renderFrame.sceneFrame.newWindow ? renderFrame.sceneFrame.newWindow : scene.windowHandle;
+		const RenderWindow& renderWindow = m_WindowPool[windowHandle.h];
+		const uint swapChainWidth = renderWindow.swapChain->GetWidth();
+		const uint swapChainHeight = renderWindow.swapChain->GetHeight();
+		for (uint i = 0; i < sceneFrame.views.Size(); ++i)
+		{
+			const SceneView& sv = sceneFrame.views[i];
+
+			const float aspect = GraphicsUtility::CalculateAspectRatio(sv.viewArea, swapChainWidth, swapChainHeight);
+
+			const Matrix4 view = Matrix4::CreateView(sv.camera.position, sv.camera.forward, sv.camera.up);
+			// Do reverse-z for greater floating-point precision
+			const Matrix4 projection = Matrix4::CreatePerspective(sv.camera.fov, aspect, sv.camera.farZ, sv.camera.nearZ);
+
+			ShaderView shaderView{};
+			shaderView.viewProj = view * projection;
+			shaderView.camPos = sv.camera.position;
+			shaderView.flags = 0;
+			if (const uint* index = m_ViewIdIndexMap.Find(sv.id))
+			{
+				shaderView.prevViewIndex = *index;
+			}
+			else
+			{
+				shaderView.prevViewIndex = i;
+			}
+
+			size_t offset;
+			UploadBufferAllocation alloc;
+			const bool allocSuccess = m_AllocManager.RequestFrameUploadAllocation(sizeof(ShaderSceneInfo), alloc);
+
+			RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), *m_Ctx.device, offset, &sceneInfo, sizeof(ShaderSceneInfo));
+
+			BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
+			request.srcBuffer = alloc.buffer;
+			request.srcOffset = offset;
+			request.dstBuffer = m_Resources.sceneInfoBuffer;
+			request.dstOffset = sizeof(ShaderSceneInfo);
+			request.size = sizeof(ShaderSceneInfo);
+
+			shaderViewIndex++;
+		}
+
+		// Clear and update to get rid of old views
+		m_ViewIdIndexMap.Clear();
+		for (uint i = 0; i < sceneFrame.views.Size(); ++i)
+		{
+			const SceneView& sv = sceneFrame.views[i];
+			m_ViewIdIndexMap[sv.id] = i;
+		}
+
+		if (!m_FirstRender)
+		{
+			m_Ctx.device->WaitForFence(m_Ctx.completionFence, UINT32_MAX);
+			m_Ctx.device->ResetFence(m_Ctx.completionFence);
+		}
+
 		if (m_FirstRender)
 		{
-			BufferBindingUpdate bindingUpdates[3];
+			constexpr uint bindingUpdateCount = 3;
+			BufferBindingUpdate bindingUpdates[bindingUpdateCount];
 			uint bindingIndex = 0;
-			CreateBufferBindingUpdate(bindingUpdates[bindingIndex], m_SceneInfoBuffer.bufferView, 0, bindingIndex);
-			bindingIndex++;
-			CreateBufferBindingUpdate(bindingUpdates[bindingIndex], m_SpotLightBuffer.bufferView, 0, bindingIndex);
-			bindingIndex++;
-			CreateBufferBindingUpdate(bindingUpdates[bindingIndex], m_MaterialBuffer.bufferView, 0, bindingIndex);
-			m_Device->UpdateDescriptorSetGroup(m_DescriptorSetGroup, bindingUpdates, 3);
-			PerformStaticTransfers();
+			{
+				BufferBindingInfo bindingInfo;
+				bindingInfo.bufferView = m_Registry.GetBuffer(m_Resources.sceneInfoBuffer).bufferView;
+				bindingUpdates[bindingIndex++].bindingIndex = bindingIndex;
+			}
+			{
+				BufferBindingInfo bindingInfo;
+				bindingInfo.bufferView = m_Registry.GetBuffer(m_Resources.spotLightBuffer).bufferView;
+				bindingUpdates[bindingIndex++].bindingIndex = bindingIndex;
+			}
+			{
+				BufferBindingInfo bindingInfo;
+				bindingInfo.bufferView = m_Registry.GetBuffer(m_Resources.materialBuffer).bufferView;
+				bindingUpdates[bindingIndex++].bindingIndex = bindingIndex;
+			}
+			m_Ctx.device->UpdateDescriptorSet(m_Resources.descriptorSet, bindingUpdates, bindingUpdateCount);
 		}
-		PeformDynamicTransfers();
-		AddRenderBarriers();
 
-		m_CommandList->BeginRendering(m_RenderingInfo);
-		m_CommandList->SetViewport(&m_Viewport, 1);	
-		m_CommandList->SetScissor(&m_RenderingInfo.renderArea, 1);
-		m_CommandList->BindGraphicsPipeline(m_Pipeline);
-		m_CommandList->BindVertexBuffers(m_VertexBuffers.Data(), m_VertexBuffers.Size());
-		m_CommandList->BindIndexBuffer(m_IndexBuffer.bufferView);
-		m_CommandList->BindDescriptorSet(m_DescriptorSetGroup, m_Pipeline);
-		m_CommandList->DrawIndexed(Cube::c_NumIndices, 1, 0, 0, 0);
-		m_CommandList->EndRendering();
-		m_CommandList->End();
+		m_AllocManager.SignalResourceUpload(m_Ctx.currentTimelineValue);
+		m_AllocManager.SignalFrameUpload(m_Ctx.currentTimelineValue);
 
-		m_ExecuteDesc.waitSemaphores.Clear();
-		m_ExecuteDesc.waitSemaphores.Add(m_AquireSwapChainImageSemaphores[m_SemaphoreIndex]);
-		m_ExecuteDesc.signalSemaphores.Clear();
-		m_ExecuteDesc.signalSemaphores.Add(m_ExecuteCompleteSemaphores[m_SemaphoreIndex]);
-		m_ExecuteDesc.signalSemaphores.Add(m_CompletionSemaphore);
-		m_ExecuteDesc.signalValues.Clear();
-		// A dummy value needs to be pushed back for the binary semaphore as the count of the number of values must match the number of semaphores
-		// (as per the vulkan spec)
-		m_ExecuteDesc.signalValues.Add(0);
-		m_ExecuteDesc.signalValues.Add(m_CompletionSemaphoreSignalValue);
+		m_Ctx.currentTimelineValue++;
 
-		// Wait on semaphore used when acquiring next swapchain image
-		m_CommandList->Execute(&m_ExecuteDesc, 1, 0, m_Fence);
-		// Wait on signal semaphore used in execute
-		m_SwapChain->Present(m_CommandList, m_ExecuteCompleteSemaphores[m_SemaphoreIndex], m_SwapChainImageIndex);
-
-		m_SemaphoreIndex = (m_SemaphoreIndex + 1) % 3;
-		m_CompletionSemaphoreSignalValue++;
+		// TODO: Call this in an async task
+		RenderAsync(m_RenderFrameIndex);
 
 		m_FirstRender = false;
 	}
 
-	void Renderer::PerformStaticTransfers()
+	void Renderer::RenderAsync(uint renderFrameIndex)
 	{
-		constexpr uint bufferCount = 5;
-		constexpr uint bufferBarrierCount = bufferCount * 2;
-		BufferBarrier bufferBarriers[bufferBarrierCount];
-		RenderBuffer* buffers[bufferCount] = { &m_VertexBuffer,  &m_IndexBuffer, &m_InstanceBuffer, &m_SpotLightBuffer, &m_MaterialBuffer };
-		uint index = 0;
-		for (uint i = 0; i < bufferCount; ++i)
-		{
-			BufferBarrier& upload = bufferBarriers[index++];
-			BufferBarrier& gpu = bufferBarriers[index++];
-			RenderBufferUtil::CreateTransferReadBarrier(upload, m_TransferBuffers[i].buffer);
-			RenderBufferUtil::CreateTransferWriteBarrier(gpu , buffers[i]->buffer);
-		}
-		m_CommandList->AddBarriers(bufferBarriers, bufferBarrierCount);
-		for (uint i = 0; i < bufferCount; ++i)
-		{
-			m_CommandList->CopyBuffer(m_TransferBuffers[i].buffer, buffers[i]->buffer);
-		}
-	}
+		RenderRegistry& registry = *RenderRegistry::Instance();
 
-	void Renderer::PeformDynamicTransfers()
-	{
-		if (!m_SceneUpdated)
-		{
-			return;
-		}
-		BufferBarrier bufferBarriers[2];
-		uint index = 0;
-		BufferBarrier& upload = bufferBarriers[index++];
-		BufferBarrier& gpu = bufferBarriers[index];
-		m_Device->WriteBuffer(m_TransferBuffers[5].buffer, reinterpret_cast<const void*>(&m_SceneInfo), 0, sizeof(ShaderSceneInfo));
-		RenderBufferUtil::CreateTransferReadBarrier(upload, m_TransferBuffers[5].buffer);
-		RenderBufferUtil::CreateTransferWriteBarrier(gpu, m_SceneInfoBuffer.buffer);
-		m_CommandList->AddBarriers(bufferBarriers, 2);
-		m_CommandList->CopyBuffer(m_TransferBuffers[5].buffer, m_SceneInfoBuffer.buffer);
-	}
+		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
+		FrameContext& frameCtx = m_Ctx.frameContexts[renderFrameIndex];
 
-	void Renderer::AddRenderBarriers()
-	{
-		uint bufferBarrierCount = m_FirstRender ? 6 : 1;
-		BufferBarrier* bufferBarriers = StackNew<BufferBarrier>(bufferBarrierCount);
+		m_Data.activeSceneIndex = renderFrame.activeSceneIndex;
+
+		m_Data.BeginFrame();
+
+		const SceneFrame& sceneFrame = renderFrame.sceneFrame;
+		Scene& scene = m_Data.scenes[m_Data.activeSceneIndex];
+
+		if (sceneFrame.newWindow)
 		{
-			uint index = 0;
-			if (m_FirstRender)
+			scene.windowHandle = sceneFrame.newWindow;
+		}
+
+		RenderWindow& window = m_WindowPool[scene.windowHandle.h];
+		RenderWindowFrame& windowFrame = window.frames[renderFrameIndex];
+
+		bool resized;
+		window.swapChainImageIndex = window.swapChain->AcquireNextImage(windowFrame.aquireSwapChainImageSemaphore, resized);
+
+		// TODO: Alert main thread if a resize occurred
+
+		for (const SceneView& sv : sceneFrame.views)
+		{
+			scene.views.Add(sv);
+		}
+
+		for (MeshInstanceHandle handle : sceneFrame.meshInstancesToRemove)
+		{
+			const uint renderIndex = registry.GetMeshInstance(handle).renderIndex;
+			scene.content.meshInstances.SwapAndPopBack(renderIndex);
+			if (!scene.content.meshInstances.IsEmpty())
 			{
-				bufferBarriers[index].buffer = m_VertexBuffer.buffer;
-				bufferBarriers[index].srcAccess = BARRIER_ACCESS_TRANSFER_WRITE_BIT;
-				bufferBarriers[index].dstAccess = BARRIER_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
-				bufferBarriers[index].srcStage = PIPELINE_STAGE_TRANSFER_BIT;
-				bufferBarriers[index++].dstStage = PIPELINE_STAGE_VERTEX_INPUT_BIT;
-
-				bufferBarriers[index].buffer = m_IndexBuffer.buffer;
-				bufferBarriers[index].srcAccess = BARRIER_ACCESS_TRANSFER_WRITE_BIT;
-				bufferBarriers[index].dstAccess = BARRIER_ACCESS_INDEX_READ_BIT;
-				bufferBarriers[index].srcStage = PIPELINE_STAGE_TRANSFER_BIT;
-				bufferBarriers[index++].dstStage = PIPELINE_STAGE_VERTEX_INPUT_BIT;
-
-				bufferBarriers[index].buffer = m_InstanceBuffer.buffer;
-				bufferBarriers[index].srcAccess = BARRIER_ACCESS_TRANSFER_WRITE_BIT;
-				bufferBarriers[index].dstAccess = BARRIER_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
-				bufferBarriers[index].srcStage = PIPELINE_STAGE_TRANSFER_BIT;
-				bufferBarriers[index++].dstStage = PIPELINE_STAGE_VERTEX_INPUT_BIT;
-
-				bufferBarriers[index].buffer = m_SpotLightBuffer.buffer;
-				bufferBarriers[index].srcAccess = BARRIER_ACCESS_TRANSFER_WRITE_BIT;
-				bufferBarriers[index].dstAccess = BARRIER_ACCESS_UNIFORM_READ_BIT;
-				bufferBarriers[index].srcStage = PIPELINE_STAGE_TRANSFER_BIT;
-				bufferBarriers[index++].dstStage = PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-
-				bufferBarriers[index].buffer = m_MaterialBuffer.buffer;
-				bufferBarriers[index].srcAccess = BARRIER_ACCESS_TRANSFER_WRITE_BIT;
-				bufferBarriers[index].dstAccess = BARRIER_ACCESS_UNIFORM_READ_BIT;
-				bufferBarriers[index].srcStage = PIPELINE_STAGE_TRANSFER_BIT;
-				bufferBarriers[index++].dstStage = PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+				const MeshInstanceHandle swapped = scene.content.meshInstances[renderIndex];
+				registry.GetMeshInstance(swapped).renderIndex = renderIndex;
 			}
-			
-			bufferBarriers[index].buffer = m_SceneInfoBuffer.buffer;
-			bufferBarriers[index].srcAccess = BARRIER_ACCESS_TRANSFER_WRITE_BIT;
-			bufferBarriers[index].dstAccess = BARRIER_ACCESS_UNIFORM_READ_BIT;
-			bufferBarriers[index].srcStage = PIPELINE_STAGE_TRANSFER_BIT;
-			bufferBarriers[index].dstStage = PIPELINE_STAGE_VERTEX_SHADER_BIT;
 		}
-		ImageBarrier imageBarriers[2];
+
+		for (const MeshInstanceUpdate& update : sceneFrame.meshInstancesToUpdate)
 		{
-			m_SwapChain->CreateRenderingImageBarrier(imageBarriers[0], m_SwapChainImageIndex);
-			m_SwapChain->CreatePresentingImageBarrier(imageBarriers[1], m_SwapChainImageIndex);
-		}	
-		m_CommandList->AddBarriers(bufferBarriers, bufferBarrierCount, imageBarriers, 2);
-		StackDelete(bufferBarriers, bufferBarrierCount);
+			registry.GetMeshInstance(update.handle).info = update.desc.info;
+		}
+
+		scene.content.meshInstances.Reserve(scene.content.meshInstances.Size() + sceneFrame.meshInstancesToAdd.Size());
+		for (MeshInstanceHandle handle : sceneFrame.meshInstancesToAdd)
+		{
+			registry.GetMeshInstance(handle).renderIndex = scene.content.meshInstances.Size();
+			scene.content.meshInstances.Add(handle);
+		}
+
+		for (DirLightHandle handle : sceneFrame.dirLightsToRemove)
+		{
+			const uint renderIndex = registry.GetDirectionalLight(handle).renderIndex;
+			scene.content.dirLights.SwapAndPopBack(renderIndex);
+			if (!scene.content.dirLights.IsEmpty())
+			{
+				const DirLightHandle swapped = scene.content.dirLights[renderIndex];
+				registry.GetDirectionalLight(swapped).renderIndex = renderIndex;
+			}
+		}
+
+		for (const DirLightUpdate& update : sceneFrame.dirLightsToUpdate)
+		{
+			registry.GetDirectionalLight(update.handle).info = update.desc.info;
+		}
+
+		scene.content.dirLights.Reserve(scene.content.dirLights.Size() + sceneFrame.dirLightsToAdd.Size());
+		for (DirLightHandle handle : sceneFrame.dirLightsToAdd)
+		{
+			registry.GetDirectionalLight(handle).renderIndex = scene.content.dirLights.Size();
+			scene.content.dirLights.Add(handle);
+		}
+
+		for (PointLightHandle handle : sceneFrame.pointLightsToRemove)
+		{
+			const uint renderIndex = registry.GetPointLight(handle).renderIndex;
+			scene.content.pointLights.SwapAndPopBack(renderIndex);
+			if (!scene.content.pointLights.IsEmpty())
+			{
+				const PointLightHandle swapped = scene.content.pointLights[renderIndex];
+				registry.GetPointLight(swapped).renderIndex = renderIndex;
+			}
+		}
+
+		for (const PointLightUpdate& update : sceneFrame.pointLightsToUpdate)
+		{
+			registry.GetPointLight(update.handle).info = update.desc.info;
+		}
+
+		scene.content.pointLights.Reserve(scene.content.pointLights.Size() + sceneFrame.pointLightsToAdd.Size());
+		for (PointLightHandle handle : sceneFrame.pointLightsToAdd)
+		{
+			registry.GetPointLight(handle).renderIndex = scene.content.pointLights.Size();
+			scene.content.pointLights.Add(handle);
+		}
+
+		for (SpotLightHandle handle : sceneFrame.spotLightsToRemove)
+		{
+			const uint renderIndex = registry.GetSpotLight(handle).renderIndex;
+			scene.content.spotLights.SwapAndPopBack(renderIndex);
+			if (!scene.content.spotLights.IsEmpty())
+			{
+				const SpotLightHandle swapped = scene.content.spotLights[renderIndex];
+				registry.GetSpotLight(swapped).renderIndex = renderIndex;
+			}
+		}
+
+		for (const SpotLightUpdate& update : sceneFrame.spotLightsToUpdate)
+		{
+			registry.GetSpotLight(update.handle).info = update.desc.info;
+		}
+
+		scene.content.spotLights.Reserve(scene.content.spotLights.Size() + sceneFrame.spotLightsToAdd.Size());
+		for (SpotLightHandle handle : sceneFrame.spotLightsToAdd)
+		{
+			registry.GetSpotLight(handle).renderIndex = scene.content.spotLights.Size();
+			scene.content.spotLights.Add(handle);
+		}
+
+		m_Data.assetBufferUploadRequests.Reserve(renderFrame.assetBufferUploadRequests.Size());
+		for (const BufferUploadRequest& request : renderFrame.assetBufferUploadRequests)
+		{
+			m_Data.assetBufferUploadRequests.Add(request);
+		}
+
+		scene.frameUploadRequests.Reserve(renderFrame.frameBufferUploadRequests.Size());
+		for (const BufferUploadRequest& request : renderFrame.frameBufferUploadRequests)
+		{
+			scene.frameUploadRequests.Add(request);
+		}
+
+		m_Data.textureUploadRequests.Reserve(renderFrame.textureUploadRequests.Size());
+		for (const TextureUploadRequest& request : renderFrame.textureUploadRequests)
+		{
+			m_Data.textureUploadRequests.Add(request);
+		}
+
+		BuildAndExecuteRenderGraph(renderFrameIndex);
+	}
+
+	void Renderer::BuildAndExecuteRenderGraph(uint renderFrameIndex)
+	{
+		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
+		FrameContext& frameCtx = m_Ctx.frameContexts[renderFrameIndex];
+
+		Scene& scene = m_Data.scenes[m_Data.activeSceneIndex];
+
+		RenderWindow& window = m_WindowPool[scene.windowHandle.h];
+		RenderWindowFrame& windowFrame = window.frames[renderFrameIndex];
+
+		const uint windowWidth = window.swapChain->GetWidth();
+		const uint windowHeight = window.swapChain->GetHeight();
+		Viewport viewport;
+		viewport.width = windowWidth;
+		viewport.height = windowHeight;
+
+		// Temporarily use first one
+		CommandList* cmdList = frameCtx.commandLists[0];
+		cmdList->Reset(true);
+		cmdList->Begin(CommandBufferUsage::COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+
+		// TODO: Render for all views and create render area for each view by calling GraphicsUtility::CreateRenderArea
+		RenderingInfo renderingInfo{};
+		renderingInfo.renderArea.offset = { 0, 0 };
+		renderingInfo.renderArea.extents = { windowWidth, windowHeight };
+		renderingInfo.viewMask = 0;
+		renderingInfo.layerCount = 1;
+
+		RenderingAttachmentInfo colourAttachment;
+		colourAttachment.loadOp = AttachmentLoadOp::Clear;
+		colourAttachment.storeOp = AttachmentStoreOp::Store;
+		colourAttachment.resolveMode = RESOLVE_MODE_NONE;
+		colourAttachment.imageLayout = window.swapChain->GetRenderingLayout();
+		colourAttachment.clearValue.colour = { 0.0f, 0.0f, 0.0f, 0.0f };
+		colourAttachment.imageView = window.swapChain->GetImageViews()[window.swapChainImageIndex];
+
+		renderingInfo.colourAttachmentCount = 1;
+		renderingInfo.colourAttachments = &colourAttachment;
+
+		cmdList->BeginRendering(renderingInfo);
+		cmdList->SetViewport(&viewport, 1);
+		cmdList->SetScissor(&renderingInfo.renderArea, 1);
+		cmdList->BindGraphicsPipeline(m_Resources.geometryGraphicsPipeline);
+		cmdList->BindDescriptorSet(m_Resources.descriptorSet, m_Resources.geometryGraphicsPipeline);
+		cmdList->DrawIndexed(Cube::c_NumIndices, 1, 0, 0, 0);
+		cmdList->EndRendering();
+		cmdList->End();
+
+		SemaphoreHandle waitSemaphores[1] = { windowFrame.aquireSwapChainImageSemaphore };
+		SemaphoreHandle signalSemaphores[2] = { windowFrame.executeCompleteSemaphore, m_Ctx.completionSemaphore };
+		// A dummy value needs to be pushed back for the binary semaphore as the count of the number of values must match the number of semaphores
+		// (as per the vulkan spec)
+		uint64 signalValues[2] = { 0, m_Ctx.currentTimelineValue };
+		CommandQueueExecuteArgs executeArgs{};
+		executeArgs.waitSemaphoreCount = 1;;
+		executeArgs.waitSemaphores = waitSemaphores;
+		executeArgs.signalSemaphoreCount = 2;
+
+		// Wait on semaphore used when acquiring next swapchain image
+		m_Ctx.graphicsQueue->Execute(&executeArgs, 1, 0, m_Ctx.completionFence);
+
+		// Wait on signal semaphore used in execute
+		bool resized;
+		window.swapChain->Present(m_Ctx.graphicsQueue, windowFrame.executeCompleteSemaphore, window.swapChainImageIndex, resized);
+	}
+
+	void Renderer::PrepareForNextFrame()
+	{
+		m_RenderFrameIndex = (m_RenderFrameIndex + 1) % RenderConstants::c_BufferedFrameCount;
+		RenderFrame& renderFrame = GetRenderFrame();
+
+		//m_Ctx.device->WaitForSemaphore(m_Ctx.completionSemaphore, renderFrame.timelineValue, UINT64_MAX);
+
+		const uint64 completionSemaphoreValue = m_Ctx.device->GetSemaphoreValue(m_Ctx.completionSemaphore);
+		// TODO: Resource allocator should have value reclaimed after every submission and not just at end of frame
+		m_AllocManager.ReclaimResourceUploadMemory(completionSemaphoreValue);
+		m_AllocManager.ReclaimFrameUploadMemory(completionSemaphoreValue);
+
+		for (TextureHandle handle : renderFrame.texturesToDelete)
+		{
+			m_Registry.DeleteTexture(handle);
+		}
+		for (MaterialHandle handle : renderFrame.materialsToDelete)
+		{
+			m_Registry.DeleteMaterial(handle);
+		}
+		for (MeshHandle handle : renderFrame.meshesToDelete)
+		{
+			const Mesh& mesh = m_Registry.GetMesh(handle);
+			m_AllocManager.FreeMeshLODs(mesh.lodOffset, mesh.lodCount);
+			m_Registry.DeleteMesh(handle);
+		}
+		for (SkeletalMeshHandle handle : renderFrame.skeletalMeshesToDelete)
+		{
+			const SkeletalMesh& mesh = m_Registry.GetSkeletalMesh(handle);
+			m_AllocManager.FreeMeshLODs(mesh.lodOffset, mesh.lodCount);
+			m_Registry.DeleteSkeletalMesh(handle);
+		}
+		for (MeshInstanceHandle handle : renderFrame.meshInstancesToDelete)
+		{
+			m_Registry.DeleteMeshInstance(handle);
+		}
+		for (SkeletalMeshInstanceHandle handle : renderFrame.skeletalMeshInstancesToDelete)
+		{
+			m_Registry.DeleteSkeletalMeshInstance(handle);
+		}
+		for (DirLightHandle handle : renderFrame.dirLightsToDelete)
+		{
+			m_Registry.DeleteDirectionalLight(handle);
+		}
+		for (PointLightHandle handle : renderFrame.pointLightsToDelete)
+		{
+			m_Registry.DeletePointLight(handle);
+		}
+		for (SpotLightHandle handle : renderFrame.spotLightsToDelete)
+		{
+			m_Registry.DeleteSpotLight(handle);
+		}
+		renderFrame.Clear();
+	}
+
+	void Renderer::WaitForCompletion()
+	{
+		m_Ctx.device->WaitForFence(m_Ctx.completionFence, UINT64_MAX);
+		m_Ctx.device->WaitForSemaphore(m_Ctx.completionSemaphore, m_Ctx.currentTimelineValue, UINT64_MAX);
+		m_Ctx.device->WaitIdle();
+	}
+
+	RenderWindowHandle Renderer::AddWindow(void* osHandle)
+	{
+		RenderWindowHandle handle(m_WindowPool.Create());
+		RenderWindow& renderWindow = m_WindowPool[handle.h.index];
+
+		SwapChainDesc swapChainDesc;
+		swapChainDesc.pixelFormat = PixelFormat::PF_B8G8R8A8_SRGB;
+		swapChainDesc.colorSpace = ColorSpace::CP_SRGB_NONLINEAR;
+		// TODO: Enable later
+		swapChainDesc.createDepth = false;
+		swapChainDesc.vSyncEnabled = m_Config.vSyncEnabled;
+		swapChainDesc.useTripleBuffering = m_Config.useTripleBuffering;
+
+		SwapChain* swapChain = m_SwapChains[handle.h.index];
+		if (swapChain)
+		{
+			swapChain->Recreate(osHandle, swapChainDesc);
+		}
+		else
+		{
+			swapChain = m_Ctx.device->CreateSwapChain(osHandle, swapChainDesc);
+			m_SwapChains[handle.h.index] = swapChain;
+		}
+
+		renderWindow.swapChain = swapChain;
+	
+		return handle;
+	}
+
+	void Renderer::RemoveWindow(RenderWindowHandle window)
+	{
+		RenderWindow& renderWindow = m_WindowPool[window.h];
+		SwapChain* swapChain = renderWindow.swapChain;
+		renderWindow = {};
+		// Cache the swqap chain for reuse 
+		renderWindow.swapChain = swapChain;
+		m_WindowPool.Delete(window.h);
+	}
+
+	void Renderer::ResizeWindow(RenderWindowHandle window, uint width, uint height)
+	{
+		RenderWindow& renderWindow = m_WindowPool[window.h];
+		SwapChain* swapChain = renderWindow.swapChain;
+		RenderWindow& wnd = m_WindowPool[window.h];
+		wnd.resizeRequired = true;
+		RenderFrame& renderFrame = GetRenderFrame();
+		renderFrame.windowResizeRequired = true;
 	}
 
 	void Renderer::CreateShaders()
@@ -287,7 +527,7 @@ namespace tyr
 			desc.fileName = "MeshVS";
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_VERTEX_BIT;
-			m_VertexShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+			m_Resources.geometryMeshShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
 		}
 		{
 			ShaderDesc desc;
@@ -295,39 +535,87 @@ namespace tyr
 			desc.fileName = "MeshPS";
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_FRAGMENT_BIT;
-			m_PixelShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+			m_Resources.geometryPixelShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
 		}
 	}
 
-	RenderPassHandle Renderer::CreateRenderPass()
+	void Renderer::DeleteShaders()
 	{
-		RenderPassDesc desc;
-		AttachmentDesc colorAttachment{};
-		colorAttachment.format = m_RenderAPI->GetSwapChain()->GetDesc().pixelFormat;
-		colorAttachment.samples = SampleCount::OneBit;
-		colorAttachment.loadOp = AttachmentLoadOp::Clear;
-		colorAttachment.storeOp = AttachmentStoreOp::Store;
-		colorAttachment.stencilLoadOp = AttachmentLoadOp::DontCare;
-		colorAttachment.stencilStoreOp = AttachmentStoreOp::DontCare;
-		colorAttachment.initialLayout = IMAGE_LAYOUT_UNKNOWN;
-		colorAttachment.finalLayout = IMAGE_LAYOUT_PRESENT_SRC;
-
-		// References above attachment
-		AttachmentReference colorAttachmentRef{};
-		colorAttachmentRef.attachmentIndex = 0;
-		colorAttachmentRef.layout = IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		SubpassDesc subpassDesc;
-		subpassDesc.pipelineType = PipelineType::Graphics;
-		subpassDesc.colorAttachments.Add(std::move(colorAttachmentRef));
-
-		desc.attachments.Add(std::move(colorAttachment));
-		desc.subpasses.Add(std::move(subpassDesc));
-		// Add render pass dependencies later when needed.
-
-		return m_Device->CreateRenderPass(desc);
+		m_Ctx.device->DeleteShaderModule(m_Resources.geometryMeshShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.geometryPixelShader);
+		ShaderCreator::UnloadCompilerLibs();
 	}
 
-	void Renderer::CreatePipeline()
+	void Renderer::DeleteSwapChains()
+	{
+		for (SwapChain* swapChain : m_SwapChains)
+		{
+			if (swapChain)
+				delete swapChain;
+		}
+		m_SwapChains.Clear();
+	}
+
+	void Renderer::CreateCommandObjects()
+	{
+		{
+			FenceDesc desc;
+			desc.signalled = false;
+			desc.debugName = "Fence_0";
+			// TODO: Vary timeout depending on expectations
+			desc.timeout = static_cast<uint64>(Math::Round((1.0f / 60) * 1000000000)) * 4;
+			m_Ctx.completionFence = m_Ctx.device->CreateFence(desc);
+		}
+		{
+			SemaphoreDesc desc;
+			desc.type = SemaphoreType::Timeline;
+			desc.debugName = "CompletionSemaphore";
+			m_Ctx.completionSemaphore = m_Ctx.device->CreateSemaphoreResource(desc);
+		}
+
+		for (uint i = 0; i < RenderConstants::c_BufferedFrameCount; ++i)
+		{
+			FrameContext& frameCtx = m_Ctx.frameContexts[i];
+			{
+				CommandAllocatorDesc desc;
+				desc.debugName = "CommandAllocator_" + i;
+				// The reset flag is for command buffers that will be reset / re-recorded and transient is for short-lived command buffers 
+				desc.flags = CommandAllocatorCreateFlags::COMMAND_ALLOC_CREATE_RESET_COMMAND_BUFFER_BIT;
+				desc.queueType = CommandQueueType::CQ_GRAPHICS;
+				frameCtx.commandAllocator = m_Ctx.device->CreateCommandAllocator(desc);
+			}
+			{
+				frameCtx.commandLists.Reserve(TaskScheduler::c_MaxWorkers);
+				const GDebugString nameStart = GDebugString("CommandList_" + i) + "_";
+				CommandListDesc desc;
+				desc.allocator = frameCtx.commandAllocator;
+				desc.debugName = nameStart + frameCtx.commandLists.Size();
+				desc.type = CommandListType::Primary;
+				frameCtx.commandLists.Add(m_Ctx.device->CreateCommandList(desc));
+			}
+		}
+		// Need to wait for the swapchain image to be ready for this stage
+		//m_ExecuteDesc.waitDstPipelineStages.Add(PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+	}
+
+	void Renderer::DeleteCommandObjects()
+	{
+		for (uint i = 0; i < RenderConstants::c_BufferedFrameCount; ++i)
+		{
+			FrameContext& frameCtx = m_Ctx.frameContexts[i];
+			for (uint i = 0; i < frameCtx.commandLists.Size(); ++i)
+			{
+				delete frameCtx.commandLists[i];
+			}
+			frameCtx.commandLists.Clear();
+
+			delete frameCtx.commandAllocator;
+		}
+		m_Ctx.device->DeleteFence(m_Ctx.completionFence);
+		m_Ctx.device->DeleteSemaphoreResource(m_Ctx.completionSemaphore);
+	}
+
+	void Renderer::CreatePipelines()
 	{
 		GraphicsPipelineDesc desc;
 		{
@@ -337,14 +625,15 @@ namespace tyr
 			poolSize.descriptorCount = 3;
 			poolSize.descriptorType = DescriptorType::UniformBuffer;
 			poolDesc.poolSizes.Add(std::move(poolSize));
+			poolDesc.flags = DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
 #if !TYR_FINAL
 			poolDesc.debugName = "DescriptorPool";
 #endif
-			m_DescriptorPool = m_Device->CreateDescriptorPool(poolDesc);
+			m_Resources.descriptorPool = m_Ctx.device->CreateDescriptorPool(poolDesc);
 
 			DescriptorSetLayoutDesc layoutDesc;
 			// Change the flags to add extra functionality.
-			layoutDesc.flags = DESCRIPTOR_SET_LAYOUT_NONE;
+			layoutDesc.flags = DESCRIPTOR_SET_LAYOUT_UPDATE_AFTER_BIND_POOL_BIT;
 			{
 				DescriptorSetLayoutBinding& binding = layoutDesc.bindings.ExpandOne();
 				binding.binding = 0;
@@ -368,17 +657,33 @@ namespace tyr
 				binding.descriptorType = DescriptorType::UniformBuffer;
 				binding.stageFlags = SHADER_STAGE_FRAGMENT_BIT;
 			}
+			{
+				DescriptorSetLayoutBinding& binding = layoutDesc.bindings.ExpandOne();
+				binding.binding = 3;
+				binding.descriptorCount = 1;
+				binding.descriptorType = DescriptorType::SampledImage;
+				binding.stageFlags = SHADER_STAGE_FRAGMENT_BIT;
+			}
+			{
+				DescriptorSetLayoutBinding& binding = layoutDesc.bindings.ExpandOne();
+				binding.binding = 4;
+				binding.descriptorCount = 1;
+				binding.descriptorType = DescriptorType::Sampler;
+				binding.stageFlags = SHADER_STAGE_FRAGMENT_BIT;
+			}
 
-			DescriptorSetGroupDesc groupDesc;
-			m_DescriptorSetLayout = m_Device->CreateDescriptorSetLayout(layoutDesc);
-			groupDesc.layouts.Add(m_DescriptorSetLayout);
-			groupDesc.pool = m_DescriptorPool;
+			m_Resources.descriptorSetLayout = m_Ctx.device->CreateDescriptorSetLayout(layoutDesc);
+
+			DescriptorSetDesc setDesc;
+			setDesc.layout = m_Resources.descriptorSetLayout;
+			setDesc.pool = m_Resources.descriptorPool;
+
 #if !TYR_FINAL
-			poolDesc.debugName = "DescriptorSetGroup";
+			poolDesc.debugName = "DescriptorSet";
 #endif
-			m_DescriptorSetGroup = m_Device->CreateDescriptorSetGroup(groupDesc);
+			m_Resources.descriptorSet = m_Ctx.device->CreateDescriptorSet(setDesc);
 
-			desc.pipelineLayoutDesc.descriptorSetLayouts.Add(groupDesc.layouts[0]);
+			desc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
 		}
 
 		desc.topology = PrimitiveTopology::TriangeList;
@@ -467,240 +772,188 @@ namespace tyr
 		desc.multiSampleDesc.alphaToCoverageEnable = false;
 		desc.multiSampleDesc.alphaToOneEnable = false;
 
-		desc.dynamicRendering.colorAttachmentFormats.Add(m_RenderAPI->GetSwapChain()->GetDesc().pixelFormat);
+		desc.dynamicRendering.colorAttachmentFormats.Add(PF_R8G8B8A8_SRGB); // TODO: Don't hardcode this later?
 		desc.dynamicRendering.depthAttachmentFormat = PF_UNKNOWN;
 		desc.dynamicRendering.stencilAttachmentFormat = PF_UNKNOWN;
-		desc.dynamicRendering.viewMask = 0; 
+		desc.dynamicRendering.viewMask = 0;
 
-		desc.shaders.Add(m_VertexShader);
-		desc.shaders.Add(m_PixelShader);
-		
-		m_Pipeline = m_Device->CreateGraphicsPipeline(desc);
+		desc.shaders.Add(m_Resources.geometryMeshShader);
+		desc.shaders.Add(m_Resources.geometryPixelShader);
+		desc.shaders.Add(m_Resources.geometryPixelShader);
+
+		m_Resources.geometryGraphicsPipeline = m_Ctx.device->CreateGraphicsPipeline(desc);
+	}
+
+	void Renderer::DeletePipelines()
+	{
+		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.geometryGraphicsPipeline);
+		m_Ctx.device->DeleteDescriptorSet(m_Resources.descriptorSet);
+		m_Ctx.device->DeleteDescriptorSetLayout(m_Resources.descriptorSetLayout);
+		m_Ctx.device->DeleteDescriptorPool(m_Resources.descriptorPool);
 	}
 
 	void Renderer::CreateBuffers()
 	{
-		m_VertexBuffers.Reserve(2);
 		{
-			{
-				TransferBufferDesc desc;
-				desc.debugName = "Vertex Transfer Buffer";
-				desc.size = sizeof(Cube::c_Vertices);
-				RenderBufferUtil::CreateTransferBuffer(m_TransferBuffers[0], *m_Device, desc);
-				m_Device->WriteBuffer(m_TransferBuffers[0].buffer, static_cast<const void*>(Cube::c_Vertices), 0, desc.size);
-			}
-			{
-				GpuBufferDesc desc;
-				desc.debugName = "Vertex GPU Buffer";
-				desc.size = sizeof(Cube::c_Vertices);
-				desc.usage = GpuBufferUsage::Vertex;
-				RenderBufferUtil::CreateGpuBuffer(m_VertexBuffer, *m_Device, desc);
-				m_VertexBuffers.Add(m_VertexBuffer.buffer);
-			}		
+			RenderBufferDesc desc{};
+			desc.debugName = "Material Buffer";
+			desc.size = sizeof(ShaderMaterial) * RenderConstants::c_MaxMaterials;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.materialBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
-			{
-				TransferBufferDesc desc;
-				desc.debugName = "Index Transfer Buffer";
-				desc.size = sizeof(Cube::c_Indices);
-				RenderBufferUtil::CreateTransferBuffer(m_TransferBuffers[1], *m_Device, desc);
-				m_Device->WriteBuffer(m_TransferBuffers[1].buffer, static_cast<const void*>(Cube::c_Indices), 0, desc.size);
-			}
-			{
-				GpuBufferDesc desc;
-				desc.debugName = "Index GPU Buffer";
-				desc.size = sizeof(Cube::c_Indices);
-				desc.usage = GpuBufferUsage::Index;
-				desc.stride = 4;
-				RenderBufferUtil::CreateGpuBuffer(m_IndexBuffer, *m_Device, desc);
-			}
+			RenderBufferDesc desc;
+			desc.debugName = "Vertex Buffer";
+			desc.size = RenderConstants::c_VertexBufferSize;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.vertexBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
-			{
-				TransferBufferDesc desc;
-				desc.debugName = "Instance Transfer Buffer";
-				desc.size = sizeof(Matrix4);
-				RenderBufferUtil::CreateTransferBuffer(m_TransferBuffers[2], *m_Device, desc);
-				// Hard code for now
-				Matrix4 transform = Matrix4::CreateTRS({ 0,0,15 }, Quaternion::c_Identity, { 3,3,3 });
-				m_Device->WriteBuffer(m_TransferBuffers[2].buffer, static_cast<const void*>(&transform), 0, desc.size);
-			}
-			{
-				GpuBufferDesc desc;
-				desc.debugName = "Instance GPU Buffer";
-				desc.size = sizeof(Matrix4);
-				desc.usage = GpuBufferUsage::Vertex;	
-				RenderBufferUtil::CreateGpuBuffer(m_InstanceBuffer, *m_Device, desc);
-				m_VertexBuffers.Add(m_InstanceBuffer.buffer);
-			}
+			RenderBufferDesc desc;
+			desc.debugName = "Index Buffer";
+			desc.size = RenderConstants::c_IndexBufferSize;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.indexBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
-			{
-				TransferBufferDesc desc;
-				desc.debugName = "Spotlight Transfer Buffer";
-				desc.size = sizeof(ShaderSpotLight);
-				RenderBufferUtil::CreateTransferBuffer(m_TransferBuffers[3], *m_Device, desc);
-				ShaderSpotLight light;
-				light.pos = { 0, 5, 10 };
-				light.cone = 1.0f;
-				light.dir = { 0, -1, 0 };
-				light.att = { 1, 1, 1 };
-				light.colour = { 1, 1, 1 };
-				m_Device->WriteBuffer(m_TransferBuffers[3].buffer, static_cast<const void*>(&light), 0, desc.size);
-			}
-			{
-				GpuBufferDesc desc;
-				desc.debugName = "Spotlight GPU Buffer";
-				desc.size = sizeof(ShaderSpotLight);
-				desc.usage = GpuBufferUsage::Uniform;
-				RenderBufferUtil::CreateGpuBuffer(m_SpotLightBuffer, *m_Device, desc);
-			}
+			RenderBufferDesc desc;
+			desc.debugName = "Meshlet Buffer";
+			desc.size = RenderConstants::c_MeshletBufferSize;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.meshletBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
-			{
-				TransferBufferDesc desc;
-				desc.debugName = "Material Transfer Buffer";
-				desc.size = sizeof(MaterialData);
-				RenderBufferUtil::CreateTransferBuffer(m_TransferBuffers[4], *m_Device, desc);
-				MaterialData material;
-				material.albedo = { 0, 0, 1 };
-				material.roughness = 0.1f;
-				material.metallic = 1.0f;
-				m_Device->WriteBuffer(m_TransferBuffers[4].buffer, static_cast<const void*>(&material), 0, desc.size);
-			}
-			{
-				GpuBufferDesc desc;
-				desc.debugName = "Material GPU Buffer";
-				desc.size = sizeof(MaterialData);
-				desc.usage = GpuBufferUsage::Uniform;
-				RenderBufferUtil::CreateGpuBuffer(m_MaterialBuffer, *m_Device, desc);
-			}
+			RenderBufferDesc desc;
+			desc.debugName = "Mesh Buffer";
+			desc.size = sizeof(ShaderMesh) * RenderConstants::c_MaxMeshes;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.meshBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
-			{
-				TransferBufferDesc desc;
-				desc.debugName = "SceneInfo Transfer Buffer";
-				desc.size = sizeof(ShaderSceneInfo);
-				RenderBufferUtil::CreateTransferBuffer(m_TransferBuffers[5], *m_Device, desc);
-			}
-			{
-				GpuBufferDesc desc;
-				desc.debugName = "SceneInfo GPU Buffer";
-				desc.size = sizeof(ShaderSceneInfo);
-				desc.usage = GpuBufferUsage::Uniform;
-				RenderBufferUtil::CreateGpuBuffer(m_SceneInfoBuffer, *m_Device, desc);
-			}
+			RenderBufferDesc desc;
+			desc.debugName = "Mesh LOD Buffer";
+			desc.size = sizeof(ShaderMeshLOD) * RenderConstants::c_MaxMeshLODs;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.meshBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
+			desc.debugName = "Mesh Instance Buffer";
+			desc.size = sizeof(uint) * RenderConstants::c_MaxMeshInstances;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.meshInstanceBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc{};
+			desc.debugName = "Dir light Buffer";
+			desc.size = sizeof(ShaderDirectionalLight) * RenderConstants::c_MaxDirLights;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.directionalLightBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc{};
+			desc.debugName = "Point light Buffer";
+			desc.size = sizeof(ShaderPointLight) * RenderConstants::c_MaxPointLights;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.pointLightBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc{};
+			desc.debugName = "Spot light Buffer";
+			desc.size = sizeof(ShaderSpotLight) * RenderConstants::c_MaxSpotLights;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.spotLightBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc{};
+			desc.debugName = "Scene Info Buffer";
+			desc.size = sizeof(ShaderSceneInfo) * RenderConstants::c_MaxScenes;
+			desc.usage = RenderBufferUsage::Uniform;
+			m_Resources.sceneInfoBuffer = m_Registry.CreateBuffer(desc);
 		}
 	}
 
-	void Renderer::CreateCommandAllocators()
+	void Renderer::DeleteBuffers()
 	{
-		CommandAllocatorDesc desc;
-		desc.debugName = "CommandAllocator_0";
-		// The reset flag is for command buffers that will be reset / re-recorded and transient is for short-lived command buffers 
-		desc.flags = CommandAllocatorCreateFlags::COMMAND_ALLOC_CREATE_RESET_COMMAND_BUFFER_BIT;
-		desc.queueType = CommandQueueType::CQ_GRAPHICS;
-		m_CommandAllocator = m_Device->CreateCommandAllocator(desc);
+		m_Registry.DeleteBuffer(m_Resources.materialBuffer);
+		m_Registry.DeleteBuffer(m_Resources.vertexBuffer);
+		m_Registry.DeleteBuffer(m_Resources.indexBuffer);
+		m_Registry.DeleteBuffer(m_Resources.meshletBuffer);
+		m_Registry.DeleteBuffer(m_Resources.meshBuffer);
+		m_Registry.DeleteBuffer(m_Resources.meshLODBuffer);
+		m_Registry.DeleteBuffer(m_Resources.meshInstanceBuffer);
+		m_Registry.DeleteBuffer(m_Resources.directionalLightBuffer);
+		m_Registry.DeleteBuffer(m_Resources.pointLightBuffer);
+		m_Registry.DeleteBuffer(m_Resources.spotLightBuffer);
+		m_Registry.DeleteBuffer(m_Resources.sceneInfoBuffer);
 	}
 
-	void Renderer::CreateCommandLists()
+	void Renderer::CreateSamplers()
 	{
 		{
-			FenceDesc desc;
-			desc.signalled = false;
-			desc.debugName = "Fence_0";
-			// TODO: Vary timeout depending on expectations
-			desc.timeout = static_cast<uint64>(Math::Round((1.0f / 60) * 1000000000)) * 4;
-			m_Fence = m_Device->CreateFence(desc);
+			SamplerDesc desc{};
+			desc.debugName = "MaterialSampler";
+			desc.magFilter = Filter::Linear;
+			desc.minFilter = Filter::Linear;
+			desc.mipmapMode = SamplerMipmapMode::Linear;
+			desc.addressModeU = SamplerAddressMode::Repeat;
+			desc.addressModeV = SamplerAddressMode::Repeat;
+			desc.addressModeW = SamplerAddressMode::Repeat;
+			desc.compareEnable = false;
+			desc.compareOp = CompareOp::Always; // ignored when compareEnable = false
+			desc.borderColour = BorderColour::FloatTransparentBlack; // irrelevant for Repeat
+			desc.minLod = 0.0f;
+			desc.maxLod = FLT_MAX; // or mipCount - 1 at bind time
+			desc.mipLodBias = 0.0f;
+			desc.anisotropyEnable = true;
+			desc.maxAnisotropy = 8.0f; // 8 is very common, 16 on high-end PCs
+			desc.unnormalisedCoords = false;
+
+			m_Resources.materialSampler = m_Ctx.device->CreateSampler(desc);
 		}
-		{
-			SemaphoreDesc desc;		
-			desc.type = SemaphoreType::Binary;
-			for (uint8 i = 0; i < 3; ++i)
-			{
-				desc.debugName = "ExecuteWaitSemaphore " + i;
-				m_AquireSwapChainImageSemaphores[i] = m_Device->CreateSemaphoreResource(desc);
-			}		
-		}
-		{
-			SemaphoreDesc desc;
-			desc.type = SemaphoreType::Binary;
-			for (uint8 i = 0; i < 3; ++i)
-			{
-				desc.debugName = "ExecuteSignalSemaphore " + i;
-				m_ExecuteCompleteSemaphores[i] = m_Device->CreateSemaphoreResource(desc);
-			}
-		}
-		{
-			SemaphoreDesc desc;
-			desc.type = SemaphoreType::Timeline;
-			desc.debugName = "CompletionSemaphore";
-			m_CompletionSemaphore = m_Device->CreateSemaphoreResource(desc);
-		}
-		{
-			CommandListDesc desc;
-			desc.allocator = m_CommandAllocator;
-			desc.debugName = "CommandList_0";
-			desc.type = CommandListType::Primary;
-			m_CommandList = m_Device->CreateCommandList(desc);
-		}
-		m_ExecuteDesc.commandLists.Add(m_CommandList);
-		// Need to wait for the swapchain image to be ready for this stage
-		m_ExecuteDesc.waitDstPipelineStages.Add(PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
 	}
 
-	void Renderer::CreateBufferBindingUpdate(BufferBindingUpdate& bindingUpdate, BufferViewHandle bufferView, uint descriptorIndex, uint bindingIndex)
+	void Renderer::DeleteSamplers()
 	{
-		BufferBindingInfo bindingInfo;
-		bindingInfo.bufferView = bufferView;
-		bindingUpdate.bufferBindingInfos.Add(bindingInfo);
-		bindingUpdate.descriptorIndex = descriptorIndex;
-		bindingUpdate.bindingIndex = bindingIndex;
+		m_Ctx.device->DeleteSampler(m_Resources.materialSampler);
 	}
 
-	RenderFrame& Renderer::GetRenderFrame()
+	void Renderer::CreatePasses()
 	{
-		return m_RenderFrames[m_RenderFrameIndex];
+
 	}
 
-	void Renderer::WaitForCompletion()
+	void Renderer::DeletePasses()
 	{
-		// Commented code not needed but keeping it for future reference
-		m_Device->WaitForFence(m_Fence, UINT64_MAX);
-		if (!m_ExecuteDesc.signalValues.IsEmpty())
-		{
-			m_Device->WaitForSemaphore(m_CompletionSemaphore, m_ExecuteDesc.signalValues.Back(), UINT64_MAX);
-		}
-		m_Device->WaitIdle();
+
 	}
 
-	uint8 Renderer::AddScene()
+	RenderPassHandle Renderer::CreateRenderPass()
 	{
-		if (m_SceneCount < Scene::c_MaxScenes)
-		{
-			for (uint8 i = 0; i < Scene::c_MaxScenes; ++i)
-			{
-				if (!m_Scenes[i].active)
-				{
-					m_Scenes[i].active = true;
-					return i;
-				}
-			}
-		}
+		RenderPassDesc desc;
+		AttachmentDesc colorAttachment{};
+		colorAttachment.format = PixelFormat::PF_R8G8B8A8_SRGB;
+		colorAttachment.samples = SampleCount::OneBit;
+		colorAttachment.loadOp = AttachmentLoadOp::Clear;
+		colorAttachment.storeOp = AttachmentStoreOp::Store;
+		colorAttachment.stencilLoadOp = AttachmentLoadOp::DontCare;
+		colorAttachment.stencilStoreOp = AttachmentStoreOp::DontCare;
+		colorAttachment.initialLayout = IMAGE_LAYOUT_UNKNOWN;
+		colorAttachment.finalLayout = IMAGE_LAYOUT_PRESENT_SRC;
 
-		TYR_ASSERT(false);
-		return UINT8_MAX;
-	}
+		// References above attachment
 
-	void Renderer::RemoveScene(uint8 index)
-	{
-		if (m_SceneCount == 0 || index >= Scene::c_MaxScenes || !m_Scenes[index].active)
-		{
-			TYR_ASSERT(false);
-			return;
-		}
+		SubpassDesc subpassDesc;
+		subpassDesc.pipelineType = PipelineType::Graphics;
 
-		m_Scenes[index].active = false;
-		m_Scenes[index].Clear();
+		AttachmentReference& colorAttachmentRef = subpassDesc.colorAttachments.ExpandOne();
+		colorAttachmentRef.attachmentIndex = 0;
+		colorAttachmentRef.layout = IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+		desc.attachments.Add(std::move(colorAttachment));
+		desc.subpasses.Add(std::move(subpassDesc));
+		// Add render pass dependencies later when needed.
+
+		return m_Ctx.device->CreateRenderPass(desc);
 	}
 }

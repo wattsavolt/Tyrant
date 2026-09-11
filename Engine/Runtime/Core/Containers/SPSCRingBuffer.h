@@ -2,21 +2,10 @@
 
 #include "Base/Base.h"
 #include "Memory/Allocation.h"
-#include "Threading/Threading.h"
+#include "Threading/ThreadTypes.h"
 
 namespace tyr
 {
-    /// Single-producer, single-consumer (SPSC) ring buffer
-    ///
-    /// This implementation avoids atomics because:
-    /// - The producer thread *exclusively* writes `m_WriteIndex` and never reads `m_ReadIndex`
-    /// - The consumer thread *exclusively* writes `m_ReadIndex` and never reads `m_WriteIndex`
-    /// - Thus, values are not written to by more than one thread.
-    /// - On modern CPUs, aligned 32-bit reads/writes are guaranteed to be atomic
-    /// - No tearing or data races occur under strict SPSC usage
-    ///
-    /// This results in optimal performance with zero locking or atomic overhead.
-
     template<typename T, uint Capacity>
     class SPSCRingBuffer
     {
@@ -25,68 +14,84 @@ namespace tyr
             : m_WriteIndex(0)
             , m_ReadIndex(0)
         {
-            
+            TYR_STATIC_ASSERT((Capacity & (Capacity - 1)) == 0, "Capacity must be a power of 2");
         }
 
-        // Producer-side
+        // Producer thread
         bool Enqueue(const T& item)
         {
-            const uint nextWrite = Math::ComputeWrappedIncrement<Capacity>(m_WriteIndex);
-            if (nextWrite == m_ReadIndex)
+            const uint writeIndex = m_WriteIndex.load(std::memory_order_relaxed);
+            const uint next = (writeIndex + 1) & c_Mask;
+
+            if (next == m_ReadIndex)
             {
-                // Buffer is full
+                // Buffer full
                 return false;
             }
 
-            m_Slots[m_WriteIndex] = item;
-            m_WriteIndex = nextWrite;
+            m_Slots[writeIndex] = item;
+
+            // Publish the write
+            m_WriteIndex.store(next, std::memory_order_release);
             return true;
         }
 
-        // Consumer-side
-        Optional<T> Read()
+        // Consumer thread
+        Optional<T> Dequeue()
         {
-            if (m_ReadIndex != m_WriteIndex)
+            const uint writeIndex = m_WriteIndex.load(std::memory_order_acquire);
+
+            if (m_ReadIndex == writeIndex)
             {
-                T& value = m_Slots[m_ReadIndex];
-                m_ReadIndex = Math::ComputeWrappedIncrement<Capacity>(m_ReadIndex);
-                return value;
+                return std::nullopt;
             }
-            // Buffer is empty
-            return std::nullopt;
+
+            T value = m_Slots[m_ReadIndex];
+            m_ReadIndex = (m_ReadIndex + 1) & c_Mask;
+
+            return value;
         }
 
-        Optional<T> ReadOnly()
+        Optional<T> ReadOnly() const
         {
-            if (m_ReadIndex != m_WriteIndex)
+            const uint writeIndex = m_WriteIndex.load(std::memory_order_acquire);
+
+            if (m_ReadIndex == writeIndex)
             {
-                return m_Slots[m_ReadIndex];
+                return std::nullopt;
             }
-            // Buffer is empty
-            return std::nullopt;
+
+            return m_Slots[m_ReadIndex];
         }
 
         void Pop()
         {
-            TYR_ASSERT(m_ReadIndex != m_WriteIndex);
-            m_ReadIndex = Math::ComputeWrappedIncrement<Capacity>(m_ReadIndex);
+            TYR_ASSERT(m_ReadIndex != m_WriteIndex.load(std::memory_order_acquire));
+            m_ReadIndex = (m_ReadIndex + 1) & c_Mask;
         }
 
         bool IsEmpty() const
         {
-            return m_ReadIndex == m_WriteIndex;
+            return m_ReadIndex == m_WriteIndex.load(std::memory_order_acquire);
         }
 
         bool IsFull() const
         {
-            return m_ReadIndex == Math::ComputeWrappedIncrement<Capacity>(m_WriteIndex);
+            const uint writeIndex = m_WriteIndex.load(std::memory_order_acquire);
+            return ((writeIndex + 1) & c_Mask) == m_ReadIndex;
         }
 
     private:
-        T m_Slots[Capacity];
 
-        uint m_WriteIndex; // Written only by producer
-        uint m_ReadIndex;  // Written only by consumer
+        static constexpr uint c_Mask = Capacity - 1;
+
+        alignas(64) T m_Slots[Capacity];
+
+        // Producer cache line
+        alignas(64) Atomic<uint> m_WriteIndex;
+
+        // Consumer cache line
+        alignas(64) uint m_ReadIndex;
     };
 }
 

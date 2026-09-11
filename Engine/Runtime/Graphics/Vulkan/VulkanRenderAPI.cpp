@@ -28,34 +28,19 @@ namespace tyr
 	{
 		CreateInstance();
 		SetupDebugMessenger();
-		CreateSurface();
 		SelectPhysicalDevice();
 		
 		m_Device = new DeviceInternal(m_Instance, m_PhysicalDevice, m_PhysicalDeviceIndex);
-
-		// This may be created by the API user later.
-		SwapChainDesc swapChainDesc;
-		swapChainDesc.pixelFormat = m_Config.outputPixelFormat;
-		swapChainDesc.colorSpace = m_Config.outputColorSpace;
-		// TODO: Enable later
-		swapChainDesc.createDepth = false;
-		swapChainDesc.vSyncEnabled = m_Config.vSyncEnabled;
-		swapChainDesc.useTripleBuffering = m_Config.useTripleBuffering;
-
-		m_SwapChain = new VulkanSwapChain(*static_cast<DeviceInternal*>(m_Device), m_Surface, swapChainDesc);
 	}
 
 	void VulkanRenderAPI::ShutdownAPI()
 	{
-		TYR_SAFE_DELETE(m_SwapChain);
 		TYR_SAFE_DELETE(m_Device);
 
 		if (m_ValidationLayersEnabled) 
 		{
 			VulkanHelper::DestroyDebugUtilsMessengerEXT(m_Instance, m_DebugMessenger);
 		}
-
-		vkDestroySurfaceKHR(m_Instance, m_Surface, g_VulkanAllocationCallbacks);
 
 		vkDestroyInstance(m_Instance, g_VulkanAllocationCallbacks);
 	}
@@ -122,11 +107,6 @@ namespace tyr
 		TYR_GASSERT(VulkanHelper::CreateDebugUtilsMessengerEXT(m_Instance, &createInfo, &m_DebugMessenger));
 	}
 
-	void VulkanRenderAPI::CreateSurface()
-	{
-		VulkanHelper::CreateWindowSurface(m_Config.windowHandle, m_Instance, &m_Surface);
-	}
-
 	void VulkanRenderAPI::SelectPhysicalDevice()
 	{
 		uint deviceCount = 0;
@@ -143,6 +123,8 @@ namespace tyr
 
 		// Use an ordered map to automatically sort candidates by increasing score
 		MultiMap<int, VulkanPhyscialDeviceData> candidates;
+
+		// Create temporary surface for checking capabilties
 		for (uint i = 0; i < devices.Size(); ++i)
 		{
 			VulkanPhyscialDeviceData data;
@@ -214,20 +196,13 @@ namespace tyr
 		Array<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
 		vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.Data());
 
+		
 		int i = 0;
 		for (const auto& queueFamily : queueFamilies) 
 		{
 			if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) 
 			{
 				indices.graphicsFamily = i;
-			}
-
-			VkBool32 presentSupport = false;
-			vkGetPhysicalDeviceSurfaceSupportKHR(device, i, m_Surface, &presentSupport);
-
-			if (presentSupport)
-			{
-				indices.presentFamily = i;
 			}
 
 			if (indices.IsComplete()) 

@@ -24,20 +24,20 @@ namespace tyr
 	};
 
 	struct Guid;
-	class TYR_CORE_EXPORT Platform
+	class TYR_CORE_API Platform
 	{
 	public:
 		/// Terminates the application with the option to perform cleanup. 
 		[[noreturn]] static void Exit(bool cleanup = true);
 
 		/// Explicitly opens a dynamic library. 
-		static Handle OpenLibrary(const char* filename, bool addFileExtension = true);
+		static void* OpenLibrary(const char* filename, bool addFileExtension = true);
 
 		/// Closes a dynamic library. 
-		static bool CloseLibrary(Handle library);
+		static bool CloseLibrary(void* library);
 
 		/// Returns the address of a function in a dynamic library. 
-		static void* GetProcessAddress(const Handle library, const char* function);
+		static void* GetProcessAddress(const void* library, const char* function);
 
 		/// Returns true if the application has an attached debugger. 
 		static bool IsDebuggerAttached();
@@ -45,6 +45,8 @@ namespace tyr
 		static int GetScreenWidth();
 
 		static int GetScreenHeight();
+
+		static void GetMaxWindowResolution(int& width, int& height, float aspectRatio = 16.0f / 9.0f);
 
 		static uint64 GetCpuCycles();
 

@@ -10,7 +10,7 @@
 namespace tyr
 {
 	class IModule;
-	class TYR_CORE_EXPORT ModuleManager final : public INonCopyable
+	class TYR_CORE_API ModuleManager final : public INonCopyable
 	{
 	public:
 		static constexpr uint8 c_MaxModules = 12;
@@ -32,7 +32,11 @@ namespace tyr
 
 		void InitializeModules();
 
-		void UpdateModules(float deltaTime);
+		void BeginFrame();
+
+		void Update(float deltaTime);
+
+		void EndFrame();
 
 		void ShutdownModules();
 

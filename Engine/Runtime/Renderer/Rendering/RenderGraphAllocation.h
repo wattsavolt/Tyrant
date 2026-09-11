@@ -14,11 +14,11 @@ namespace tyr
 	public:
 		static constexpr uint c_AllocatorCount = 2;
 
-		static void Create(uint blockSize = 1024 * 1024);
+		static void Create(size_t blockSize = 1024 * 1024);
 
-		static uint8* Alloc(uint amount);
+		static uint8* Alloc(size_t size);
 
-		static uint8* AllocAligned(uint amount, uint alignment);
+		static uint8* AllocAligned(size_t size, size_t alignment);
 
 		// Switch to the next allocator
 		static void NextFrame();
@@ -35,9 +35,9 @@ namespace tyr
 		return (void*)RenderGraphAllocator::Alloc(count);
 	}
 
-	inline void* RenderGraphAllocAligned(uint count, uint alignment)
+	inline void* RenderGraphAllocAligned(size_t size, size_t alignment)
 	{
-		return (void*)RenderGraphAllocator::AllocAligned(count, alignment);
+		return (void*)RenderGraphAllocator::AllocAligned(size, alignment);
 	}
 
 	/// Allocates enough memory to store the specified type, but does not instantiate the object.
@@ -47,36 +47,48 @@ namespace tyr
 		return (T*)RenderGraphAllocator::Alloc(sizeof(T));
 	}
 
-	 /// Allocates enough memory to store N objects of the specified type, but does not instantiate the objects.
+	/// Allocates enough memory to store N objects of the specified type, but does not instantiate the objects.
 	template<class T>
-	T* RenderGraphAlloc(uint amount)
+	T* RenderGraphAllocN(uint count)
 	{
-		return (T*)RenderGraphAllocator::Alloc(sizeof(T) * amount);
+		return (T*)RenderGraphAllocator::Alloc(sizeof(T) * count);
 	}
 
-	 /// Allocates enough memory to hold the specified type, on the stack, and constructs the object.
-	template<class T>
-	T* RenderGraphNew(uint count = 0)
+	/// Allocates enough memory to hold a single instance of T from the render graph allocator,
+	/// and default- or args-constructs it.
+	template<class T, class... Args>
+	T* RenderGraphNew(Args&&... args)
 	{
-		T* data = RenderGraphAlloc<T>(count);
+		T* data = RenderGraphAlloc<T>();
+		new (static_cast<void*>(data)) T(std::forward<Args>(args)...);
+		return data;
+	}
+
+	/// Allocates enough memory to hold `count` instances of T from the render graph allocator,
+	/// and default-constructs each one.
+	template<class T>
+	T* RenderGraphNewN(uint count)
+	{
+		T* data = RenderGraphAllocN<T>(count);
 
 		for (uint i = 0; i < count; i++)
 		{
-			new ((void*)&data[i]) T;
+			new (static_cast<void*>(&data[i])) T();
 		}
 
 		return data;
 	}
 
-	/// Allocates enough memory to hold the specified type, on the stack, and constructs the object.
+	/// Allocates enough memory to hold `count` instances of T from the render graph allocator,
+	/// and args-constructs each one identically.
 	template<class T, class... Args>
-	T* RenderGraphNew(Args &&...args, uint count = 0)
+	T* RenderGraphNewN(uint count, Args&&... args)
 	{
-		T* data = RenderGraphAlloc<T>(count);
+		T* data = RenderGraphAllocN<T>(count);
 
-		for (unsigned int i = 0; i < count; i++)
+		for (uint i = 0; i < count; i++)
 		{
-			new ((void*)&data[i]) T(std::forward<Args>(args)...);
+			new (static_cast<void*>(&data[i])) T(std::forward<Args>(args)...);
 		}
 
 		return data;

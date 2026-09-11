@@ -1,47 +1,45 @@
 #pragma once
 
-#include "Base/Base.h"
+#include "Core.h"
 #include "Module/IModule.h"
 #include "Containers/LocalArray.h"
+#include "Memory/LocalObjectPool.h"
+#include "WindowConstants.h"
+#include "WindowHandle.h"
 
 namespace tyr
 {
 	class Window;
-	class TYR_CORE_EXPORT WindowModule final : public IModule
+	struct WindowDesc;
+	struct WindowModulePrivate;
+
+	class TYR_CORE_API WindowModule final : public IModule
 	{
 	public:
-		static constexpr uint8 c_MaxSecondaryWindows = 2;
-
 		WindowModule();
 
 		~WindowModule();
 
-		void InitializeModule() override;
+		void Initialize() override;
 
-		void ShutdownModule() override;
+		void Shutdown() override;
 
-		void UpdateModule(float deltaTime) override;
+		void Update(float deltaTime) override;
 
-		const Window* GetPrimaryWindow() const { return m_PrimaryWindow; }
+		// Not calling it CreateWindow to avoid conflicts with winapi CreateWindow function
+		WindowHandle MakeWindow(const WindowDesc& desc);
 
-		Window* GetPrimaryWindow() { return m_PrimaryWindow; }
+		void DestroyWindow(WindowHandle handle);
 
-#if TYR_EDITOR
-		const Window* GetSecondaryWindow(uint8 index) const
-		{
-			return m_SecondaryWindows[index];
-		}
+		const Window& GetWindow(WindowHandle handle) const;
 
-		Window* GetSecondaryWindow(uint8 index)
-		{
-			return m_SecondaryWindows[index];
-		}
-#endif
+		const uint GetWindowWidth(WindowHandle handle) const;
+
+		const uint GetWindowHeight(WindowHandle handle) const;
+
+		const bool IsWindowActive(WindowHandle handle) const;
 
 	private:
-		Window* m_PrimaryWindow;
-#if TYR_EDITOR
-		LocalArray<Window*, c_MaxSecondaryWindows> m_SecondaryWindows;
-#endif
+		WindowModulePrivate* m_Private{};
 	};
 }

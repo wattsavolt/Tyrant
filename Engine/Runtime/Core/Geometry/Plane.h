@@ -10,7 +10,7 @@ namespace tyr
 	class BoundingSphere;
 
 	/// A class representing a 3D plane
-	class TYR_CORE_EXPORT Plane
+	class TYR_CORE_API Plane
 	{
 	public:
 		Plane() = default;

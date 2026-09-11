@@ -5,7 +5,7 @@
 
 namespace tyr
 {
-	class TYR_CORE_EXPORT Win32Platform : public Platform
+	class TYR_CORE_API Win32Platform : public Platform
 	{
 
 	};

@@ -5,13 +5,6 @@
 
 namespace tyr
 {
-    template <typename T>
-    constexpr bool IsDefaultConstructibleObject =
-        !std::is_abstract_v<T> &&
-        !std::is_reference_v<T> &&
-        !std::is_pointer_v<T> &&
-        std::is_default_constructible_v<T>;
-
     template<typename T, typename A = HeapAllocator>
     class Array final 
     {
@@ -30,25 +23,29 @@ namespace tyr
 
         void CreateElements(uint amount)
         {
-            if constexpr (IsDefaultConstructibleObject<T>)
-            {
-                m_Data = NewN<T, A>(amount);
-            }
-            else
-            {
-                m_Data = AllocN<T, A>(amount);
-            }
+            m_Data = NewNInit<T, A>(amount);
+        }
+
+        void CreateUninitializedElements(uint amount)
+        {
+            m_Data = NewN<T, A>(amount);
         }
 
         template<typename... Args>
         void ConstructElements(uint startIndex, uint count, Args&&... args)
         {
-            if constexpr (IsDefaultConstructibleObject<T>)
+            for (uint i = startIndex; i < startIndex + count; ++i)
             {
-                for (uint i = startIndex; i < startIndex + count; ++i)
-                {
-                    Construct<T>(&m_Data[i], std::forward<Args>(args)...);
-                }
+                ConstructInit<T>(&m_Data[i], std::forward<Args>(args)...);
+            }    
+        }
+
+        template<typename... Args>
+        void ConstructUninitializedElements(uint startIndex, uint count, Args&&... args)
+        {
+            for (uint i = startIndex; i < startIndex + count; ++i)
+            {
+                Construct<T>(&m_Data[i], std::forward<Args>(args)...);
             }
         }
 
@@ -63,22 +60,32 @@ namespace tyr
             }
         }
 
+        uint CalculateNewCapacity(uint requested)
+        {
+            return std::max(m_Capacity * 2, requested);
+        }
+
         // Ensure the array has enough capacity
         void EnsureCapacity(uint capacity)
         {
             if (capacity > m_Capacity)
             {
-                const uint newCap = std::max(m_Capacity * 2, capacity);
-                T* newData = AllocN<T, A>(newCap);
+                const uint newCap = CalculateNewCapacity(capacity);
+                T* newData = MemAllocN<T, A>(newCap);
 
-                // Move existing elements to the new allocation
-                for (uint i = 0; i < m_Size; ++i)
+                // Copy or move existing elements to the new allocation
+                if constexpr (std::is_trivially_copyable_v<T>)
                 {
-                    Construct<T>(&newData[i], std::move(m_Data[i]));
+                    std::memcpy(newData, m_Data, m_Size * sizeof(T));
                 }
-
-                // Old elemtns still need to be destructed (if non trivially destructible) even after being moved
-                DestructElements(0, m_Size);
+                else
+                {
+                    for (uint i = 0; i < m_Size; ++i)
+                    {
+                        Construct<T>(&newData[i], std::move(m_Data[i]));
+                    }
+                    DestructElements(0, m_Size);
+                }
 
                 // Free the old data
                 Free<A>(m_Data);
@@ -91,15 +98,31 @@ namespace tyr
 
         void InsertElements(uint index, uint count)
         {
-            EnsureCapacity(m_Size + count);
-            for (uint i = m_Size; i-- > index;)
+            // Could have a tiny performance gain by dealing with capacity changes in this function
+            // instead of calling EnsureCapacity but not worth the code duplication
+            const uint newSize = m_Size + count;
+            EnsureCapacity(newSize);
+                 
+            if constexpr (std::is_trivially_copyable_v<T>)
             {
-                m_Data[i + count] = std::move(m_Data[i]);
+                // Use memmove and not memcpy as memory regions can overlap
+                std::memmove(m_Data + index + count, m_Data + index, (m_Size - index) * sizeof(T));
             }
-            m_Size += count;
+            else
+            {
+                for (uint i = m_Size; i-- > index;)
+                {
+                    Construct<T>(&m_Data[i + count], std::move(m_Data[i]));
+                    m_Data[i].~T();
+                }
+            }
+                   
+            m_Size = newSize;
         }
 
     public:
+        struct UninitializedTag {};
+
         Array(uint size = 0)
             : m_Data(nullptr)
         {
@@ -108,6 +131,18 @@ namespace tyr
                 CreateElements(size);
             }
           
+            m_Capacity = size;
+            m_Size = size;
+        }
+
+        Array(UninitializedTag, uint size = 0)
+            : m_Data(nullptr)
+        {
+            if (size > 0)
+            {
+                CreateUninitializedElements(size);
+            }
+
             m_Capacity = size;
             m_Size = size;
         }
@@ -130,14 +165,21 @@ namespace tyr
 
         Array(const Array& other)
             : m_Size(other.m_Size)
-            , m_Capacity(other.m_Capacity)
+            , m_Capacity(other.m_Size)
         {
             if (m_Capacity > 0)
             {
-                m_Data = AllocN<T, A>(m_Capacity);
-                for (uint i = 0; i < m_Size; ++i)
+                m_Data = MemAllocN<T, A>(m_Capacity);
+                if constexpr (std::is_trivially_copyable_v<T>)
                 {
-                    m_Data[i] = other.m_Data[i];
+                    std::memcpy(m_Data, other.m_Data, other.m_Size * sizeof(T));
+                }
+                else
+                {
+                    for (uint i = 0; i < m_Size; ++i)
+                    {
+                        Construct<T>(&m_Data[i], other.m_Data[i]);
+                    }
                 }
             }
             else
@@ -153,7 +195,7 @@ namespace tyr
 
             if (m_Size > 0)
             {
-                m_Data = AllocN<T, A>(m_Capacity);
+                m_Data = MemAllocN<T, A>(m_Capacity);
                 uint i = 0;
                 for (const T& value : initList)
                 {
@@ -168,27 +210,39 @@ namespace tyr
 
         Array& operator=(const Array& other)
         {
-            if (this != &other)
+            if (this == &other)
+                return *this;
+
+            if constexpr (std::is_trivially_copyable_v<T>)
+            {
+                if (other.m_Size > m_Capacity)
+                {
+                    Free<A>(m_Data);
+                    m_Capacity = other.m_Size;
+                    m_Data = MemAllocN<T, A>(m_Capacity);
+                }
+
+                std::memcpy(m_Data, other.m_Data, other.m_Size * sizeof(T));
+            }
+            else
             {
                 DestructElements(0, m_Size);
-                Free<A>(m_Data);
 
-                m_Size = other.m_Size;
-                m_Capacity = other.m_Capacity;
-
-                if (m_Capacity > 0)
+                if (other.m_Size > m_Capacity)
                 {
-                    m_Data = AllocN<T, A>(m_Capacity);
-                    for (uint i = 0; i < m_Size; ++i)
-                    {
-                        m_Data[i] = other.m_Data[i];
-                    }
+                    Free<A>(m_Data);
+                    m_Capacity = other.m_Size;
+                    m_Data = MemAllocN<T, A>(m_Capacity);
                 }
-                else
+
+                for (uint i = 0; i < other.m_Size; ++i)
                 {
-                    m_Data = nullptr;
+                    Construct<T>(&m_Data[i], other.m_Data[i]);
                 }
             }
+
+            m_Size = other.m_Size;
+
             return *this;
         }
 
@@ -198,8 +252,24 @@ namespace tyr
         }
 
         template<typename... Args>
-        void Resize(uint size, Args&&... args)
+        void Resize(UninitializedTag, uint size, Args&&... args)
         {           
+            if (size > m_Size)
+            {
+                EnsureCapacity(size);
+                ConstructUninitializedElements(m_Size, size - m_Size, std::forward<Args>(args)...);
+                m_Size = size;
+            }
+            else if (size < m_Size)
+            {
+                DestructElements(size, m_Size - size);
+                m_Size = size;
+            }
+        }
+
+        template<typename... Args>
+        void Resize(uint size, Args&&... args)
+        {
             if (size > m_Size)
             {
                 EnsureCapacity(size);
@@ -211,6 +281,11 @@ namespace tyr
                 DestructElements(size, m_Size - size);
                 m_Size = size;
             }
+        }
+
+        uint Capacity() const
+        {
+            return m_Capacity;
         }
 
         uint Size() const
@@ -266,12 +341,19 @@ namespace tyr
 
         bool Contains(const T& value) const
         {
-            for (const T& item : *this)
+            if constexpr (EqualityComparable<T>)
             {
-                if (item == value)
+                for (const T& item : *this)
                 {
-                    return true;
+                    if (item == value)
+                    {
+                        return true;
+                    }
                 }
+            }
+            else
+            {
+                TYR_STATIC_ASSERT(false, "Type must have a comparison operator");
             }
             return false;
         }
@@ -295,18 +377,25 @@ namespace tyr
             Construct<T>(&m_Data[m_Size++], std::forward<Args>(args)...);
         }
 
+        T& ExpandOne()
+        {
+            EnsureCapacity(m_Size + 1);
+            Construct<T>(&m_Data[m_Size]);
+            return m_Data[m_Size++];
+        }
+
         void Insert(uint index, const T& item)
         {
             TYR_ASSERT(index <= m_Size);
             InsertElements(index, 1);
-            m_Data[index] = item;
+            Construct<T>(&m_Data[index], item);
         }
 
         void Insert(uint index, T&& item)
         {
             TYR_ASSERT(index <= m_Size);
             InsertElements(index, 1);
-            m_Data[index] = std::move(item);
+            Construct<T>(&m_Data[index], std::move(item));
         }
 
         void Insert(uint index, const T* items, uint count)
@@ -315,9 +404,16 @@ namespace tyr
             TYR_ASSERT(items != nullptr);
 
             InsertElements(index, count);
-            for (uint i = 0; i < count; ++i)
+            if constexpr (std::is_trivially_copyable_v<T>)
             {
-                m_Data[index + i] = items[i];
+                std::memcpy(&m_Data[index], items, count * sizeof(T));
+            }
+            else
+            {
+                for (uint i = 0; i < count; ++i)
+                {
+                    Construct<T>(&m_Data[index + i], items[i]);
+                }
             }
         }
 
@@ -334,6 +430,12 @@ namespace tyr
             DestructElement(--m_Size);       
         }
 
+        void PopBack()
+        {
+            TYR_ASSERT(m_Size > 0);
+            DestructElement(--m_Size);
+        }
+
         void EraseFromEnd(uint count)
         {
             TYR_ASSERT(count <= m_Size);
@@ -344,10 +446,31 @@ namespace tyr
             m_Size -= count;
         }
 
+        void EraseFromFront(uint count)
+        {
+            TYR_ASSERT(count <= m_Size);
+            for (uint i = 0; i < count; ++i)
+            {
+                m_Data[i] = std::move(m_Data[i + count]);
+            }
+            EraseFromEnd(count);
+        }
+
         void Swap(uint indexA, uint indexB)
         {
             TYR_ASSERT(indexA != indexB && indexA < m_Size && indexB < m_Size);
             std::swap(m_Data[indexA], m_Data[indexB]);
+        }
+
+        void SwapToEnd(uint index)
+        {
+            Swap(index, m_Size - 1);
+        }
+
+        void SwapAndPopBack(uint index)
+        {
+            Swap(index, m_Size - 1);
+            PopBack();
         }
 
         T& Back()
@@ -360,12 +483,6 @@ namespace tyr
         {
             TYR_ASSERT(m_Size > 0);
             return m_Data[m_Size - 1];
-        }
-
-        void PopBack()
-        {
-            TYR_ASSERT(m_Size > 0);
-            DestructElement[--m_Size];
         }
 
         void Clear()

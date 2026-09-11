@@ -1,6 +1,6 @@
 #include "Logger.h"
 #include "String/StringUtil.h"
-#include "Threading/Threading.h"
+#include "Threading/ThreadTypes.h"
 #include <iostream>
 
 namespace tyr

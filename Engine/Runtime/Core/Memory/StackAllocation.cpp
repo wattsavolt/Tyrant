@@ -1,4 +1,4 @@
-#include "Memory/StackAllocation.h"
+#include "StackAllocation.h"
 
 namespace tyr
 {
@@ -8,9 +8,9 @@ namespace tyr
 		return memoryStack;
 	}
 
-	uint8* MemoryStack::Alloc(uint numBytes)
+	uint8* MemoryStack::Alloc(size_t numBytes)
 	{
-		return m_Stack.Allocate(numBytes);
+		return m_Stack.Allocate(static_cast<uint>(numBytes));
 	}
 
 	void MemoryStack::DeallocLast()

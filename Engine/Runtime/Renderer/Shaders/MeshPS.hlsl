@@ -16,10 +16,10 @@ cbuffer SpotLightCBuffer : register(b1)
 	SpotLight spotLight;
 };
 
-cbuffer MaterialCBuffer : register(b2)
-{
-	Material material;
-};
+StructuredBuffer<Material> materials : register(t0);
+
+Texture2D textures[] : register(t0);
+SamplerState samplers[] : register(s0);
 
 float4 main(VS_OUTPUT input) : SV_TARGET
 {

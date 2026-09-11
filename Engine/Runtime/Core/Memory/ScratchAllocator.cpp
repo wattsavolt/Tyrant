@@ -1,8 +1,8 @@
-#include "Memory/ScratchAllocator.h"
+#include "ScratchAllocator.h"
 
 namespace tyr
 {
-	ScratchAllocator::ScratchAllocator(uint blockSize)
+	ScratchAllocator::ScratchAllocator(size_t blockSize)
 		: m_MinBlockSize(blockSize)
 		, m_CurBlock(nullptr)
 	{
@@ -11,16 +11,16 @@ namespace tyr
 
 	ScratchAllocator::~ScratchAllocator()
 	{
-		const uint numBlocks = static_cast<uint>(m_Blocks.Size());
+		const uint numBlocks = m_Blocks.Size();
 		for (uint i = 0; i < numBlocks; ++i)
 		{
 			FreeBlock(m_Blocks[i]);
 		}
 	}
 
-	uint8* ScratchAllocator::Alloc(uint amount)
+	uint8* ScratchAllocator::Alloc(size_t size)
 	{
-		TYR_ASSERT(amount != 0);
+		TYR_ASSERT(size != 0);
 
 		uint freeMem = 0;
 		if (m_CurBlock)
@@ -28,18 +28,18 @@ namespace tyr
 			freeMem = m_CurBlock->m_Size - m_CurBlock->m_Pos;
 		}
 
-		if (amount > freeMem)
+		if (size > freeMem)
 		{
-			AllocBlock(amount);
+			AllocBlock(size);
 		}
 
-		return m_CurBlock->Alloc(amount);
+		return m_CurBlock->Alloc(size);
 	}
 
-	uint8* ScratchAllocator::AllocAligned(uint amount, uint alignment)
+	uint8* ScratchAllocator::AllocAligned(size_t size, size_t alignment)
 	{
-		uint freeMem = 0;
-		uint pos = 0;
+		size_t freeMem = 0;
+		size_t pos = 0;
 
 		if (m_CurBlock)
 		{
@@ -47,8 +47,8 @@ namespace tyr
 			pos = m_CurBlock->m_Pos;
 		}
 
-		uint alignOffset = (alignment - (pos & (alignment - 1))) & (alignment - 1);
-		if (amount + alignOffset > freeMem)
+		size_t alignOffset = (alignment - (pos & (alignment - 1))) & (alignment - 1);
+		if (size + alignOffset > freeMem)
 		{
 			// Allocate new block with 16 byte alignment
 			if (alignment > 16)
@@ -60,27 +60,27 @@ namespace tyr
 				alignOffset = 0;
 			}
 
-			AllocBlock(amount + alignOffset);
+			AllocBlock(size + alignOffset);
 		}
 
-		amount += alignOffset;
+		size += alignOffset;
 
-		uint8* data = m_CurBlock->Alloc(amount);
+		uint8* data = m_CurBlock->Alloc(size);
 		// The data will begin after the offset as it may be padded to have 16 byte alignment
 		return data + alignOffset;
 	}
 
-	void ScratchAllocator::AllocBlock(uint amount)
+	void ScratchAllocator::AllocBlock(size_t size)
 	{
-		uint blockSize = m_MinBlockSize;
-		if (amount > blockSize)
+		size_t blockSize = m_MinBlockSize;
+		if (size > blockSize)
 		{
-			blockSize = amount;
+			blockSize = size;
 		}
 
-		const uint alignOffset = 16 - (sizeof(Block) & (16 - 1));
+		const size_t alignOffset = 16 - (sizeof(Block) & (16 - 1));
 
-		uint8* data = reinterpret_cast<uint8*>(AllocAligned16(blockSize + sizeof(Block) + alignOffset));
+		uint8* data = reinterpret_cast<uint8*>(MemAllocAligned16(blockSize + sizeof(Block) + alignOffset));
 		Block* block = new (data) Block(blockSize);
 		data += sizeof(Block) + alignOffset;
 		block->m_Data = data;
@@ -100,10 +100,10 @@ namespace tyr
 	{
 		if (m_CurBlock)
 		{
-			const uint numBlocks = static_cast<uint>(m_Blocks.Size());
+			const uint numBlocks = m_Blocks.Size();
 			if (numBlocks > 1)
 			{
-				uint totalSize = 0;
+				size_t totalSize = 0;
 				// Combine all the blocks into one
 				for (uint i = 0; i < numBlocks; ++i)
 				{
@@ -122,9 +122,9 @@ namespace tyr
 		}
 	}
 
-	uint ScratchAllocator::GetTotalSize() const
+	size_t ScratchAllocator::GetTotalSize() const
 	{
-		uint totalSize = 0;
+		size_t totalSize = 0;
 		for (const Block* block : m_Blocks)
 		{
 			totalSize += block->m_Size;

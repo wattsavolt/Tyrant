@@ -2,43 +2,53 @@
 
 #include "GraphicsBase.h"
 #include "RenderAPITypes.h"
-#include "Device.h"
 #include "Image.h"
 #include "Sync.h"
 
 namespace tyr
 {
-	class CommandList;
+	class Device;
+	class CommandQueue;
 	struct ImageBarrier;
 
 	struct SwapChainDesc
 	{
-		bool vSyncEnabled;
-		PixelFormat pixelFormat;
-		ColorSpace colorSpace;
-		bool createDepth = false;
-		PixelFormat depthFormat = PF_UNKNOWN;
+		PixelFormat pixelFormat{};
+		ColorSpace colorSpace{};
+		PixelFormat depthFormat{};
+		bool createDepth{};
+		bool vSyncEnabled{};
 		// Double-buffering used by default
-		bool useTripleBuffering = false;
+		bool useTripleBuffering{};
 	};
 
 	/// Class repesenting a swapchain
-	class TYR_GRAPHICS_EXPORT SwapChain
+	class TYR_GRAPHICS_API SwapChain
 	{
 	public:
-		SwapChain(Device& device, const SwapChainDesc& desc);
-		virtual ~SwapChain();
+		static constexpr uint c_MaxImages = 3;
 
-		virtual uint AcquireNextImage(SemaphoreHandle semaphore) = 0;
+		SwapChain(Device* device);
+		virtual ~SwapChain() = default;
+
+		// Recreates for the window specified
+		virtual void Recreate(void* windowOSHandle, const SwapChainDesc& desc) = 0;
+
+		// Should only be called when a window resize has occurred. Creates new swapchain, images and image views and switches
+		virtual void Resize() = 0;
+
+		virtual void DestroyOldSwapChain() = 0;
+
+		virtual uint AcquireNextImage(SemaphoreHandle semaphore, bool& resized) = 0;
 
 		// Semaphore should be one used when executing the command list
-		virtual void Present(const CommandList* commandList, SemaphoreHandle semaphore, uint imageIndex, uint queueIndex = 0u) = 0;
+		virtual void Present(const CommandQueue* queue, SemaphoreHandle semaphore, uint imageIndex, bool& resized) = 0;
 
 		// Adds barrier needed before rendering to the swap chain image
-		void CreateRenderingImageBarrier(ImageBarrier& barrier, uint imageIndex, uint srcQueueFamilyIndex = QUEUE_FAMILY_IGNORED);
+		void CreateRenderingImageBarrier(ImageBarrier& barrier, ImageHandle imageHandle, uint srcQueueFamilyIndex = QUEUE_FAMILY_IGNORED);
 
 		// Adds barrier needed before presenting the swap chain image
-		void CreatePresentingImageBarrier(ImageBarrier& barrier, uint imageIndex, uint srcQueueFamilyIndex = QUEUE_FAMILY_IGNORED);
+		void CreatePresentingImageBarrier(ImageBarrier& barrier, ImageHandle imageHandle, uint srcQueueFamilyIndex = QUEUE_FAMILY_IGNORED);
 
 		BarrierAccess GetRenderingWriteAccess() const { return m_RenderingWriteAccess; }
 
@@ -46,33 +56,41 @@ namespace tyr
 
 		ImageLayout GetRenderingLayout() const { return m_RenderingLayout; }
 
-		Device& GetDevice() const { return m_Device; }
+		Device* GetDevice() const { return m_Device; }
 		
 		const SwapChainDesc& GetDesc() const { return m_Desc; }
 
-		const LocalArray<ImageHandle, 3>& GetImages() const { return m_Images; }
+		const LocalArray<ImageHandle, c_MaxImages>& GetImages() const { return m_ImageData.images; }
 
-		const LocalArray<ImageViewHandle, 3>& GetImageViews() const { return m_ImageViews; }
+		const LocalArray<ImageViewHandle, c_MaxImages>& GetImageViews() const { return m_ImageData.imageViews; }
 
-		const uint GetWidth() const { return m_Width; }
+		const uint GetWidth() const { return m_ImageData.width; }
 
-		const uint GetHeight() const { return m_Height; }
+		const uint GetHeight() const { return m_ImageData.height; }
 
 	protected:
-		void CreateSwapChainImagesAndViews(Handle* imageHandles, uint imageCount);
-		void DeleteSwapChainImagesAndViews();
+		struct SwapChainImageData
+		{
+			LocalArray<ImageHandle, c_MaxImages> images;
+			LocalArray<ImageViewHandle, c_MaxImages> imageViews;
+			uint width{};
+			uint height{};
+		};
 
-		Device& m_Device;
+		void CreateSyncData();
+		void CreateSwapChainImagesAndViews(SwapChainImageData& imageData, void** imageHandles, uint imageCount);
+		void DeleteSwapChainImagesAndViews(SwapChainImageData& imageData);
+		void DeleteOtherSwapChainImagesAndViews();
+
+		Device* m_Device;
 		SwapChainDesc m_Desc;
-		LocalArray<ImageHandle, 3> m_Images;
-		LocalArray<ImageViewHandle, 3> m_ImageViews;
-		BarrierAccess m_RenderingWriteAccess;
-		BarrierAccess m_RenderingReadAccess;
-		ImageLayout m_RenderingLayout;
-		SubresourceAspect m_SubresourceAspect;
-		ImageUsage m_ImageUsage;
-		uint m_Width;
-		uint m_Height;
-		bool m_Resized;
+		SwapChainImageData m_ImageData{};
+		SwapChainImageData m_OldImageData{};
+		
+		BarrierAccess m_RenderingWriteAccess{};
+		BarrierAccess m_RenderingReadAccess{};
+		ImageLayout m_RenderingLayout{};
+		SubresourceAspect m_SubresourceAspect{};
+		ImageUsage m_ImageUsage{};
 	};
 }

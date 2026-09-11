@@ -1,4 +1,5 @@
 #include "RenderAPI.h"
+#include "Device.h"
 #include "SwapChain.h"
 #include "Image.h"
 
@@ -13,7 +14,6 @@ namespace tyr
 	RenderAPI::RenderAPI()
 		: m_Initialized(false)
 		, m_Device(nullptr)
-		, m_SwapChain(nullptr)
 	{
 		
 	}
@@ -26,7 +26,7 @@ namespace tyr
 	void RenderAPI::Initialize(const RenderAPIConfig& config)
 	{
 		m_Config = config;
-		InitializeAPI();	
+		InitializeAPI();		
 		m_Initialized = true;
 	}
 

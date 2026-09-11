@@ -20,4 +20,7 @@ namespace tyr
 	using int64  = int64_t;
 	using uint64 = uint64_t;
 	using ulong = unsigned long;
+
+	// Just for readability for generic memory data
+	using uchar = unsigned char;
 }

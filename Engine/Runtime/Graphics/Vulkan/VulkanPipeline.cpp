@@ -1,6 +1,6 @@
 #include "VulkanPipeline.h"
 #include "VulkanDevice.h"
-#include "VulkanDescriptorSetGroup.h"
+#include "VulkanDescriptorSet.h"
 #include "VulkanShaderModule.h"
 
 namespace tyr
@@ -17,9 +17,9 @@ namespace tyr
 
 	RenderPassHandle Device::CreateRenderPass(const RenderPassDesc& renderPassDesc)
 	{
-		RenderPassHandle handle;
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
-		RenderPass& renderPass = *device.m_RenderPassPool.Create(handle.id);
+		const RenderPassHandle handle(device.m_RenderPassPool.Create());
+		RenderPass& renderPass = device.m_RenderPassPool[handle.h];
 
 		StackAllocManager stack;
 		VkAttachmentDescription* attachments = stack.Alloc<VkAttachmentDescription>(renderPassDesc.attachments.Size());
@@ -95,7 +95,7 @@ namespace tyr
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
 		RenderPass& renderPass = device.GetRenderPass(handle);
 		vkDestroyRenderPass(device.m_LogicalDevice, renderPass.renderPass, g_VulkanAllocationCallbacks);
-		device.m_RenderPassPool.Delete(handle.id);
+		device.m_RenderPassPool.Delete(handle.h);
 	}
 
 	void ToVulkanStencilOpState(const StencilOpState& stencilOpState, VkStencilOpState& vkStencilOpState)
@@ -111,9 +111,9 @@ namespace tyr
 
 	GraphicsPipelineHandle Device::CreateGraphicsPipeline(const GraphicsPipelineDesc& desc)
 	{
-		GraphicsPipelineHandle handle;
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
-		GraphicsPipeline& pipeline = *device.m_GraphicsPipelinePool.Create(handle.id);
+		const GraphicsPipelineHandle handle(device.m_GraphicsPipelinePool.Create());
+		GraphicsPipeline& pipeline = device.m_GraphicsPipelinePool[handle.h];
 
 		StackAllocManager stack;
 
@@ -380,14 +380,14 @@ namespace tyr
 		GraphicsPipeline& pipeline = device.GetGraphicsPipeline(handle);
 		vkDestroyPipeline(device.m_LogicalDevice, pipeline.pipeline, g_VulkanAllocationCallbacks);
 		vkDestroyPipelineLayout(device.m_LogicalDevice, pipeline.pipelineLayout, g_VulkanAllocationCallbacks);
-		device.m_GraphicsPipelinePool.Delete(handle.id);
+		device.m_GraphicsPipelinePool.Delete(handle.h);
 	}
 
 	ComputePipelineHandle Device::CreateComputePipeline(const ComputePipelineDesc& desc)
 	{
-		ComputePipelineHandle handle;
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
-		ComputePipeline& pipeline = *device.m_ComputePipelinePool.Create(handle.id);
+		const ComputePipelineHandle handle(device.m_ComputePipelinePool.Create());
+		ComputePipeline& pipeline = device.m_ComputePipelinePool[handle.h];
 
 		StackAllocManager stack;
 
@@ -404,14 +404,14 @@ namespace tyr
 		ComputePipeline& pipeline = device.GetComputePipeline(handle);
 		vkDestroyPipeline(device.m_LogicalDevice, pipeline.pipeline, g_VulkanAllocationCallbacks);
 		vkDestroyPipelineLayout(device.m_LogicalDevice, pipeline.pipelineLayout, g_VulkanAllocationCallbacks);
-		device.m_ComputePipelinePool.Delete(handle.id);
+		device.m_ComputePipelinePool.Delete(handle.h);
 	}
 
 	RayTracingPipelineHandle Device::CreateRayTracingPipeline(const RayTracingPipelineDesc& desc)
 	{
-		RayTracingPipelineHandle handle;
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
-		RayTracingPipeline& pipeline = *device.m_RayTracingPipelinePool.Create(handle.id);
+		const RayTracingPipelineHandle handle(device.m_RayTracingPipelinePool.Create());
+		RayTracingPipeline& pipeline = device.m_RayTracingPipelinePool[handle.h];
 
 		StackAllocManager stack;
 
@@ -428,6 +428,6 @@ namespace tyr
 		RayTracingPipeline& pipeline = device.GetRayTracingPipeline(handle);
 		vkDestroyPipeline(device.m_LogicalDevice, pipeline.pipeline, g_VulkanAllocationCallbacks);
 		vkDestroyPipelineLayout(device.m_LogicalDevice, pipeline.pipelineLayout, g_VulkanAllocationCallbacks);
-		device.m_RayTracingPipelinePool.Delete(handle.id);
+		device.m_RayTracingPipelinePool.Delete(handle.h);
 	}
 }

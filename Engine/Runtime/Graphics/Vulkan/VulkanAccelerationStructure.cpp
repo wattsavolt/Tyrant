@@ -5,9 +5,9 @@ namespace tyr
 {
 	AccelerationStructureHandle Device::CreateAccelerationStructure(const AccelerationStructureDesc& desc)
 	{
-		AccelerationStructureHandle handle;
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
-		AccelerationStructure& accelerationStructure = *device.m_AccelerationStructurePool.Create(handle.id);
+		const AccelerationStructureHandle handle(device.m_AccelerationStructurePool.Create());
+		AccelerationStructure& accelerationStructure = device.m_AccelerationStructurePool[handle.h];
 		// TODO: Implement
 		return handle;
 	}
@@ -17,6 +17,6 @@ namespace tyr
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
 		AccelerationStructure& accelerationStructure = device.GetAccelerationStructure(handle);
 		// TODO: Implement
-		device.m_AccelerationStructurePool.Delete(handle.id);
+		device.m_AccelerationStructurePool.Delete(handle.h);
 	}
 }

@@ -12,5 +12,6 @@ public:
 	void Initialize() override;
 	void Update(float deltaTime) override;
 	void Shutdown() override;
+	bool WantsExit() const override;
 };
 	

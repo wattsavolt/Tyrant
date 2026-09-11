@@ -8,8 +8,8 @@ namespace tyr
     class LocalArray final
     {
     private:
+        T m_Data[C]{};
         uint m_Size;
-        T m_Data[C];
 
         void InsertElements(uint index, uint count)
         {
@@ -58,6 +58,21 @@ namespace tyr
         T& operator[](uint index)
         {
             return m_Data[index];
+        }
+
+        LocalArray& operator=(const LocalArray& other)
+        {
+            if (this == &other)
+                return *this;
+
+            m_Size = other.m_Size;
+
+            for (uint i = 0; i < m_Size; ++i)
+            {
+                m_Data[i] = other.m_Data[i];
+            }
+
+            return *this;
         }
 
         T* Data()
@@ -160,6 +175,12 @@ namespace tyr
             --m_Size;       
         }
 
+        void PopBack()
+        {
+            TYR_ASSERT(m_Size > 0);
+            --m_Size;
+        }
+
         void EraseFromEnd(uint count)
         {
             TYR_ASSERT(count <= m_Size);
@@ -172,6 +193,17 @@ namespace tyr
             std::swap(m_Data[indexA], m_Data[indexB]);
         }
 
+        void SwapToEnd(uint index)
+        {
+            Swap(index, m_Size - 1);
+        }
+
+        void SwapAndPopBack(uint index)
+        {
+            Swap(index, m_Size - 1);
+            PopBack();
+        }
+
         T& Back()
         {
             TYR_ASSERT(m_Size > 0);
@@ -182,12 +214,6 @@ namespace tyr
         {
             TYR_ASSERT(m_Size > 0);
             return m_Data[m_Size - 1];
-        }
-
-        void PopBack()
-        {
-            TYR_ASSERT(m_Size > 0);
-            --m_Size;
         }
 
         void Clear()

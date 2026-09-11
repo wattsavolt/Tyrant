@@ -6,22 +6,23 @@
 #include "Utility/Utility.h"
 #include "Utility/LibraryLoader.h"
 #include "Module/ModuleManager.h"
-#include "Engine.h" 
+#include "EngineLoop.h" 
 
 namespace tyr
 {
     int Run(int windowShowFlag = 1)
     {
-        Engine* engine = new tyr::Engine();
-        engine->Initialize([]() {
-            // Application modules must be registered here
+        EngineLoop engineLoop;
+        engineLoop.Initialize([]() {
+           
             TYR_REGISTER_MODULE(AppModule);
         });
-        engine->Run();
-        // All modules will be shutdown and unregistered here
-        engine->Shutdown();
-        delete engine;
-
+        AppModule* appModule;
+        TYR_GET_MODULE(AppModule, appModule);
+        engineLoop.Run([&appModule]() -> bool {
+            return appModule->WantsExit();
+        });
+        engineLoop.Shutdown();
         return EXIT_SUCCESS;
     }
 }
@@ -36,6 +37,7 @@ int APIENTRY WinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
+    // TODO: Support command line arguments and allow game to be launched independently when in editor mode (always launched independently when not in editor mode)
     return tyr::Run(nCmdShow);
 }
 #else

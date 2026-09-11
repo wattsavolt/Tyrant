@@ -5,8 +5,8 @@
 
 namespace tyr
 {
-    using ShaderModuleHandle = ResourceHandle;
-
+    TYR_CREATE_HANDLE_TYPE(ShaderModuleHandle);
+   
     enum class ShaderBinaryLanguage : uint
     {
         Dxil = 0,
@@ -16,9 +16,7 @@ namespace tyr
     struct ShaderModuleDesc
     {
         static constexpr uint8 c_MaxEntryPointSize = 16;
-#if !TYR_FINAL
-        GDebugString debugName;
-#endif
+        TYR_DECLARE_GDEBUGNAME(debugName);
         void* byteCode = nullptr;
         size_t size;
         LocalString<c_MaxEntryPointSize> entryPoint = "main";

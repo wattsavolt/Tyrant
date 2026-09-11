@@ -5,33 +5,33 @@
 
 namespace tyr
 {
-	struct ImageHandle : public ResourceHandle {};
-	struct ImageViewHandle : public ResourceHandle {};
-	struct SamplerHandle : public ResourceHandle {};
+	TYR_CREATE_HANDLE_TYPE(ImageHandle);
+	TYR_CREATE_HANDLE_TYPE(ImageViewHandle);
+	TYR_CREATE_HANDLE_TYPE(SamplerHandle);
 
 	struct ImageDesc
 	{
-		TYR_DECLARE_GDEBUGSTRING(debugName);
-		// Handle to an externally created image required for swapchain images
-		Handle externalImage = nullptr;
+		TYR_DECLARE_GDEBUGNAME(debugName);
+		// Pointer to an externally created image required for swapchain images
+		void* externalImage = nullptr;
 		uint width;
 		uint height;
 		uint depth;
-		uint mipLevelCount;
+		uint mipCount;
 		uint arrayLayerCount;
+		ImageUsage usage;
+		MemoryProperty memoryProperty;
 		ImageType type;
 		PixelFormat format;
 		SampleCount sampleCount;
-		ImageUsage usage;
 		ImageLayout layout = IMAGE_LAYOUT_GENERAL;
-		MemoryProperty memoryProperty;
 	};
 
 	struct SubresourceRange
 	{
 		SubresourceAspect aspect;
 		uint baseMipLevel;
-		uint mipLevelCount;
+		uint mipCount;
 		uint baseArrayLayer;
 		uint arrayLayerCount;
 	};
@@ -84,9 +84,7 @@ namespace tyr
 
 	struct ImageViewDesc
 	{
-#if !TYR_FINAL
-		GDebugString debugName;
-#endif
+		TYR_DECLARE_GDEBUGNAME(debugName);
 		ImageHandle image;
 		SubresourceRange subresourceRange;
 		ImageType viewType;
@@ -96,7 +94,7 @@ namespace tyr
 
 	struct SamplerDesc
 	{
-		TYR_DECLARE_GDEBUGSTRING(debugName);
+		TYR_DECLARE_GDEBUGNAME(debugName);
 		Filter magFilter;
 		Filter minFilter;
 		SamplerMipmapMode mipmapMode;

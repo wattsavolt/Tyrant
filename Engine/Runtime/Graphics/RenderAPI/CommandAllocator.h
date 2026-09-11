@@ -9,13 +9,13 @@ namespace tyr
 {
 	struct CommandAllocatorDesc
 	{
-		LocalString<20> debugName = "";
+		GDebugString debugName = "";
 		CommandAllocatorCreateFlags flags = CommandAllocatorCreateFlags::COMMAND_ALLOC_CREATE_RESET_COMMAND_BUFFER_BIT;
 		CommandQueueType queueType = CommandQueueType::CQ_GRAPHICS;
 	};
 
 	/// Class repesenting a command allocator 
-	class TYR_GRAPHICS_EXPORT CommandAllocator
+	class TYR_GRAPHICS_API CommandAllocator
 	{
 	public:
 		CommandAllocator(const CommandAllocatorDesc& desc);

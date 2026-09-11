@@ -45,7 +45,7 @@ namespace tyr
 	};
 
 	/// Class providing math utility functions and values 
-	class TYR_CORE_EXPORT Math
+	class TYR_CORE_API Math
 	{
 	public:
 		/// Checks if the number is valid 
@@ -157,6 +157,22 @@ namespace tyr
 			{
 				return (index + 1) % Capacity;
 			}
+		}
+
+		static TYR_FORCEINLINE float SignNotZero(float v)
+		{
+			return v >= 0.0f ? 1.0f : -1.0f;
+		}
+
+		static TYR_FORCEINLINE int FloatToSnorm16(float v)
+		{
+			v = std::max(-1.0f, std::min(1.0f, v));
+			return static_cast<int>(std::round(v * 32767.0f));
+		}
+
+		static TYR_FORCEINLINE float Snorm16ToFloat(int v)
+		{
+			return std::max(-1.0f, v / 32767.0f);
 		}
 
 		static constexpr float c_ApproxOne = 0.99999994f;

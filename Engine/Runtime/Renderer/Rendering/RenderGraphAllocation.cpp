@@ -6,22 +6,22 @@ namespace tyr
 	ScratchAllocatorPool<RenderGraphAllocator::c_AllocatorCount>* RenderGraphAllocator::s_ScratchAllocatorPool = nullptr;
 	bool RenderGraphAllocator::s_Initialized = false;
 
-	void RenderGraphAllocator::Create(uint blockSize)
+	void RenderGraphAllocator::Create(size_t blockSize)
 	{
 		TYR_ASSERT(!s_Initialized);
 		s_ScratchAllocatorPool = new ScratchAllocatorPool<c_AllocatorCount>(blockSize);
 	}
 
-	uint8* RenderGraphAllocator::Alloc(uint amount)
+	uint8* RenderGraphAllocator::Alloc(size_t size)
 	{
 		TYR_ASSERT(s_Initialized);
-		return s_ScratchAllocatorPool->Alloc(amount);
+		return s_ScratchAllocatorPool->Alloc(size);
 	}
 
-	uint8* RenderGraphAllocator::AllocAligned(uint amount, uint alignment)
+	uint8* RenderGraphAllocator::AllocAligned(size_t size, size_t alignment)
 	{
 		TYR_ASSERT(s_Initialized);
-		return s_ScratchAllocatorPool->AllocAligned(amount, alignment);
+		return s_ScratchAllocatorPool->AllocAligned(size, alignment);
 	}
 
 	void RenderGraphAllocator::NextFrame()

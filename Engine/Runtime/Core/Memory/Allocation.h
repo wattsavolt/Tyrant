@@ -86,12 +86,12 @@ namespace tyr
 	class MemoryCounter
 	{
 	public:
-		static TYR_CORE_EXPORT uint64 GetAllocCount()
+		static TYR_CORE_API uint64 GetAllocCount()
 		{
 			return s_Allocs;
 		}
 
-		static TYR_CORE_EXPORT uint64 GetFreeCount()
+		static TYR_CORE_API uint64 GetFreeCount()
 		{
 			return s_Frees;
 		}
@@ -99,9 +99,9 @@ namespace tyr
 	private:
 		friend class MemoryAllocatorBase;
 
-		// Threadlocal data can't be exported, so some magic to make it accessible from MemoryAllocator
-		static TYR_CORE_EXPORT void IncAllocCount() { ++s_Allocs; }
-		static TYR_CORE_EXPORT void IncFreeCount() { ++s_Frees; }
+		// Thread local data can't be exported, so some magic to make it accessible from MemoryAllocator
+		static TYR_CORE_API void IncAllocCount() { ++s_Allocs; }
+		static TYR_CORE_API void IncFreeCount() { ++s_Frees; }
 
 		static TYR_THREADLOCAL uint64 s_Allocs;
 		static TYR_THREADLOCAL uint64 s_Frees;
@@ -190,14 +190,14 @@ namespace tyr
 
 	 /// Allocates the specified number of bytes. 
 	template<class A>
-	void* Alloc(size_t count)
+	void* MemAlloc(size_t count)
 	{
 		return MemoryAllocator<A>::Allocate(count);
 	}
 
 	/// Allocates enough bytes to hold the specified type, but doesn't construct it. 
 	template<class T, class A>
-	T* Alloc()
+	T* MemAlloc()
 	{
 		return (T*)MemoryAllocator<A>::Allocate(sizeof(T));
 	}
@@ -214,42 +214,48 @@ namespace tyr
 	///**************************************************************************
 
 	/// Allocates the specified number of bytes. 
-	inline void* Alloc(size_t count)
+	inline void* MemAlloc(size_t count)
 	{
 		return MemoryAllocator<HeapAllocator>::Allocate(count);
 	}
 
 	/// Allocates enough bytes to hold the specified type, but doesn't construct it. 
 	template<class T>
-	T* Alloc()
+	T* MemAlloc()
 	{
 		return (T*)MemoryAllocator<HeapAllocator>::Allocate(sizeof(T));
 	}
 
 	/// Allocates the specified number of bytes aligned to the provided boundary. Boundary is in bytes and must be a power
 	/// of two.
-	inline void* AllocAligned(size_t count, size_t align)
+	inline void* MemAllocAligned(size_t count, size_t align)
 	{
 		return MemoryAllocator<HeapAllocator>::AllocateAligned(count, align);
 	}
 
-
 	/// Allocates the specified number of bytes aligned to a 16 bytes boundary. 
-	inline void* AllocAligned16(size_t count)
+	inline void* MemAllocAligned16(size_t count)
 	{
 		return MemoryAllocator<HeapAllocator>::AllocateAligned16(count);
 	}
 
 	template<class T, class A = HeapAllocator>
-	T* AllocN(size_t count)
+	T* MemAllocN(size_t count)
 	{
-		return (T*)MemoryAllocator<A>::Allocate(count * sizeof(T));
+		return static_cast<T*>(MemoryAllocator<A>::Allocate(count * sizeof(T)));
 	}
 
 	template<class T, class... Args>
 	void Construct(void* ptr, Args&&... args) 
 	{ 
 		new(ptr) T(std::forward<Args>(args)...);
+	}
+
+	// Defaults initializes when args is empty
+	template<class T, class... Args>
+	void ConstructInit(void* ptr, Args&&... args)
+	{
+		new(ptr) T{ std::forward<Args>(args)... };
 	}
 
 	/// Frees all the bytes Allocated at the specified location. 
@@ -270,11 +276,11 @@ namespace tyr
 		MemoryAllocator<HeapAllocator>::FreeAligned16(ptr);
 	}
 
-	// Allocate and instantiate multiple of the same object
+	// Allocate and create multiple of the same object
 	template<class T, class A = HeapAllocator>
 	T* NewN(size_t count)
 	{
-		T* ptr = AllocN<T, A>(count);
+		T* ptr = MemAllocN<T, A>(count);
 
 		for (size_t i = 0; i < count; ++i)
 		{
@@ -288,7 +294,21 @@ namespace tyr
 	template<class T, class A, class... Args>
 	T* New(Args &&...args)
 	{
-		return new (Alloc<T, A>()) T(std::forward<Args>(args)...);
+		return new (MemAlloc<T, A>()) T(std::forward<Args>(args)...);
+	}
+
+	// Allocate and initialize multiple of the same object
+	template<class T, class A = HeapAllocator>
+	T* NewNInit(size_t count)
+	{
+		T* ptr = MemAllocN<T, A>(count);
+
+		for (size_t i = 0; i < count; ++i)
+		{
+			new (&ptr[i]) T{};
+		}
+
+		return ptr;
 	}
 
 	// Allocate and instantiate an object
@@ -334,7 +354,7 @@ namespace tyr
 				return nullptr; // Error
 			}
 
-			void* const pv = Alloc<A>(num * sizeof(T));
+			void* const pv = MemAlloc<A>(num * sizeof(T));
 			if (!pv)
 			{ 
 				return nullptr; // Error
@@ -359,24 +379,12 @@ namespace tyr
 
 #define TYR_NEW_OVERRIDE_ENABLED 1
 
-//#if TYR_NEW_OVERRIDE_ENABLED
-//void* TYR_CDECL operator new(size_t cb);
-//
-//void* TYR_CDECL operator new[](size_t cb);
-//
-//void* TYR_CDECL operator new(size_t cb, const std::nothrow_t&) noexcept;
-//
-//void TYR_CDECL operator delete(void* pv);
-//
-//void TYR_CDECL operator delete[](void* pv);
-//#endif
-
 #ifndef TYR_SAFE_DELETE
-#define TYR_SAFE_DELETE(p)  { if(p) { delete p; p = nullptr; } }
+#define TYR_SAFE_DELETE(p)  { delete p; p = nullptr; }
 #endif
 
 #ifndef TYR_SAFE_DELETE_ARRAY
-#define TYR_SAFE_DELETE_ARRAY(p, n)  { if(p) { delete[] p; p = nullptr; } }
+#define TYR_SAFE_DELETE_ARRAY(p, n)  { delete[] p; p = nullptr;  }
 #endif
 
 

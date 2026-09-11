@@ -27,7 +27,7 @@ namespace tyr
 		}
 	}
 
-	Handle Platform::OpenLibrary(const char* filename, bool addFileExtension)
+	void* Platform::OpenLibrary(const char* filename, bool addFileExtension)
 	{
 		String filePath = String(filename);
 		if (addFileExtension)
@@ -37,12 +37,12 @@ namespace tyr
 		return LoadLibrary(filePath.c_str());
 	}
 
-	bool Platform::CloseLibrary(Handle library)
+	bool Platform::CloseLibrary(void* library)
 	{
 		return FreeLibrary(static_cast<HMODULE>(library));
 	}
 
-	void* Platform::GetProcessAddress(const Handle library, const char* function)
+	void* Platform::GetProcessAddress(const void* library, const char* function)
 	{
 		return GetProcAddress((HMODULE)library, function);
 	}
@@ -60,6 +60,17 @@ namespace tyr
 	int Platform::GetScreenHeight()
 	{
 		return GetSystemMetrics(SM_CYSCREEN);
+	}
+
+	void Platform::GetMaxWindowResolution(int& width, int& height, float aspectRatio)
+	{
+		// Get the screen size
+		const float screenWidth = static_cast<float>(Platform::GetScreenWidth());
+		const float screenHeight = static_cast<float>(Platform::GetScreenHeight());
+
+		// Calculate recommended window width and height based on the desired aspect ratio
+		width = static_cast<int>(std::round(std::min(screenWidth, screenHeight * aspectRatio)));
+		height = static_cast<int>(std::round(width / aspectRatio));
 	}
 
 	uint64 Platform::GetCpuCycles()

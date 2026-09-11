@@ -34,18 +34,23 @@ namespace tyr
 #endif
 	}
 
-	void AppModule::InitializeModule()
+	void AppModule::Initialize()
 	{
 		m_App->Initialize();
 	}
 
-	void AppModule::UpdateModule(float deltaTime)
+	void AppModule::Update(float deltaTime)
 	{
 		m_App->Update(deltaTime);
 	}
 
-	void AppModule::ShutdownModule()
+	void AppModule::Shutdown()
 	{
 		m_App->Shutdown();
+	}
+
+	bool AppModule::WantsExit() const
+	{
+		return m_App->WantsExit();
 	}
 }

@@ -6,7 +6,7 @@
 namespace tyr
 {
 	/// A four dimensional vector. 
-	class TYR_CORE_EXPORT Vector4
+	class TYR_CORE_API Vector4
 	{
 	public:
 		Vector4() = default;

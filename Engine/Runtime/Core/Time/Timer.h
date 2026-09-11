@@ -8,7 +8,7 @@
 namespace tyr
 {
 	/// Timer class used for querying high precision timers. 
-	class TYR_CORE_EXPORT Timer
+	class TYR_CORE_API Timer
 	{
 	public:
 		/// Create and begin timing. 

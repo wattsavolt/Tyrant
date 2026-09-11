@@ -5,8 +5,7 @@
 
 namespace tyr
 {
-	class Engine;
-	class TYR_ENGINE_EXPORT AppBase 
+	class TYR_ENGINE_API AppBase 
 	{
 	public:
 		virtual ~AppBase() = default;
@@ -19,11 +18,10 @@ namespace tyr
 		// Called every frame by the engine
 		virtual void Update(float deltaTime) = 0;
 
+		virtual bool WantsExit() const = 0;
+
 	protected:
 		AppBase();
-
-		friend class Engine;
-		Engine* m_Engine;
 	};
 	
 }

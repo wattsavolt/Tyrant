@@ -5,7 +5,7 @@
 
 namespace tyr
 {
-	class TYR_CORE_EXPORT PathUtil 
+	class TYR_CORE_API PathUtil 
 	{
     private:
         static void CombineImpl(char[], size_t&)

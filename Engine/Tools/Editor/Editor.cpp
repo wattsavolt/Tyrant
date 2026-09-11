@@ -1,24 +1,23 @@
 /// Copyright (c) 2023 Aidan Clear 
 
 #include "Editor.h"
+#include "BuildConfig.h"
 #include "AssetSystem/AssetModule.h"
 #include "AssetSystem/AssetManager.h"
+#include "AssetSystem/AssetRegistry.h"
+#include "Window/WindowModule.h"
+#include "Window/WindowDesc.h"
 #include "World/WorldModule.h"
 #include "World/WorldManager.h"
 #include "World/World.h"
-#include "Window/Window.h"
 #include "Math/Vector2.h"
 #include "World/Camera.h"
 #include "AssetSystem/AssetUtil.h"
 #include "Importing/MaterialImporter.h"
-#include "AssetSystem/MaterialAsset.h"
 
 namespace tyr
 {
 	Editor::Editor()
-		: m_AssetManager(nullptr)
-		, m_WorldManager(nullptr)
-		, m_LevelEditorWorld(nullptr)
 	{
 		
 	}
@@ -30,6 +29,16 @@ namespace tyr
 
 	void Editor::Initialize()
 	{
+		TYR_GET_MODULE(WindowModule, m_WindowModule);
+		{
+			// Get project related properties from the config later
+			WindowDesc desc;
+			desc.showFlag = 1;
+			desc.name = c_AppName;
+			Platform::GetMaxWindowResolution(desc.width, desc.height);
+			m_PrimaryWindow = m_WindowModule->MakeWindow(desc);
+		}
+
 		AssetModule* assetModule;
 		TYR_GET_MODULE(AssetModule, assetModule);
 		m_AssetManager = assetModule->GetAssetManager();
@@ -47,20 +56,20 @@ namespace tyr
 		m_LevelEditorWorld = m_WorldManager->AddWorld(worldParams);
 
 		// TEMPORARY CODE FOR TESTING
+		if (false)
 		{
 			PbrMaterialImportDesc desc;
-			desc.outputFolderPath = "Materials/used-stainless_steel";
-			desc.materialName = "used-stainless_steel";
-			desc.albedoPath = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_albedo.png";
-			desc.normalPath = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_normal.png";
-			desc.heightPath = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_height.png";
-			desc.ambientOcclusionPath = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_ao.png";
-			desc.roughnessPath = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_roughness.png";
-			desc.metallicPath = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_metallic.png";
+			char materialOutputFolderPath[PathConstants::c_MaxAssetPathTotalSize];
+			snprintf(materialOutputFolderPath, sizeof(materialOutputFolderPath), "%s/%s", AssetConstants::c_DefaultMaterialFolderName, AssetConstants::c_DefaultMaterialName);
+			desc.outputFolderPath = materialOutputFolderPath;
+			desc.materialName = AssetConstants::c_DefaultMaterialName;
+			desc.albedoSource.path = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_albedo.png";
+			desc.normalSource.path = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_normal.png";
+			desc.heightSource.path = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_height.png";
+			desc.occlusionSource.path = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_ao.png";
+			desc.roughnessMetallicSource.path = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_roughness.png";
 
-			char materialPath[PathConstants::c_MaxAssetPathTotalSize];
-			snprintf(materialPath, sizeof(materialPath), "%s/%s%s", desc.outputFolderPath, desc.materialName, c_MaterialFileExtension);
-
+			const char* materialPath = m_AssetManager->GetDefaultMaterialPath();
 			char absMaterialPath[TYR_MAX_PATH_TOTAL_SIZE];
 			AssetUtil::CreateFullPath(absMaterialPath, materialPath);
 
@@ -71,10 +80,6 @@ namespace tyr
 			{
 				loadMaterial = MaterialImporter::Instance().ImportPbrMaterial(desc);
 				TYR_ASSERT(loadMaterial);
-			}
-			if (loadMaterial)
-			{
-				m_AssetManager->LoadMaterial(materialPath);
 			}
 		}
 	}
@@ -87,7 +92,14 @@ namespace tyr
 	void Editor::Shutdown()
 	{
 		m_WorldManager->RemoveWorld(m_LevelEditorWorld);
-		m_LevelEditorWorld = nullptr;
+		m_LevelEditorWorld = {};
 		m_WorldManager = nullptr;
+		m_WindowModule->DestroyWindow(m_PrimaryWindow);
+	}
+
+	bool Editor::WantsExit() const
+	{
+		// TODO: Handle headless case
+		return m_WindowModule->IsWindowActive(m_PrimaryWindow);
 	}
 }

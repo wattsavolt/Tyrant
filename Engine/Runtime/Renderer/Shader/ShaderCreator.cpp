@@ -45,8 +45,8 @@ namespace tyr
 		}
 	}
 
-	Handle ShaderCreator::s_CompilerLibrary = nullptr;
-	Handle ShaderCreator::s_SignatureLibrary = nullptr;
+	void* ShaderCreator::s_CompilerLibrary = nullptr;
+	void* ShaderCreator::s_SignatureLibrary = nullptr;
 
 	ShaderCreator::ShaderCreator(Device& device, const ShaderCreatorConfig& config)
 		: m_Device(device)

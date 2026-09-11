@@ -20,7 +20,7 @@ namespace tyr
 		FileSystem
 	};
 
-	class TYR_CORE_EXPORT Logger 
+	class TYR_CORE_API Logger 
 	{
 	public:
 		Logger& operator=(const Logger&) = delete;

@@ -5,9 +5,10 @@ namespace tyr
 {
 	FenceHandle Device::CreateFence(const FenceDesc& desc)
 	{
-		FenceHandle handle;
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
-		Fence& fence = *device.m_FencePool.Create(handle.id);
+		const FenceHandle handle(device.m_FencePool.Create());
+		Fence& fence = device.m_FencePool[handle.h];
+
 		VkFenceCreateInfo fenceCI = {};
 		fenceCI.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 		fenceCI.pNext = nullptr;
@@ -15,7 +16,7 @@ namespace tyr
 
 		TYR_GASSERT(vkCreateFence(device.m_LogicalDevice, &fenceCI, g_VulkanAllocationCallbacks, &fence.fence));
 #if !TYR_FINAL
-		VulkanUtility::SetDebugName(device.m_LogicalDevice, desc.debugName.CStr(), VK_OBJECT_TYPE_FENCE, reinterpret_cast<uint64>(fence.fence));
+		VulkanUtility::SetDebugName(device.m_LogicalDevice, desc.debugName, VK_OBJECT_TYPE_FENCE, reinterpret_cast<uint64>(fence.fence));
 #endif
 		return handle;
 	}
@@ -25,7 +26,7 @@ namespace tyr
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
 		Fence& fence = device.GetFence(handle);
 		vkDestroyFence(device.m_LogicalDevice, fence.fence, g_VulkanAllocationCallbacks);
-		device.m_FencePool.Delete(handle.id);
+		device.m_FencePool.Delete(handle.h);
 	}
 
 	void Device::ResetFence(FenceHandle handle)
@@ -71,9 +72,9 @@ namespace tyr
 
 	SemaphoreHandle Device::CreateSemaphoreResource(const SemaphoreDesc& desc)
 	{
-		SemaphoreHandle handle;
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
-		Semaphore& semaphore = *device.m_SemaphorePool.Create(handle.id);
+		const SemaphoreHandle handle(device.m_SemaphorePool.Create());
+		Semaphore& semaphore = device.m_SemaphorePool[handle.h];
 
 		VkSemaphoreCreateInfo semaphoreCI = {};
 		semaphoreCI.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -95,7 +96,7 @@ namespace tyr
 
 		TYR_GASSERT(vkCreateSemaphore(device.m_LogicalDevice, &semaphoreCI, g_VulkanAllocationCallbacks, &semaphore.semaphore));
 #if !TYR_FINAL
-		VulkanUtility::SetDebugName(device.m_LogicalDevice, desc.debugName.CStr(), VK_OBJECT_TYPE_SEMAPHORE, reinterpret_cast<uint64>(semaphore.semaphore));
+		VulkanUtility::SetDebugName(device.m_LogicalDevice, desc.debugName, VK_OBJECT_TYPE_SEMAPHORE, reinterpret_cast<uint64>(semaphore.semaphore));
 #endif
 		semaphore.type = desc.type;
 
@@ -107,7 +108,7 @@ namespace tyr
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
 		Semaphore& semaphore = device.GetSemaphore(handle);
 		vkDestroySemaphore(device.m_LogicalDevice, semaphore.semaphore, g_VulkanAllocationCallbacks);
-		device.m_SemaphorePool.Delete(handle.id);
+		device.m_SemaphorePool.Delete(handle.h);
 	}
 
 	void Device::SignalSemaphore(SemaphoreHandle handle, uint64 value)
@@ -161,9 +162,9 @@ namespace tyr
 
 	EventHandle Device::CreateEventResource(const EventDesc& desc)
 	{
-		EventHandle handle;
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
-		Event& event = *device.m_EventPool.Create(handle.id);
+		const EventHandle handle(device.m_EventPool.Create());
+		Event& event = device.m_EventPool[handle.h];
 
 		VkEventCreateInfo createInfo = {};
 		createInfo.sType = VK_STRUCTURE_TYPE_EVENT_CREATE_INFO;
@@ -172,7 +173,7 @@ namespace tyr
 
 		TYR_GASSERT(vkCreateEvent(device.m_LogicalDevice, &createInfo, g_VulkanAllocationCallbacks, &event.event));
 #if !TYR_FINAL
-		VulkanUtility::SetDebugName(device.m_LogicalDevice, desc.debugName.CStr(), VK_OBJECT_TYPE_EVENT, reinterpret_cast<uint64>(event.event));
+		VulkanUtility::SetDebugName(device.m_LogicalDevice, desc.debugName, VK_OBJECT_TYPE_EVENT, reinterpret_cast<uint64>(event.event));
 #endif
 		return handle;
 	}
@@ -182,7 +183,7 @@ namespace tyr
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
 		Event& event = device.GetEvent(handle);
 		vkDestroyEvent(device.m_LogicalDevice, event.event, g_VulkanAllocationCallbacks);
-		device.m_EventPool.Delete(handle.id);
+		device.m_EventPool.Delete(handle.h);
 	}
 
 	bool Device::SetEvent(EventHandle handle)

@@ -7,7 +7,7 @@
 namespace tyr
 {
 	// Loads and stores config data from a .ini file
-	class TYR_CORE_EXPORT CommandLine final
+	class TYR_CORE_API CommandLine final
 	{
 	public:
 		using Key = Id64;

@@ -8,7 +8,7 @@
 namespace tyr
 {
 	/// Allows for movement of the camera in the scene and calculates view projection matrix.
-	class TYR_ENGINE_EXPORT Camera final
+	class TYR_ENGINE_API Camera final
 	{
 	public:
 		Camera();

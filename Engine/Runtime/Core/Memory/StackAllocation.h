@@ -84,12 +84,12 @@ namespace tyr
 		/// Each allocation comes with a 4 byte overhead.
 		uint8* Allocate(uint requested)
 		{
-			uint amount = requested + sizeof(uint);
+			const uint amount = requested + sizeof(uint);
 
 			const uint freeMem = m_FreeBlock->m_Size - m_FreeBlock->m_Pos;
 			if (amount > freeMem)
 			{
-				// Create new block if neccessary
+				// Create new block if necessary
 				AllocBlock(amount);
 			}
 
@@ -122,7 +122,7 @@ namespace tyr
 				// Merge with next block
 				if (emptyBlock->m_NextBlock != nullptr)
 				{
-					uint totalSize = emptyBlock->m_Size + emptyBlock->m_NextBlock->m_Size;
+					const uint totalSize = emptyBlock->m_Size + emptyBlock->m_NextBlock->m_Size;
 
 					if (emptyBlock->m_PrevBlock != nullptr)
 					{
@@ -171,7 +171,7 @@ namespace tyr
 
 			if (newBlock == nullptr)
 			{
-				uint8* data = (uint8*)reinterpret_cast<uint8*>(Alloc(blockSize + sizeof(Block)));
+				uint8* data = (uint8*)reinterpret_cast<uint8*>(MemAlloc(blockSize + sizeof(Block)));
 				newBlock = new (data)Block(blockSize);
 				data += sizeof(Block);
 
@@ -206,16 +206,16 @@ namespace tyr
 	///
 	/// @note
 	/// Useful for allocations that will be freed in the same function..
-	/// Each allocation has a 4 bytes of appended metdata representing the total size, so don't use it for small allocations.
-	/// Thread safe but each thrwad has its own stack.
-	class TYR_CORE_EXPORT MemoryStack final
+	/// Each allocation has a 4 bytes of appended metadata representing the total size, so don't use it for small allocations.
+	/// Thread safe but each thread has its own stack.
+	class TYR_CORE_API MemoryStack final
 	{
 	public:
 		 /// Sets up the stack with the currently active thread. Needs to be called on a thread before doing any
 		 /// allocations or deallocations.
 		static MemoryStack& Instance();
 
-		uint8* Alloc(uint amount);
+		uint8* Alloc(size_t size);
 
 		void DeallocLast();
 
@@ -223,7 +223,7 @@ namespace tyr
 		MemoryStackInternal<1024 * 1024> m_Stack;
 	};
 
-	inline void* StackAlloc(uint count)
+	inline void* StackAlloc(size_t count)
 	{
 		return (void*)MemoryStack::Instance().Alloc(count);
 	}
@@ -373,9 +373,9 @@ namespace tyr
 	/// Same as StackAlloc() except the returned object takes care of automatically cleaning up when it goes out of
 	/// scope.
 	template<class T>
-	SmartStack<T> SmartStackAlloc(uint amount)
+	SmartStack<T> SmartStackAlloc(uint count)
 	{
-		return SmartStack<T>(StackAlloc<T>(amount));
+		return SmartStack<T>(StackAlloc<T>(count));
 	}
 
 	/// Same as StackNew() except the returned object takes care of automatically cleaning up when it goes out of
@@ -416,7 +416,7 @@ namespace tyr
 
 	/// Helper class for managing stack allocation and deallocation of C struct types.
 	/// Memory will be released when it goes out of scope.
-	class TYR_CORE_EXPORT StackAllocManager final
+	class TYR_CORE_API StackAllocManager final
 	{
 	public:
 		StackAllocManager();
@@ -441,7 +441,7 @@ namespace tyr
 	};
 
 #ifndef TYR_SAFE_STACK_FREE
-#define TYR_SAFE_STACK_FREE(p)  { if(p) { StackFree(p); } }
+#define TYR_SAFE_STACK_FREE(p)  { StackFree(p); p = nullptr; } 
 #endif
 }
 

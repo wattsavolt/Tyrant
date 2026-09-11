@@ -5,7 +5,7 @@
 namespace tyr
 {
 	/// A two dimensional vector with integer values.
-	class TYR_CORE_EXPORT Vector2I
+	class TYR_CORE_API Vector2I
 	{
 	public:
 		Vector2I() = default;

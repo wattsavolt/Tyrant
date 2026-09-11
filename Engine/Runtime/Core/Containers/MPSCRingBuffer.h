@@ -2,7 +2,7 @@
 
 #include "Base/Base.h"
 #include "Memory/Allocation.h"
-#include "Threading/Threading.h"
+#include "Threading/ThreadTypes.h"
 
 namespace tyr
 {
@@ -16,13 +16,13 @@ namespace tyr
             : m_WriteIndex(0)
             , m_ReadIndex(0)
         {
-            TYR_STATIC_ASSERT(((Capacity & (Capacity - 1)) == 0), "Capacity must be a power of 2");
+            TYR_STATIC_ASSERT((Capacity & (Capacity - 1)) == 0, "Capacity must be a power of 2");
         }
 
         bool Enqueue(const T& item)
         {
             const uint index = m_WriteIndex.fetch_add(1, std::memory_order_relaxed);
-            const uint slot = index & (Capacity - 1);
+            const uint slot = index & c_Mask;
 
             if (m_Slots[slot].ready.load(std::memory_order_acquire))
             {
@@ -35,16 +35,19 @@ namespace tyr
             return true;
         }
 
-        Optional<T> Read() const
+        Optional<T> Dequeue()
         {
-            const size_t slot = m_ReadIndex & (Capacity - 1);
+            const uint slot = m_ReadIndex & (Capacity - 1);
 
             if (!m_Slots[slot].ready.load(std::memory_order_acquire))
-            {
                 return std::nullopt;
-            }
 
-            return m_Slots[slot].value;
+            T value = m_Slots[slot].value;
+
+            m_Slots[slot].ready.store(false, std::memory_order_release);
+            ++m_ReadIndex;
+
+            return value;
         }
 
     private:
@@ -53,6 +56,8 @@ namespace tyr
             T value;
             Atomic<bool> ready{ false };
         };
+
+        static constexpr uint c_Mask = Capacity - 1;
 
         Slot m_Slots[Capacity];
 

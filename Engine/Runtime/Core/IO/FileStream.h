@@ -5,7 +5,7 @@
 
 namespace tyr
 {
-	class TYR_CORE_EXPORT FileStream : public BinaryStream
+	class TYR_CORE_API FileStream : public BinaryStream
 	{
 	public:
 		FileStream(const char* filePath, Operation op = Operation::Read, bool overwrite = true);
@@ -27,18 +27,36 @@ namespace tyr
 
 		void Close() override;
 
-		static String ReadFile(const char* filePath)
+		static String ReadFileToString(const char* filePath)
 		{
 			FileStream stream(filePath);
 			return stream.ReadAsString();
 		}
 
-		static WString ReadFileWide(const char* filePath)
+		static WString ReadFileToWideString(const char* filePath)
 		{
 			FileStream stream(filePath);
 			return stream.ReadAsWString();
 		}
 		
+		// Expects buffer to be preallocated
+		static size_t ReadFileFromOffset(const char* filePath, void* buffer, size_t offset)
+		{
+			FileStream stream(filePath);
+			stream.Seek(offset);
+			const size_t size = stream.GeSize() - offset;
+			return stream.Read(buffer, size);
+		}
+
+		// Read last N number of bytes in file
+		static size_t ReadLastBytes(const char* filePath, void* buffer, size_t size)
+		{
+			FileStream stream(filePath);
+			size_t offset = stream.GeSize() - size;
+			stream.Seek(offset);
+			return stream.Read(buffer, size);
+		}
+
 		// Expects buffer to be preallocated
 		static size_t ReadAllFile(const char* filePath, void* buffer)
 		{

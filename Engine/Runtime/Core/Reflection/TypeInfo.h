@@ -35,7 +35,7 @@ namespace tyr
 		Field fields[c_MaxFields];
 	};
 
-	class TYR_CORE_EXPORT TypeInfoUtil
+	class TYR_CORE_API TypeInfoUtil
 	{
 	public:
 		static void AddField(TypeInfo& info, const char* name, const Id64& typeID, const CustomObjectSerializer* customSerializer, size_t countOffset, size_t dataOffset, bool isVisible, bool isEditable, bool isFinal, bool isCArray);

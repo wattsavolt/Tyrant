@@ -2,9 +2,11 @@
 
 #include "App/AppBase.h"
 #include "EditorMacros.h"
+#include "Window/WindowHandle.h"
 
 namespace tyr
 {
+	class WindowModule;
 	class Camera;
 	class AssetManager;
 	class WorldManager;
@@ -18,12 +20,15 @@ namespace tyr
 		void Initialize() override;
 		void Update(float deltaTime) override;
 		void Shutdown() override;
+		bool WantsExit() const override;
 
 	private:
+		WindowHandle m_PrimaryWindow{};
 		URef<Camera> m_Camera;
-		AssetManager* m_AssetManager;
-		WorldManager* m_WorldManager;
-		World* m_LevelEditorWorld;
+		WindowModule* m_WindowModule{};
+		AssetManager* m_AssetManager{};
+		WorldManager* m_WorldManager{};
+		Handle m_LevelEditorWorld{};
 	};
 	
 }

@@ -6,24 +6,43 @@
 namespace tyr
 {
 	class DeviceInternal;
-	class VulkanSwapChain : public SwapChain
+	class VulkanSwapChain final : public SwapChain
 	{
 	public:
-		VulkanSwapChain(DeviceInternal& device, VkSurfaceKHR surface, const SwapChainDesc& desc, VulkanSwapChain* oldSwapChain = nullptr);
+		VulkanSwapChain(void* windowOSHandle, DeviceInternal* device, const SwapChainDesc& desc);
 		~VulkanSwapChain();
 
-		uint AcquireNextImage(SemaphoreHandle semaphore) override;
+		void Create(void* windowOSHandle, const SwapChainDesc& desc);
 
-		void Present(const CommandList* commandList, SemaphoreHandle semaphore, uint imageIndex, uint queueIndex = 0u) override;
+		void Destroy();
+
+		void DestroySwapChainAndResources();
+
+		void Recreate(void* windowOSHandle, const SwapChainDesc& desc) override;
+
+		void Resize() override;
+
+		void DestroyOldSwapChain() override;
+
+		uint AcquireNextImage(SemaphoreHandle semaphore, bool& resized) override;
+
+		void Present(const CommandQueue* queue, SemaphoreHandle semaphore, uint imageIndex, bool& resized) override;
 
 		VkDevice GetLogicalDevice() const { return m_LogicalDevice; }
+
+		VkSurfaceKHR GetSurface() const { return m_Surface; }
 
 		VkSwapchainKHR GetHandle() const { return m_SwapChain; }
 
 	private:
-		VkDevice m_LogicalDevice = VK_NULL_HANDLE;
+		void CreateSurface(void* windowOSHandle);
+		void DestroySurface();
+		void CreateSwapChainAndResources(VkSwapchainKHR& swapChain, SwapChainImageData& imageData, VkSwapchainKHR oldSwapChain = VK_NULL_HANDLE);
+
+		VkInstance m_Instance;
+		VkDevice m_LogicalDevice;
+		VkSurfaceKHR m_Surface;
 		VkSwapchainKHR m_SwapChain = VK_NULL_HANDLE;
-		VkFormat m_ImageFormat;
-		Array<VkImage> m_Images;
+		VkSwapchainKHR m_OldSwapChain = VK_NULL_HANDLE;
 	};
 }

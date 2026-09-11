@@ -10,11 +10,14 @@ namespace tyr
 		AppModule();
 		~AppModule();
 
-		void InitializeModule() override;
+		void Initialize() override;
 
-		void ShutdownModule() override;
+		void Shutdown() override;
 
-		void UpdateModule(float deltaTime) override;
+		void Update(float deltaTime) override;
+
+		// Polled by the engine loop each frame
+		bool WantsExit() const;
 
 	private:
 		AppBase* m_App;

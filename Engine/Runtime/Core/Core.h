@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Base/Base.h"
+#include "Platform/Platform.h"
 #include "Module/IModule.h"
 #include "Module/ModuleManager.h"
 #include "String/StringTypes.h"
@@ -15,4 +16,6 @@
 #include "Identifiers/Identifiers.h"
 #include "Reflection/Reflection.h"
 #include "Reflection/Serializer.h"
-#include "Threading/Task.h"
+#include "Function/Function.h"
+#include "Function/FunctionRef.h"
+#include "Threading/TaskScheduler.h"

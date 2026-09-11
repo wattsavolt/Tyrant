@@ -7,7 +7,7 @@
 namespace tyr
 {
 	/// Class loads a dynamic library into memory, manages the pointer and frees on destruction.
-	class TYR_CORE_EXPORT LibraryLoader final : INonCopyable
+	class TYR_CORE_API LibraryLoader final : INonCopyable
 	{
 	public:
 		LibraryLoader();
@@ -19,6 +19,6 @@ namespace tyr
 		bool IsLoaded() { return m_Handle; }
 
 	private:
-		Handle m_Handle;
+		void* m_Handle;
 	};
 }

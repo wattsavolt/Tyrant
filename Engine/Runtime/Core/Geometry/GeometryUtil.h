@@ -8,7 +8,7 @@ namespace tyr
 	class Vector2;
 
 	/// Class providing some 2D and 3D geometry utility functions.
-	class TYR_CORE_EXPORT GeometryUtil
+	class TYR_CORE_API GeometryUtil
 	{
 	public:
 		/// Checks if all the points are clockwise or counter-clockwise to a line in 2D.
@@ -24,6 +24,11 @@ namespace tyr
 		/// Checks if a hexagon and triangle intersect using the separating axis theorem. 
 		static bool HexagonIntersectsTriangle(const Vector2& hexCentre, float hexRadius, const Vector2& triV1,
 			const Vector2& triV2, const Vector2& triV3);
+
+		static inline uint32_t PackUint8x4(uint8 a, uint8 b, uint8 c, uint8 d) 
+		{
+			return (uint(a)) | (uint(b) << 8) | (uint(c) << 16) | (uint(d) << 24);
+		}
 	};
 
 }

@@ -35,6 +35,16 @@ if (MSVC)
 	endif()
 endif()
 
+## Disable RTTI for MSVC - reflection is our own compile-time system (see
+## Core/Reflection), we don't need typeid/dynamic_cast. Unlike /EHsc, MSVC's default
+## CMAKE_CXX_FLAGS never spells out "/GR" (RTTI-on is just the compiler's own implicit
+## default), so there's nothing to find-and-replace - /GR- has to be appended instead.
+if (MSVC)
+	if(NOT CMAKE_CXX_FLAGS MATCHES "/GR-")
+		string(APPEND CMAKE_CXX_FLAGS " /GR-")
+	endif()
+endif()
+
 # Enable colored output
 if (CMAKE_GENERATOR STREQUAL "Ninja")
 	check_cxx_compiler_flag("-fdiagnostics-color=always" F_DIAGNOSTIC_COLOR_ALWAYS)

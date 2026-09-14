@@ -53,8 +53,8 @@ namespace tyr
 		void CreateMaterial(MaterialLoadData* ld);
 		void CreateMesh(MeshHeaderLoadData* ld);
 		HashMap<AssetID, AssetData> m_AssetMap;
-		LocalObjectPool<Location, 9, false> m_LocationPool;
-		LocalObjectPool<MeshHeader, RenderConstants::c_MaxMeshes, false> m_MeshHeaderPool;
+		LocalObjectPool<Location, 9, ResetObjectPolicy> m_LocationPool;
+		LocalObjectPool<MeshHeader, RenderConstants::c_MaxMeshes, ResetObjectPolicy> m_MeshHeaderPool;
 		// Loaded batches ready to be processed
 		MPSCRingBuffer<AssetLoadBatch*, 32> m_BatchesLoadedQueue;
 		// Textures that have had their header and raw data loaded but yet to be uploaded to the GPU

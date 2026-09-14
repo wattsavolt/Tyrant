@@ -31,9 +31,9 @@ namespace tyr
 		static AssetRegistry& Instance();
 
 		void Load();
+		void Save();
 
 #if TYR_EDITOR
-		void Save();
 		void AddAsset(AssetID assetID, const char* assetPath, const AssetID* dependencies = nullptr, uint dependencyCount = 0);
 		void UpdateAssetPath(AssetID assetID, const char* assetPath);
 		void RemoveAsset(AssetID assetID);

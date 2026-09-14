@@ -3,7 +3,7 @@
 #include "Core.h"
 #include "EngineMacros.h"
 #include "ComponentRegistry.h"
-#include "EcsChunkPool.h"
+#include <bit>
 
 namespace tyr
 {
@@ -37,6 +37,24 @@ namespace tyr
         {
             TYR_ASSERT(id < c_MaxComponentTypes);
             return (words[id / c_ComponentMaskBitsPerWord] & (uint64(1) << (id % c_ComponentMaskBitsPerWord))) != 0;
+        }
+
+        // Calls func(ComponentTypeID) once for every set bit - skips straight from one
+        // set bit to the next instead of checking all c_MaxComponentTypes positions, so
+        // this only costs as much as the number of components actually in the mask.
+        template<typename Func>
+        void ForEachSet(Func&& func) const
+        {
+            for (uint w = 0; w < c_ComponentMaskWordCount; ++w)
+            {
+                uint64 word = words[w];
+                while (word != 0)
+                {
+                    const uint bit = static_cast<uint>(std::countr_zero(word));
+                    func(w * c_ComponentMaskBitsPerWord + bit);
+                    word &= word - 1; // clear the lowest set bit so the next loop finds the next one
+                }
+            }
         }
 
         bool operator==(const ComponentMask& other) const
@@ -85,16 +103,16 @@ namespace tyr
     constexpr uint c_MaxArchetypes = 128;
 
     // Holds one archetype's data for a single component type (or, for
-    // Archetype::entities, the entity IDs themselves), stored as a list of fixed-size
-    // 16KB chunks instead of one big array. When it needs more room it just grabs
-    // another chunk from the shared pool - it never has to copy the data that's
-    // already there. Chunks are shared across every archetype, so a chunk one
-    // archetype stops needing can be picked up and reused by another.
+    // Archetype::entities, the entity IDs themselves) as one flat byte buffer, since a
+    // component's real type isn't known here - Archetype::columns has to be an array of
+    // the same type for every component slot, so the actual bytes are only ever
+    // interpreted as T through At<T>(). Growing just reserves more of the same buffer
+    // (Array<uint8>::Reserve never shrinks or moves data unnecessarily), so this only
+    // ever needs to allocate more when it actually runs out of room.
     struct EcsColumn
     {
-        Array<Handle> chunkHandles;
+        Array<uint8> data;
         uint elementSize = 0;
-        uint elementsPerChunk = 0;
 
         bool IsInitialized() const
         {
@@ -105,28 +123,18 @@ namespace tyr
         {
             TYR_ASSERT(!IsInitialized());
             elementSize = size;
-            elementsPerChunk = uint(EcsChunk::c_ChunkSizeBytes / size);
-            TYR_ASSERT(elementsPerChunk > 0); // a single element must fit in one chunk
         }
 
         void EnsureCapacity(uint rowCount)
         {
             TYR_ASSERT(IsInitialized());
-            const uint requiredChunks = (rowCount + elementsPerChunk - 1) / elementsPerChunk;
-            const uint currentSize = chunkHandles.Size();
-            for (uint i = currentSize; i < requiredChunks; ++i)
-            {
-                chunkHandles.Add(EcsChunkPool::Instance().Create());
-            }
+            data.Reserve((size_t)rowCount * elementSize);
         }
 
         void* GetElement(uint row)
         {
             TYR_ASSERT(IsInitialized());
-            const uint chunkIndex = row / elementsPerChunk;
-            const uint indexInChunk = row % elementsPerChunk;
-            EcsChunk& chunk = EcsChunkPool::Instance()[chunkHandles[chunkIndex]];
-            return chunk.data + (size_t)indexInChunk * elementSize;
+            return data.Data() + (size_t)row * elementSize;
         }
 
         template<typename T>
@@ -135,18 +143,13 @@ namespace tyr
             return *static_cast<T*>(GetElement(row));
         }
 
-        // Gives every chunk back to the shared pool and clears the column out. Don't
-        // use the column again until Init() is called on it, if it ends up getting
-        // reused for a different component type.
+        // Marks the column as unused again. Deliberately keeps the byte buffer's
+        // capacity rather than freeing it - if this slot gets reused for another
+        // component type, EnsureCapacity() can reuse the same allocation instead of
+        // making a fresh one.
         void Release()
         {
-            for (Handle h : chunkHandles)
-            {
-                EcsChunkPool::Instance().Delete(h);
-            }
-            chunkHandles.Clear();
             elementSize = 0;
-            elementsPerChunk = 0;
         }
     };
 
@@ -159,6 +162,22 @@ namespace tyr
         EcsColumn columns[c_MaxComponentTypes];
 
         uint count = 0; // how many rows are actually in use - this is what tells entities and every column how far to read
+
+        // Called by the archetype pool when this slot is freed and might be handed out
+        // again for a different set of components. Puts the archetype back to a blank,
+        // unused state - without this, a reused slot would still think it has the
+        // previous archetype's columns and row count.
+        void Reset()
+        {
+            entities.Release();
+            key.ForEachSet([this](uint id)
+            {
+                columns[id].Release();
+            });
+            key = ArchetypeKey{};
+            poolHandle = Handle{};
+            count = 0;
+        }
     };
 
     struct EntityRecord
@@ -211,7 +230,7 @@ namespace tyr
         HashMap<Entity, EntityRecord> m_EntityRecords;
         HashMap<ArchetypeKey, Archetype*> m_Archetypes;
 
-        LocalObjectPool<Archetype, c_MaxArchetypes, false> m_ArchetypePool;
+        LocalObjectPool<Archetype, c_MaxArchetypes, ResetObjectPolicy> m_ArchetypePool;
 
         Archetype* GetOrCreateArchetype(const ArchetypeKey& key);
         void MoveEntity(Entity e, EntityRecord& record, Archetype* newArch);

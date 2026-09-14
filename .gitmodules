@@ -1,0 +1,6 @@
+[submodule "ThirdParty/fastgltf"]
+	path = ThirdParty/fastgltf
+	url = https://github.com/spnda/fastgltf.git
+[submodule "ThirdParty/zstd"]
+	path = ThirdParty/zstd
+	url = https://github.com/facebook/zstd.git

@@ -7,89 +7,113 @@
 
 namespace tyr
 {
-	void MeshUtil::CreateNormalsAndTangents(Vertex* vertices, uint numVertices, const uint* indices, uint numIndices)
+	namespace
 	{
-		const uint numFaces = numIndices / 3;
-
-		StackAllocManager alloc;
-		Vector3* faceNormals = StackNew<Vector3>(numFaces);
-		Vector3* faceTangents = StackNew<Vector3>(numFaces);
-		float* faceSigns = StackNew<float>(numFaces);
-
-		// Compute face normals and tangents, and tangent signs
-		for (uint i = 0; i < numFaces; ++i)
+		// Shared by CreateNormalsAndTangents and CreateTangents - the only difference
+		// between the two is whether vertex.normal gets overwritten by the
+		// freshly-averaged face normals or left as whatever the caller already put there.
+		void ComputeNormalsAndTangents(Vertex* vertices, uint numVertices, const uint* indices, uint numIndices, bool computeNormals)
 		{
-			const uint index = i * 3;
-			Vertex& v0 = vertices[indices[index]];
-			Vertex& v1 = vertices[indices[index + 2]];
-			Vertex& v2 = vertices[indices[index + 1]];
+			const uint numFaces = numIndices / 3;
 
-			// Edge vectors
-			const Vector3 edge1 = v0.position - v1.position; // 0 -> 2
-			const Vector3 edge2 = v1.position - v2.position; // 2 -> 1
+			StackAllocManager alloc;
+			Vector3* faceNormals = StackNew<Vector3>(numFaces);
+			Vector3* faceTangents = StackNew<Vector3>(numFaces);
+			float* faceSigns = StackNew<float>(numFaces);
 
-			// Un-normalized face normal
-			faceNormals[i] = Vector3::Cross(edge1, edge2);
-
-			// UV edges
-			const Vector2 tc1 = v0.uv - v1.uv;
-			const Vector2 tc2 = v1.uv - v2.uv;
-
-			// Tangent from UVs and positions
-			const float r = 1.0f / (tc1.x * tc2.y - tc2.x * tc1.y);
-			faceTangents[i] = (tc1.y * edge1 - tc2.y * edge2) * r;
-
-			// Compute the bitangent
-			const Vector3 bitangent = (edge2 * tc1.x - edge1 * tc2.x) * r;
-
-			// Compute tangent sign: +1 if cross(N, T) aligns with bitangent, else -1
-			faceSigns[i] = (Vector3::Dot(Vector3::Cross(faceNormals[i], faceTangents[i]), bitangent) < 0.0f) ? -1.0f : 1.0f;
-		}
-
-		// Compute vertex normals and tangents (normal/tangent averaging)
-
-		int facesUsing = 0;
-
-		// Go through each vertex
-		for (uint i = 0; i < numVertices; ++i)
-		{
-			Vertex& vertex = vertices[i];
-			vertex.normal = Vector3::c_Zero;
-			Vector3 tangent = Vector3::c_Zero;
-			vertex.tangent = Vector4(0, 0, 0, 1);
-
-			float accumulatedSign = 0.0f;
-
-			// Check which triangles use this vertex
-			for (uint j = 0; j < numFaces; ++j)
+			// Compute face normals and tangents, and tangent signs
+			for (uint i = 0; i < numFaces; ++i)
 			{
-				const uint index = j * 3;
-				if (indices[index] == i || indices[index + 1] == i || indices[index + 2] == i)
-				{
-					vertex.normal += faceNormals[j];
-					tangent += faceTangents[j];
-					accumulatedSign += faceSigns[j];
-					facesUsing++;
-				}
+				const uint index = i * 3;
+				Vertex& v0 = vertices[indices[index]];
+				Vertex& v1 = vertices[indices[index + 2]];
+				Vertex& v2 = vertices[indices[index + 1]];
+
+				// Edge vectors
+				const Vector3 edge1 = v0.position - v1.position; // 0 -> 2
+				const Vector3 edge2 = v1.position - v2.position; // 2 -> 1
+
+				// Un-normalized face normal
+				faceNormals[i] = Vector3::Cross(edge1, edge2);
+
+				// UV edges
+				const Vector2 tc1 = v0.uv - v1.uv;
+				const Vector2 tc2 = v1.uv - v2.uv;
+
+				// Tangent from UVs and positions
+				const float r = 1.0f / (tc1.x * tc2.y - tc2.x * tc1.y);
+				faceTangents[i] = (tc1.y * edge1 - tc2.y * edge2) * r;
+
+				// Compute the bitangent
+				const Vector3 bitangent = (edge2 * tc1.x - edge1 * tc2.x) * r;
+
+				// Compute tangent sign: +1 if cross(N, T) aligns with bitangent, else -1
+				faceSigns[i] = (Vector3::Dot(Vector3::Cross(faceNormals[i], faceTangents[i]), bitangent) < 0.0f) ? -1.0f : 1.0f;
 			}
 
-			// Average normals/tangents
-			vertex.normal /= facesUsing;
-			tangent /= facesUsing;
+			// Compute vertex normals and tangents (normal/tangent averaging)
 
-			vertex.normal.SafeNormalize();
-			tangent.SafeNormalize();
+			int facesUsing = 0;
 
-			// Set tangent w to averaged sign
-			const float vertexSign = (accumulatedSign < 0.0f) ? -1.0f : 1.0f;
-			vertex.tangent = Vector4(tangent.x, tangent.y, tangent.z, vertexSign);
+			// Go through each vertex
+			for (uint i = 0; i < numVertices; ++i)
+			{
+				Vertex& vertex = vertices[i];
+				if (computeNormals)
+				{
+					vertex.normal = Vector3::c_Zero;
+				}
+				Vector3 tangent = Vector3::c_Zero;
+				vertex.tangent = Vector4(0, 0, 0, 1);
 
-			facesUsing = 0;
+				float accumulatedSign = 0.0f;
+
+				// Check which triangles use this vertex
+				for (uint j = 0; j < numFaces; ++j)
+				{
+					const uint index = j * 3;
+					if (indices[index] == i || indices[index + 1] == i || indices[index + 2] == i)
+					{
+						if (computeNormals)
+						{
+							vertex.normal += faceNormals[j];
+						}
+						tangent += faceTangents[j];
+						accumulatedSign += faceSigns[j];
+						facesUsing++;
+					}
+				}
+
+				// Average normals/tangents
+				if (computeNormals)
+				{
+					vertex.normal /= facesUsing;
+					vertex.normal.SafeNormalize();
+				}
+				tangent /= facesUsing;
+				tangent.SafeNormalize();
+
+				// Set tangent w to averaged sign
+				const float vertexSign = (accumulatedSign < 0.0f) ? -1.0f : 1.0f;
+				vertex.tangent = Vector4(tangent.x, tangent.y, tangent.z, vertexSign);
+
+				facesUsing = 0;
+			}
+
+			StackDelete<Vector3>(faceTangents);
+			StackDelete<Vector3>(faceNormals);
+			StackDelete<float>(faceSigns);
 		}
+	}
 
-		StackDelete<Vector3>(faceTangents);
-		StackDelete<Vector3>(faceNormals);
-		StackDelete<float>(faceSigns);
+	void MeshUtil::CreateNormalsAndTangents(Vertex* vertices, uint numVertices, const uint* indices, uint numIndices)
+	{
+		ComputeNormalsAndTangents(vertices, numVertices, indices, numIndices, true);
+	}
+
+	void MeshUtil::CreateTangents(Vertex* vertices, uint numVertices, const uint* indices, uint numIndices)
+	{
+		ComputeNormalsAndTangents(vertices, numVertices, indices, numIndices, false);
 	}
 
 	uint MeshUtil::EncodeOct(const Vector3& n)

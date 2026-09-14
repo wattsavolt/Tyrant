@@ -1,0 +1,18 @@
+## Cross-platform engine - normalize everything to LF, regardless of what platform
+## someone commits from.
+* text=auto eol=lf
+
+*.cpp text eol=lf
+*.h text eol=lf
+*.hpp text eol=lf
+*.c text eol=lf
+*.cc text eol=lf
+*.hlsl text eol=lf
+*.hlsli text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+
+## Actual binaries - never touch these.
+*.dll -text
+*.lib -text
+*.ico -text

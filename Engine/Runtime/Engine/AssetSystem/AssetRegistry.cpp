@@ -40,15 +40,17 @@ namespace tyr
         }
     }
 
-#if TYR_EDITOR
     void AssetRegistry::Save()
     {
+#if TYR_EDITOR
         char absAssetRegistryPath[TYR_MAX_PATH_TOTAL_SIZE];
         AssetUtil::CreateFullPath(absAssetRegistryPath, c_AssetRegistryPath);
         PathUtil::CreateDirectoriesInFilePath(absAssetRegistryPath);
         Serializer::Instance().SerializeToFile<AssetRegistryFile>(absAssetRegistryPath, m_RegistryFile);
+#endif
     }
 
+#if TYR_EDITOR
     void AssetRegistry::AddAsset(AssetID assetID, const char* assetPath, const AssetID* dependencies, uint dependencyCount)
     {
         LockGuard guard(m_Mutex);

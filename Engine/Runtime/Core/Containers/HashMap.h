@@ -229,9 +229,16 @@ namespace tyr
             EnsureCapacity(n);
         }
 
+        // Keeps every bucket alive (never destructs a key/value - the same way Erase()
+        // never does either, they're just marked unused) and keeps the bucket array's own
+        // capacity, so reusing this HashMap after Clear() never needs to allocate again.
         void Clear()
         {
-            m_Buckets.Clear();
+            for (uint i = 0; i < m_Capacity; ++i)
+            {
+                m_Buckets[i].occupied = false;
+                m_Buckets[i].deleted = false;
+            }
             m_Size = 0;
         }
 

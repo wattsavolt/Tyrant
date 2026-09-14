@@ -8,6 +8,7 @@
 #include "AssetSystem/TextureAsset.h"
 #include "AssetSystem/AssetConstants.h"
 #include "Rendering/RenderConstants.h"
+#include <cstring>
 
 namespace tyr
 {
@@ -69,6 +70,20 @@ namespace tyr
 			ImageLoader::LoadImage32FFromMem(source.data, source.dataSize, channelCount);
 		}
 		return nullptr;
+	}
+
+	// True if both sources point at the same underlying image, so callers can avoid decoding it twice.
+	bool IsSameTextureSource(const TextureSource& a, const TextureSource& b)
+	{
+		if (a.path && b.path)
+		{
+			return std::strcmp(a.path, b.path) == 0;
+		}
+		if (a.data && b.data)
+		{
+			return a.data == b.data && a.dataSize == b.dataSize;
+		}
+		return false;
 	}
 
 	bool MaterialImporter::ImportAlbedoTexture(const TextureSource& source, const char* outputFolderPath, const char* textureName, bool isSRGB, AssetID& textureID) const
@@ -272,16 +287,28 @@ namespace tyr
 			return true;
 		}
 
-		ImageInfo aoInfo;
-		LoadImageInfo(desc.occlusionSource, aoInfo);
+		// Occlusion and metallicRoughness are commonly the same texture (R=occlusion, G=roughness,
+		// B=metallic - the same packing this importer outputs), in which case there's nothing to
+		// merge and no reason to decode the image twice.
+		const bool sameSource = IsSameTextureSource(desc.occlusionSource, desc.roughnessMetallicSource);
 
 		ImageInfo roughnessMetallicInfo;
 		LoadImageInfo(desc.roughnessMetallicSource, roughnessMetallicInfo);
 
-		if (aoInfo.width != roughnessMetallicInfo.width || aoInfo.height != roughnessMetallicInfo.height)
+		ImageInfo aoInfo;
+		if (sameSource)
 		{
-			TYR_LOG_ERROR("The dimensions of the occlusion and roughnessMetallic texture does not match for the PBR material %s.", desc.materialName);
-			return false;
+			aoInfo = roughnessMetallicInfo;
+		}
+		else
+		{
+			LoadImageInfo(desc.occlusionSource, aoInfo);
+
+			if (aoInfo.width != roughnessMetallicInfo.width || aoInfo.height != roughnessMetallicInfo.height)
+			{
+				TYR_LOG_ERROR("The dimensions of the occlusion and roughnessMetallic texture does not match for the PBR material %s.", desc.materialName);
+				return false;
+			}
 		}
 
 		const uint minReqRoughnessMetallicChannelCount = 3;
@@ -292,8 +319,8 @@ namespace tyr
 		}
 
 		// Use the highest bit depth of any of the textures
-		const ImageBitDepth bitDepth = static_cast<ImageBitDepth>(std::max(std::max(static_cast<uint8>(aoInfo.bitDepth),
-			static_cast<uint8>(roughnessMetallicInfo.bitDepth)), static_cast<uint8>(roughnessMetallicInfo.bitDepth)));
+		const ImageBitDepth bitDepth = static_cast<ImageBitDepth>(std::max(static_cast<uint8>(aoInfo.bitDepth),
+			static_cast<uint8>(roughnessMetallicInfo.bitDepth)));
 
 		Image2DCompressionDesc compDesc;
 
@@ -301,31 +328,35 @@ namespace tyr
 		if (bitDepth == ImageBitDepth::EightBit)
 		{
 			uint8* roughnessMetallic = LoadImage8U(desc.roughnessMetallicSource, 4);
-			uint8* ao = LoadImage8U(desc.occlusionSource, 1);
-			// Write ao to channel 0 of combined texture
-			ImageUtil::CopyChannel<uint8>(ao, roughnessMetallic, texelCount, 1, 4, 0, 0);
-
-			ImageLoader::FreeImage(ao);
+			if (!sameSource)
+			{
+				uint8* ao = LoadImage8U(desc.occlusionSource, 1);
+				// Write ao to channel 0 of combined texture
+				ImageUtil::CopyChannel<uint8>(ao, roughnessMetallic, texelCount, 1, 4, 0, 0);
+				ImageLoader::FreeImage(ao);
+			}
 			compDesc.image = roughnessMetallic;
 			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_8U;
 		}
 		else
 		{
 			float* roughnessMetallic = LoadImage32F(desc.roughnessMetallicSource, 4);
-			float* ao = LoadImage32F(desc.occlusionSource, 1);
-			// Write ao to channel 0 of combined texture
-			ImageUtil::CopyChannel<float>(ao, roughnessMetallic, texelCount, 1, 4, 0, 0);
-
-			ImageLoader::FreeImage(ao);
+			if (!sameSource)
+			{
+				float* ao = LoadImage32F(desc.occlusionSource, 1);
+				// Write ao to channel 0 of combined texture
+				ImageUtil::CopyChannel<float>(ao, roughnessMetallic, texelCount, 1, 4, 0, 0);
+				ImageLoader::FreeImage(ao);
+			}
 			compDesc.image = roughnessMetallic;
-			compDesc.inputFormat = bitDepth == ImageBitDepth::SixteenBit ? ImageCompressionInputFormat::RGBA_16F : ImageCompressionInputFormat::RGBA_32F;	
+			compDesc.inputFormat = bitDepth == ImageBitDepth::SixteenBit ? ImageCompressionInputFormat::RGBA_16F : ImageCompressionInputFormat::RGBA_32F;
 		}
 
 		char outputPath[TYR_MAX_PATH_TOTAL_SIZE];
 		snprintf(outputPath, sizeof(outputPath), "%s/%s%s%s", desc.outputFolderPath, desc.materialName, "_AORoughnessMetallic", AssetConstants::c_TextureFileExtension);
 
-		compDesc.width = aoInfo.width;
-		compDesc.height = aoInfo.height;
+		compDesc.width = roughnessMetallicInfo.width;
+		compDesc.height = roughnessMetallicInfo.height;
 		compDesc.outputFormat = ImageCompressionOutputFormat::BC7;
 		compDesc.mipCount = RenderConstants::c_MaxMips;
 		compDesc.outputFilePath = outputPath;

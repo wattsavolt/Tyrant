@@ -14,6 +14,7 @@
 #include "World/Camera.h"
 #include "AssetSystem/AssetUtil.h"
 #include "Importing/MaterialImporter.h"
+#include "Importing/ModelImporter.h"
 
 namespace tyr
 {
@@ -81,6 +82,14 @@ namespace tyr
 				loadMaterial = MaterialImporter::Instance().ImportPbrMaterial(desc);
 				TYR_ASSERT(loadMaterial);
 			}
+		}
+
+		// TEMPORARY CODE FOR TESTING
+		if (false)
+		{
+			const bool importedModel = ModelImporter::Instance().ImportModel(
+				"C:\\Users\\volca\\Content\\Cube\\Cube.glb", "Models/Cube", "Cube");
+			TYR_ASSERT(importedModel);
 		}
 	}
 

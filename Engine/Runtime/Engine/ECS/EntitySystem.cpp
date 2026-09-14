@@ -8,16 +8,11 @@ namespace tyr
 
     EntitySystem::~EntitySystem()
     {
+        // Delete() now calls Archetype::Reset() itself (see m_ArchetypePool's
+        // ResetObjectPolicy), which releases entities/columns - no need to do that here too.
         for (auto kv : m_Archetypes)
         {
             Archetype* arch = kv.second;
-
-            arch->entities.Release();
-            for (uint i = 0; i < c_MaxComponentTypes; ++i)
-            {
-                arch->columns[i].Release();
-            }
-
             m_ArchetypePool.Delete(arch->poolHandle);
         }
 

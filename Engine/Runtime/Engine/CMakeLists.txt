@@ -80,9 +80,19 @@ target_link_libraries(TyrantEngine PUBLIC TyrantCore)
 
 target_link_libraries(TyrantEngine PUBLIC TyrantRenderer)
 
-if (TYR_EDITOR_MODE)	
+if (TYR_EDITOR_MODE)
 	# NVTT
-	target_link_libraries(TyrantEngine PRIVATE ${TYR_THIRD_PARTY_COMPILED_LIBS_DIR}/nvtt/lib/${TYR_ARCHITECTURE}/nvtt30205${CMAKE_IMPORT_LIBRARY_SUFFIX})	
+	target_link_libraries(TyrantEngine PRIVATE ${TYR_THIRD_PARTY_COMPILED_LIBS_DIR}/nvtt/lib/${TYR_ARCHITECTURE}/nvtt30205${CMAKE_IMPORT_LIBRARY_SUFFIX})
+endif()
+
+if (TYR_EDITOR_MODE)
+	# fastgltf - glTF/GLB import
+	target_link_libraries(TyrantEngine PRIVATE fastgltf::fastgltf)
+endif()
+
+if (TYR_EDITOR_MODE)
+	# zstd - mesh chunk compression
+	target_link_libraries(TyrantEngine PRIVATE libzstd)
 endif()
 
 if(LINUX)

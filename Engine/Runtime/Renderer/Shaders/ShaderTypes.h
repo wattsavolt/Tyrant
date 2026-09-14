@@ -138,6 +138,9 @@ namespace tyr
 		uint vertexCount;
 		uint indexOffset;
 		uint indexCount;
+		// Global index into the material buffer - a mesh's submeshes can each use a
+		// different material, so this lives per-meshlet rather than per-instance.
+		uint materialIndex;
 	};
 
 	TYR_SHADER_STRUCT(MeshLOD)

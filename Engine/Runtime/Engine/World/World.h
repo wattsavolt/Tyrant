@@ -20,53 +20,29 @@ namespace tyr
 		Camera* camera = nullptr;
 	};
 
-	class Device;
-	class RendererAPI;
-	class RenderRegistry;
-	/// A class that represents a world / scene in an app.
-	class TYR_ENGINE_API World final
+	// A world / scene in an app. Just data - WorldManager owns all the logic that
+	// creates, updates, and tears one of these down, and callers reach a world through
+	// WorldManager via its handle rather than calling anything on World itself.
+	struct World
 	{
-	public:
-		World();
-		~World();
+		Name name;
+		Camera* camera = nullptr;
+		ViewArea viewArea;
+		uint sceneIndex = RenderConstants::c_MaxScenes;
+		bool active = true;
+		bool visible = true;
 
-		void Initialize(const WorldConfig& config);
-
-		void Shutdown();
-
-		void Update(float deltaTime);
-
-		const char* GetName() const { return m_Name.CStr(); }
-
-		Camera* GetCamera() const; 
-
-		void SetCamera(Camera* camera);
-
-		const ViewArea& GetViewArea() const { return m_ViewArea; }
-
-		ViewArea& GetViewArea() { return m_ViewArea; }
-
-		uint8 GetSceneIndex() const { return m_SceneIndex; }
-
-		void SetActive(bool active);
-
-		bool IsActive() const { return m_Active; }
-
-		void SetVisible(bool visible);
-
-		bool IsVisible() const { return m_Visible; }
-
-	private:
-		friend class WorldManager;
-
-		Name m_Name;
-		Camera* m_Camera;
-		Device* m_Device;
-		RendererAPI* m_RendererAPI;
-		ViewArea m_ViewArea;
-		uint m_SceneIndex;
-		bool m_Active;
-		bool m_Visible;
-		bool m_Initialized;
+		// Puts a recycled pool slot back to a blank state before WorldManager::InitWorld
+		// fills it in again for a new world. Once World has an Array (or similar)
+		// member, this is where its capacity gets reused instead of freed.
+		void Reset()
+		{
+			name = {};
+			camera = nullptr;
+			viewArea = {};
+			sceneIndex = RenderConstants::c_MaxScenes;
+			active = true;
+			visible = true;
+		}
 	};
 }

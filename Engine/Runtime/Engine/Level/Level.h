@@ -13,5 +13,13 @@ namespace tyr
 		Array<AssetID> materials;
 		AssetID assetID;
 		Vector3 offset;
+
+		void Reset()
+		{
+			textures.Clear();
+			materials.Clear();
+			assetID = {};
+			offset = {};
+		}
 	};
 }

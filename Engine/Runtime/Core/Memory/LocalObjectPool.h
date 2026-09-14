@@ -6,8 +6,26 @@
 
 namespace tyr
 {
+    struct AssignDefaultPolicy
+    {
+        template<class T>
+        static void Reset(T& object)
+        {
+            object = {};
+        }
+    };
+
+    struct ResetObjectPolicy
+    {
+        template<class T>
+        static void Reset(T& object)
+        {
+            object.Reset();
+        }
+    };
+
     // Local object pool that stores a C-style array of objects.
-    template<class T, uint N, bool ReconstructOnFree = true>
+    template<class T, uint N, class ResetPolicy = AssignDefaultPolicy>
     class LocalObjectPool final
     {
     public:
@@ -53,10 +71,7 @@ namespace tyr
             m_FreeSpaces.Add(index);
             m_ObjectCount--;
 
-            if constexpr (ReconstructOnFree)
-            {
-                m_Pool[index] = {};
-            }
+            ResetPolicy::Reset(m_Pool[index]);
         }
 
         T& operator[](Handle h)

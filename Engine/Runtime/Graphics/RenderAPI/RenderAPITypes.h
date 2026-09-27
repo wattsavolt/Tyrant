@@ -231,6 +231,8 @@ namespace tyr
 		SHADER_STAGE_GEOMETRY_BIT = 0x00000008,
 		SHADER_STAGE_FRAGMENT_BIT = 0x00000010,
 		SHADER_STAGE_COMPUTE_BIT = 0x00000020,
+		SHADER_STAGE_TASK_BIT = 0x00000040,
+		SHADER_STAGE_MESH_BIT = 0x00000080,
 		SHADER_STAGE_ALL_GRAPHICS = 0x0000001F,
 		SHADER_STAGE_ALL = 0x7FFFFFFF,
 		SHADER_STAGE_RAYGEN_BIT = 0x00000100,
@@ -329,11 +331,51 @@ namespace tyr
 		RENDERING_INFO_ENABLE_LEGACY_DITHERING_BIT_EXT = 0x00000008,
 	};
 
-	enum class PipelineType 
+	enum class PipelineType
 	{
 		Graphics = 0,
 		Compute,
 		RayTracing
+	};
+
+	enum class AccelerationStructureType : uint8
+	{
+		BottomLevel = 0,
+		TopLevel
+	};
+
+	// Matches VkBuildAccelerationStructureFlagBitsKHR's bit values directly.
+	enum AccelerationStructureBuildFlags : uint8
+	{
+		ACCELERATION_STRUCTURE_BUILD_NONE = 0,
+		ACCELERATION_STRUCTURE_BUILD_ALLOW_UPDATE_BIT = 0x00000001,
+		ACCELERATION_STRUCTURE_BUILD_ALLOW_COMPACTION_BIT = 0x00000002,
+		ACCELERATION_STRUCTURE_BUILD_PREFER_FAST_TRACE_BIT = 0x00000004,
+		ACCELERATION_STRUCTURE_BUILD_PREFER_FAST_BUILD_BIT = 0x00000008,
+		ACCELERATION_STRUCTURE_BUILD_LOW_MEMORY_BIT = 0x00000010
+	};
+
+	enum class IndexType : uint8
+	{
+		UInt16 = 0,
+		UInt32
+	};
+
+	// A bottom-level geometry is either triangles (a mesh) or, later, procedural AABBs -
+	// only triangles are needed for now.
+	enum class GeometryType : uint8
+	{
+		Triangles = 0,
+		AABBs
+	};
+
+	// Which kind of VkRayTracingShaderGroupCreateInfoKHR entry a hit group is - general
+	// (raygen/miss/callable, one shader each) is handled separately, not through this.
+	enum class ShaderGroupType : uint8
+	{
+		General = 0,
+		TrianglesHitGroup,
+		ProceduralHitGroup
 	};
 
 	enum class AttachmentLoadOp : uint8

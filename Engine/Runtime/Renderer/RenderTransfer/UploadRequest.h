@@ -11,6 +11,13 @@ namespace tyr
 		RenderBufferHandle dstBuffer;
 		size_t dstOffset = 0;
 		size_t size = 0;
+		// Set only when srcBuffer's data came from a resource upload allocation (see
+		// RenderAllocationManager::RequestResourceUploadAllocation) - default-invalid otherwise
+		// (e.g. frame upload requests, which reclaim in bulk and don't need this). Once this
+		// request's copy is actually submitted, Renderer::DrainSubmissionCompletions signals this
+		// id with the submission's timeline value so ResourceUploadAllocator can reclaim it once
+		// the GPU catches up - see RenderAllocationManager::SignalResourceUpload.
+		Handle resourceId;
 
 		bool SameResources(const BufferUploadRequest& other) const noexcept
 		{
@@ -35,6 +42,8 @@ namespace tyr
 		TextureHandle dstTexture;
 		uint highestMip;
 		uint mipCount;
+		// Same purpose as BufferUploadRequest::resourceId - see its comment.
+		Handle resourceId;
 
 		bool SameResources(const TextureUploadRequest& other) const noexcept
 		{

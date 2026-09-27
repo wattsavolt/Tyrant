@@ -12,6 +12,7 @@ namespace tyr
 	class Window;
 	struct WindowDesc;
 	struct WindowModulePrivate;
+	struct WindowInputState;
 
 	class TYR_CORE_API WindowModule final : public IModule
 	{
@@ -23,6 +24,13 @@ namespace tyr
 		void Initialize() override;
 
 		void Shutdown() override;
+
+		// Pumps OS messages here rather than in Update() - BeginFrame/Update/EndFrame each run
+		// as a full pass over every module before the next phase starts (see ModuleManager), so
+		// this guarantees every module's Update() this frame sees messages the OS delivered this
+		// same frame, regardless of module registration order. See GUIModule::BeginFrame's own
+		// comment for the same reasoning applied to ImGui::NewFrame().
+		void BeginFrame() override;
 
 		void Update(float deltaTime) override;
 
@@ -38,6 +46,22 @@ namespace tyr
 		const uint GetWindowHeight(WindowHandle handle) const;
 
 		const bool IsWindowActive(WindowHandle handle) const;
+
+		// True if the OS has reported a size change for this window since the last call - clears
+		// the flag, so this is a one-shot "did it change" check, not a live query.
+		bool ConsumeResizePending(WindowHandle handle);
+
+		// Live level state (keys/mouse buttons/position) - always safe to read repeatedly,
+		// no draining needed.
+		const WindowInputState& GetInputState(WindowHandle handle) const;
+
+		// Copies this window's typed characters since the last call into outBuffer (up to
+		// bufferCapacity) and clears them - a one-shot drain, same pattern as
+		// ConsumeResizePending above.
+		void ConsumeTypedChars(WindowHandle handle, char* outBuffer, uint bufferCapacity, uint& outCount);
+
+		// Returns the accumulated scroll wheel delta since the last call and clears it.
+		float ConsumeScrollDelta(WindowHandle handle);
 
 	private:
 		WindowModulePrivate* m_Private{};

@@ -30,15 +30,12 @@ namespace tyr
             m_Hash = FNV1aHash<T, offsetBasis, prime>(guid);
         }
 
-        Identifier& operator=(const Identifier<T, offsetBasis, prime>& other)
-        {
-            if (this != &other)
-            {
-                m_Hash = other.m_Hash;
-            }
-            return *this;
-        }
-
+        // No user-provided copy-assignment - letting the compiler generate one (which just
+        // assigns m_Hash, identical to what this hand-written one did minus a pointless
+        // self-assignment guard - assigning a trivial T to itself is harmless) keeps
+        // Identifier, and everything built on it (Id32/Id64/AssetID/Name...), trivially
+        // copyable. That matters for ECS components (see ComponentReflection.h) that need
+        // to be memcpy-safe.
         Identifier& operator=(T hash)
         {
             m_Hash = hash;

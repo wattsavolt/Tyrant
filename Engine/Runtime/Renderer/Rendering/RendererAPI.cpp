@@ -4,6 +4,7 @@
 #include "RenderAPI/Device.h"
 #include "RenderRegistry.h"
 #include "RenderTransfer/RenderTransferTypes.h"
+#include "GUIDrawData.h"
 
 namespace tyr
 {
@@ -31,53 +32,46 @@ namespace tyr
 		m_Renderer.RemoveWindow(window);
 	}
 
-	void RendererAPI::ResizeWindow(RenderWindowHandle window, uint width, uint height)
+	void RendererAPI::ResizeWindow(RenderWindowHandle window)
 	{
-		m_Renderer.ResizeWindow(window, width, height);
+		m_Renderer.ResizeWindow(window);
 	}
 
-	uint RendererAPI::AddScene(const char* name)
+	SceneHandle RendererAPI::AddScene(const char* name)
 	{
 		// It's okay to do these modifications to the render data on this thread as any async thread doing rendering work
 		// would only be modifying the active scene which won't be touched here
 		RenderData& data = m_Renderer.GetRenderData();
 		static uint nextID = 0;
-		if (data.sceneCount < RenderConstants::c_MaxScenes)
-		{
-			for (uint8 i = 0; i < RenderConstants::c_MaxScenes; ++i)
-			{
-				if (!data.scenes[i].inUse)
-				{
-					data.scenes[i].name = name;
-					data.scenes[i].id = nextID++;
-					data.scenes[i].inUse = true;
-					return i;
-				}
-			}
-		}
-
-		TYR_ASSERT(false);
-		return UINT32_MAX;
+		const SceneHandle handle(data.scenes.Create());
+		Scene& scene = data.scenes[handle.h];
+		scene.name = name;
+		scene.id = nextID++;
+		return handle;
 	}
 
-	void RendererAPI::RemoveScene(uint index)
+	void RendererAPI::RemoveScene(SceneHandle handle)
 	{
-		// The caller must ensure the scene is finished with by the renderer on the CPU and GPU
-		RenderData& data = m_Renderer.GetRenderData();
-		if (data.sceneCount == 0 || index >= RenderConstants::c_MaxScenes || !data.scenes[index].inUse)
+		// The scene's data can't be reset right here - RenderAsync might still be reading/
+		// writing it from up to c_BufferedFrameCount frames ago. Stopping it being assigned as
+		// the active scene from this point on (below) means no *new* task will ever be created
+		// that still references it, so every task that could still be using it is one of the
+		// (at most c_BufferedFrameCount) already created - and since tasks are strictly
+		// serialized, all of those are guaranteed done once this cycles back around, the same
+		// bound RemoveWindow's deferred deletion relies on. PrepareForNextFrame processes this
+		// list once that's confirmed, or the destructor force-flushes it at shutdown.
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		if (renderFrame.activeScene == handle)
 		{
-			TYR_ASSERT(false);
-			return;
+			renderFrame.activeScene = {};
 		}
-
-		data.scenes[index].inUse = false;
-		data.scenes[index].Clear();
+		renderFrame.scenesToDelete.Add(handle);
 	}
 
-	void RendererAPI::SetActiveSceneIndex(uint index, bool visible)
+	void RendererAPI::SetActiveScene(SceneHandle handle, bool visible)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
-		renderFrame.activeSceneIndex = index;
+		renderFrame.activeScene = handle;
 		renderFrame.sceneFrame.visible = visible;
 	}
 
@@ -98,6 +92,27 @@ namespace tyr
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		const TextureHandle handle = m_Registry.CreateTexture(desc);
 		renderFrame.texturesToAdd.Add(handle);
+
+		// A texture's own pool index doubles as its slot in the bindless textures[] array -
+		// ShaderMaterial::texture0 etc already store that same index.
+		const Texture& texture = m_Registry.GetTexture(handle);
+		ImageBindingInfo imageInfo;
+		imageInfo.imageView = texture.imageView;
+		imageInfo.hasSampler = false;
+		// Must match whatever layout this texture is actually kept in (see UploadToTextures'
+		// barrier, which transitions to and leaves it at texture.imageLayout) - a mismatch here
+		// is invalid descriptor usage and reads back as garbage/black regardless of how correct
+		// the underlying image data is.
+		imageInfo.layout = texture.imageLayout;
+
+		ImageBindingUpdate imageUpdate;
+		imageUpdate.bindingIndex = TYR_BINDING_TEXTURES;
+		imageUpdate.descriptorArrayIndex = handle.h.index;
+		imageUpdate.imageBindingInfos = &imageInfo;
+		imageUpdate.infoCount = 1;
+
+		m_Device.UpdateDescriptorSet(m_Renderer.GetRenderResources().descriptorSet, nullptr, 0, &imageUpdate, 1);
+
 		return handle;
 	}
 
@@ -110,6 +125,43 @@ namespace tyr
 	const TextureInfo& RendererAPI::GetTextureInfo(TextureHandle handle)
 	{
 		return m_Registry.GetTexture(handle).info;
+	}
+
+	TextureHandle RendererAPI::GetOrCreateViewportTexture(const char* name, uint width, uint height)
+	{
+		RenderResources& resources = m_Renderer.GetRenderResources();
+
+		if (resources.viewportColourTexture && resources.viewportWidth == width && resources.viewportHeight == height)
+		{
+			return resources.viewportColourTexture;
+		}
+
+		if (resources.viewportColourTexture)
+		{
+			DeleteTexture(resources.viewportColourTexture);
+		}
+
+		TextureDesc desc;
+		desc.debugName = name;
+		desc.info.width = width;
+		desc.info.height = height;
+		desc.info.depth = 1;
+		desc.info.arrayLayerCount = 1;
+		desc.info.mipCount = 1;
+		// Must match geometryGraphicsPipeline's declared colour attachment format (see
+		// CreatePipelines) - dynamic rendering requires the two to agree.
+		desc.info.format = PixelFormat::PF_R8G8B8A8_SRGB;
+		desc.info.type = ImageType::Image2D;
+		desc.sampleCount = SampleCount::OneBit;
+		desc.usage = static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_COLOUR_ATTACHMENT_BIT);
+		desc.layout = ImageLayout::IMAGE_LAYOUT_GENERAL;
+
+		resources.viewportColourTexture = CreateTexture(desc);
+		resources.viewportWidth = width;
+		resources.viewportHeight = height;
+		resources.viewportTextureIsNew = true;
+
+		return resources.viewportColourTexture;
 	}
 
 	MaterialHandle RendererAPI::CreateMaterial(const MaterialDesc& desc)
@@ -141,7 +193,7 @@ namespace tyr
 			BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
 			request.srcBuffer = alloc.buffer;
 			request.srcOffset = alloc.offset;
-			request.dstBuffer = resources.spotLightBuffer;
+			request.dstBuffer = resources.materialBuffer;
 			request.dstOffset = sizeof(ShaderMaterial) * handle.h.index;
 			request.size = sizeof(ShaderMaterial);
 		}
@@ -309,7 +361,10 @@ namespace tyr
 		ShaderMeshInstance shaderMeshInstance;
 		shaderMeshInstance.transform = info.transform;
 		shaderMeshInstance.meshIndex = info.mesh.h.index;
-		shaderMeshInstance.materialIndex = info.material.h.index;
+		for (uint i = 0; i < MeshConstants::c_MaxSubmeshes; ++i)
+		{
+			shaderMeshInstance.materialIndices[i] = i < info.materials.Size() ? info.materials[i].h.index : c_InvalidRenderIndex;
+		}
 
 		UploadBufferAllocation alloc;
 		const bool uploadSuccess = m_AllocManager.RequestFrameUploadAllocation(sizeof(ShaderMeshInstance), alloc);
@@ -338,6 +393,12 @@ namespace tyr
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		renderFrame.sceneFrame.views.Add(view);
+	}
+
+	void RendererAPI::SetAmbient(float ambient)
+	{
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		renderFrame.sceneFrame.ambient = ambient;
 	}
 
 	DirLightHandle RendererAPI::CreateDirectionalLight(const DirectionalLightDesc& desc)
@@ -506,5 +567,69 @@ namespace tyr
 	{
 		RenderBuffer& buffer = m_Registry.GetBuffer(alloc.buffer);
 		m_Device.FlushBufferAllocation(buffer.buffer, alloc.offset, alloc.size);
+	}
+
+	void RendererAPI::SubmitGUIDrawData(const GUIDrawData& data)
+	{
+		if (data.vertices.Size() == 0 || data.indices.Size() == 0)
+		{
+			return;
+		}
+
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		RenderResources& resources = m_Renderer.GetRenderResources();
+
+		const size_t vertexBytes = sizeof(GUIVertex) * data.vertices.Size();
+		const size_t indexBytes = sizeof(uint16) * data.indices.Size();
+
+		TYR_ASSERT((renderFrame.guiVertexCursor + data.vertices.Size()) * sizeof(GUIVertex) <= RenderConstants::c_GUIVertexBufferSize);
+		TYR_ASSERT((renderFrame.guiIndexCursor + data.indices.Size()) * sizeof(uint16) <= RenderConstants::c_GUIIndexBufferSize);
+
+		UploadBufferAllocation vertexAlloc;
+		const bool vertexUploadOk = m_AllocManager.RequestFrameUploadAllocation(vertexBytes, vertexAlloc);
+		TYR_ASSERT(vertexUploadOk);
+		if (vertexUploadOk)
+		{
+			RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(vertexAlloc.buffer), m_Device, vertexAlloc.offset, (void*)data.vertices.Data(), vertexBytes);
+
+			BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
+			request.srcBuffer = vertexAlloc.buffer;
+			request.srcOffset = vertexAlloc.offset;
+			request.dstBuffer = resources.guiVertexBuffer;
+			request.dstOffset = renderFrame.guiVertexCursor * sizeof(GUIVertex);
+			request.size = vertexBytes;
+		}
+
+		UploadBufferAllocation indexAlloc;
+		const bool indexUploadOk = m_AllocManager.RequestFrameUploadAllocation(indexBytes, indexAlloc);
+		TYR_ASSERT(indexUploadOk);
+		if (indexUploadOk)
+		{
+			RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(indexAlloc.buffer), m_Device, indexAlloc.offset, (void*)data.indices.Data(), indexBytes);
+
+			BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
+			request.srcBuffer = indexAlloc.buffer;
+			request.srcOffset = indexAlloc.offset;
+			request.dstBuffer = resources.guiIndexBuffer;
+			request.dstOffset = renderFrame.guiIndexCursor * sizeof(uint16);
+			request.size = indexBytes;
+		}
+
+		GUIDrawSubmission& submission = renderFrame.guiDrawData.ExpandOne();
+		submission.displaySize = data.displaySize;
+		submission.commands = data.commands;
+		submission.vertexOffset = renderFrame.guiVertexCursor;
+		submission.indexOffset = renderFrame.guiIndexCursor;
+
+		renderFrame.guiVertexCursor += (uint)data.vertices.Size();
+		renderFrame.guiIndexCursor += (uint)data.indices.Size();
+	}
+
+	void RendererAPI::ResetGUIDrawData()
+	{
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		renderFrame.guiDrawData.Clear();
+		renderFrame.guiVertexCursor = 0;
+		renderFrame.guiIndexCursor = 0;
 	}
 }

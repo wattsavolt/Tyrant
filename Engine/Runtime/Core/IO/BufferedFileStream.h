@@ -17,6 +17,8 @@ namespace tyr
 
 		void Skip(size_t count) override;
 
+		size_t GetOffset() const override;
+
 		Type GetStreamType() const override;
 	
 	private:

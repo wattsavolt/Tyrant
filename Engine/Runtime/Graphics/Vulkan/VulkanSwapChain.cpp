@@ -50,8 +50,26 @@ namespace tyr
 
 	void VulkanSwapChain::Resize()
 	{
+		// A minimized window (or one mid-destruction) reports a 0x0 surface extent - Vulkan
+		// allows creating a 0x0 swapchain, but creating image views for a 0x0 image is invalid
+		// and crashes some drivers outright. Leave the existing swap chain untouched in that
+		// case; if the window comes back to a real size later, another resize notification will
+		// naturally follow and this will just work then.
+		const DeviceInternal* vulkanDevice = static_cast<DeviceInternal*>(m_Device);
+		VkSurfaceCapabilitiesKHR capabilities;
+		TYR_GASSERT(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vulkanDevice->GetPhysicalDevice(), m_Surface, &capabilities));
+		if (capabilities.currentExtent.width == 0 || capabilities.currentExtent.height == 0)
+		{
+			return;
+		}
+
 		TYR_ASSERT(!m_OldSwapChain);
 		m_OldImageData = m_ImageData;
+		// CreateSwapChainAndResources below fills m_ImageData in via LocalArray::Add() for the
+		// new swap chain's images - without clearing it first, those calls would append on top
+		// of the old (now-snapshotted-into-m_OldImageData) entries and overflow its fixed
+		// capacity (c_MaxImages), corrupting memory.
+		m_ImageData = {};
 		m_OldSwapChain = m_SwapChain;
 		VkSwapchainKHR tempSwapChain{};
 		CreateSwapChainAndResources(tempSwapChain, m_ImageData, m_OldSwapChain);
@@ -158,7 +176,8 @@ namespace tyr
 		extent.width = imageData.width;
 		extent.height = imageData.height;
 
-		const uint minImageCount = m_Desc.useTripleBuffering ? 3 : 2;
+		const uint minImageCount = m_Desc.minImageCount;
+		TYR_ASSERT(minImageCount >= 2 && minImageCount <= SwapChain::c_MaxImages);
 
 		// Max of 0 means no max.
 		if (capabilities.maxImageCount > 0 && capabilities.maxImageCount < minImageCount)
@@ -207,30 +226,45 @@ namespace tyr
 		m_OldSwapChain = nullptr;
 	}
 
-	uint VulkanSwapChain::AcquireNextImage(SemaphoreHandle semaphore, bool& resized)
+	uint VulkanSwapChain::AcquireNextImage(SemaphoreHandle semaphore, bool& valid, bool& resizeNeeded)
 	{
-		uint index;
+		// Sentinel, not left uninitialized - the Vulkan spec doesn't guarantee vkAcquireNextImageKHR
+		// writes its out-parameter when it fails with VK_ERROR_OUT_OF_DATE_KHR, and this used to
+		// return that uninitialized value straight to the caller, which then used it as an array
+		// index.
+		uint index = UINT_MAX;
+		valid = false;
+		resizeNeeded = false;
+
 		const DeviceInternal* vulkanDevice = static_cast<DeviceInternal*>(m_Device);
 		const Semaphore& semaphoreData = vulkanDevice->GetSemaphore(semaphore);
 		VkResult result = vkAcquireNextImageKHR(m_LogicalDevice, m_SwapChain, UINT64_MAX, semaphoreData.semaphore, VK_NULL_HANDLE, &index);
-		if (result != VK_SUCCESS)
+		if (result == VK_SUCCESS)
 		{
-			if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
-			{
-				resized = true;
-			}
-			else
-			{
-				TYR_ASSERT(false);
-				TYR_LOG_FATAL("Error: Vulkan: Failed to acquire next image from the swap chain %d.");
-			}
+			valid = true;
+		}
+		else if (result == VK_SUBOPTIMAL_KHR)
+		{
+			// Still a real, usable image - just a hint that the swap chain should be recreated.
+			valid = true;
+			resizeNeeded = true;
+		}
+		else if (result == VK_ERROR_OUT_OF_DATE_KHR)
+		{
+			// No image was acquired - index is left at its sentinel above.
+			resizeNeeded = true;
+		}
+		else
+		{
+			TYR_ASSERT(false);
+			TYR_LOG_FATAL("Error: Vulkan: Failed to acquire next image from the swap chain %d.");
 		}
 		return index;
 	}
 	
-	void VulkanSwapChain::Present(const CommandQueue* queue, SemaphoreHandle semaphore, uint imageIndex, bool& resized)
+	void VulkanSwapChain::Present(const CommandQueue* queue, SemaphoreHandle semaphore, uint imageIndex, bool& resizeNeeded)
 	{
-		resized = false;
+		resizeNeeded = false;
 
 		const DeviceInternal* vulkanDevice = static_cast<DeviceInternal*>(m_Device);
 		const Semaphore& semaphoreData = vulkanDevice->GetSemaphore(semaphore);
@@ -250,7 +284,7 @@ namespace tyr
 		{
 			if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
 			{
-				resized = true;
+				resizeNeeded = true;
 			}
 			else
 			{

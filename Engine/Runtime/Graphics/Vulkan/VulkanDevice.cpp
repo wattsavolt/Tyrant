@@ -3,6 +3,8 @@
 #include "VulkanSwapChain.h"
 #include "VulkanCommandAllocator.h"
 #include "VulkanCommandList.h"
+#include "VulkanCommandQueue.h"
+#include "Memory/StackAllocation.h"
 
 #define VMA_IMPLEMENTATION
 #include <vma/vk_mem_alloc.h>
@@ -16,7 +18,11 @@ namespace tyr
 		VK_KHR_MAINTENANCE2_EXTENSION_NAME,
 		VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
 		VK_EXT_MESH_SHADER_EXTENSION_NAME,
-		//VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME,
+		VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME,
+		VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+		VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+		VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+		VK_KHR_RAY_QUERY_EXTENSION_NAME,
 #ifdef TYR_USE_DYNAMIC_RENDERING
 		VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME
 #endif
@@ -41,8 +47,9 @@ namespace tyr
 		uint numQueueFamilies;
 		vkGetPhysicalDeviceQueueFamilyProperties(device, &numQueueFamilies, nullptr);
 
-		Array<VkQueueFamilyProperties> queueFamilyProperties(numQueueFamilies);
-		vkGetPhysicalDeviceQueueFamilyProperties(device, &numQueueFamilies, queueFamilyProperties.Data());
+		StackAllocManager stack;
+		VkQueueFamilyProperties* queueFamilyProperties = stack.Alloc<VkQueueFamilyProperties>(numQueueFamilies);
+		vkGetPhysicalDeviceQueueFamilyProperties(device, &numQueueFamilies, queueFamilyProperties);
 
 		// Create queues 
 		// All values initialized to 0.0
@@ -67,7 +74,7 @@ namespace tyr
 		};
 
 		// Look for dedicated compute queues
-		for (uint i = 0; i < (uint)queueFamilyProperties.Size(); i++)
+		for (uint i = 0; i < numQueueFamilies; i++)
 		{
 			if ((queueFamilyProperties[i].queueFlags & VK_QUEUE_COMPUTE_BIT) && (queueFamilyProperties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) == 0)
 			{
@@ -77,7 +84,7 @@ namespace tyr
 		}
 
 		// Look for dedicated transfer / upload queues
-		for (uint i = 0; i < (uint)queueFamilyProperties.Size(); i++)
+		for (uint i = 0; i < numQueueFamilies; i++)
 		{
 			if ((queueFamilyProperties[i].queueFlags & VK_QUEUE_TRANSFER_BIT) &&
 				((queueFamilyProperties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) == 0) &&
@@ -89,7 +96,7 @@ namespace tyr
 		}
 
 		// Looks for graphics queues
-		for (uint i = 0; i < (uint)queueFamilyProperties.Size(); i++)
+		for (uint i = 0; i < numQueueFamilies; i++)
 		{
 			if (queueFamilyProperties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
 			{
@@ -111,11 +118,13 @@ namespace tyr
 		vkEnumerateDeviceExtensionProperties(device, nullptr, &numAvailableExtensions, nullptr);
 		if (numAvailableExtensions > 0)
 		{
-			Array<VkExtensionProperties> availableExtensions(numAvailableExtensions);
-			if (vkEnumerateDeviceExtensionProperties(device, nullptr, &numAvailableExtensions, availableExtensions.Data()) == VK_SUCCESS)
+			const uint availableExtensionCount = numAvailableExtensions;
+			VkExtensionProperties* availableExtensions = stack.Alloc<VkExtensionProperties>(availableExtensionCount);
+			if (vkEnumerateDeviceExtensionProperties(device, nullptr, &numAvailableExtensions, availableExtensions) == VK_SUCCESS)
 			{
-				for (const auto& entry : availableExtensions)
+				for (uint extIndex = 0; extIndex < availableExtensionCount; ++extIndex)
 				{
+					const VkExtensionProperties& entry = availableExtensions[extIndex];
 					if (strcmp(entry.extensionName, VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME) == 0)
 					{
 						extensions[numExtensions++] = VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME;
@@ -149,16 +158,54 @@ namespace tyr
 		VkPhysicalDeviceVulkan12Features vulkanPhysicalDevice12Features{};
 		vulkanPhysicalDevice12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
 		vulkanPhysicalDevice12Features.pNext = &vulkanPhysicalDevice13Features;
-		
+
+		VkPhysicalDeviceVulkan11Features vulkanPhysicalDevice11Features{};
+		vulkanPhysicalDevice11Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+		vulkanPhysicalDevice11Features.pNext = &vulkanPhysicalDevice12Features;
+
+		VkPhysicalDeviceMeshShaderFeaturesEXT vulkanPhysicalDeviceMeshShaderFeatures{};
+		vulkanPhysicalDeviceMeshShaderFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
+		vulkanPhysicalDeviceMeshShaderFeatures.pNext = &vulkanPhysicalDevice11Features;
+
+		VkPhysicalDeviceUnifiedImageLayoutsFeaturesKHR vulkanPhysicalDeviceUnifiedImageLayoutsFeatures{};
+		vulkanPhysicalDeviceUnifiedImageLayoutsFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFIED_IMAGE_LAYOUTS_FEATURES_KHR;
+		vulkanPhysicalDeviceUnifiedImageLayoutsFeatures.pNext = &vulkanPhysicalDeviceMeshShaderFeatures;
+
+		VkPhysicalDeviceRayQueryFeaturesKHR vulkanPhysicalDeviceRayQueryFeatures{};
+		vulkanPhysicalDeviceRayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+		vulkanPhysicalDeviceRayQueryFeatures.pNext = &vulkanPhysicalDeviceUnifiedImageLayoutsFeatures;
+
+		VkPhysicalDeviceRayTracingPipelineFeaturesKHR vulkanPhysicalDeviceRayTracingPipelineFeatures{};
+		vulkanPhysicalDeviceRayTracingPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+		vulkanPhysicalDeviceRayTracingPipelineFeatures.pNext = &vulkanPhysicalDeviceRayQueryFeatures;
+
+		VkPhysicalDeviceAccelerationStructureFeaturesKHR vulkanPhysicalDeviceAccelerationStructureFeatures{};
+		vulkanPhysicalDeviceAccelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+		vulkanPhysicalDeviceAccelerationStructureFeatures.pNext = &vulkanPhysicalDeviceRayTracingPipelineFeatures;
+
 		VkPhysicalDeviceFeatures2 physDevFeatures;
 		physDevFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-		physDevFeatures.pNext = &vulkanPhysicalDevice12Features;
+		physDevFeatures.pNext = &vulkanPhysicalDeviceAccelerationStructureFeatures;
 		vkGetPhysicalDeviceFeatures2(device, &physDevFeatures);
+
+		VkPhysicalDeviceRayTracingPipelinePropertiesKHR rayTracingPipelineProperties{};
+		rayTracingPipelineProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+		VkPhysicalDeviceProperties2 deviceProperties2{};
+		deviceProperties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+		deviceProperties2.pNext = &rayTracingPipelineProperties;
+		vkGetPhysicalDeviceProperties2(device, &deviceProperties2);
+		m_RayTracingPipelineProperties = rayTracingPipelineProperties;
 
 		if (!vulkanPhysicalDevice12Features.descriptorIndexing)
 		{
 			TYR_ASSERT(false);
 			TYR_LOG_FATAL("Descriptor indexing is not supported by the GPU.");
+		}
+
+		if (!vulkanPhysicalDeviceMeshShaderFeatures.meshShader || !vulkanPhysicalDeviceMeshShaderFeatures.taskShader)
+		{
+			TYR_ASSERT(false);
+			TYR_LOG_FATAL("Mesh shaders are not supported by the GPU.");
 		}
 
 		if (!vulkanPhysicalDevice13Features.synchronization2)
@@ -183,7 +230,85 @@ namespace tyr
 			TYR_LOG_FATAL("Timeline semaphores are not supported by the GPU.");
 		}
 
-		deviceInfo.pNext = &vulkanPhysicalDevice12Features;
+		// Vertex/ShaderVertex store their UV as a half2 in a storage buffer (StructuredBuffer),
+		// which needs this to be readable at all.
+		if (!vulkanPhysicalDevice11Features.storageBuffer16BitAccess)
+		{
+			TYR_ASSERT(false);
+			TYR_LOG_FATAL("16-bit storage buffer access is not supported by the GPU.");
+		}
+
+		if (!vulkanPhysicalDeviceUnifiedImageLayoutsFeatures.unifiedImageLayouts)
+		{
+			TYR_ASSERT(false);
+			TYR_LOG_FATAL("Unified image layouts is not supported by the GPU.");
+		}
+
+		if (!vulkanPhysicalDeviceAccelerationStructureFeatures.accelerationStructure)
+		{
+			TYR_ASSERT(false);
+			TYR_LOG_FATAL("Acceleration structures are not supported by the GPU.");
+		}
+
+		if (!vulkanPhysicalDeviceRayTracingPipelineFeatures.rayTracingPipeline)
+		{
+			TYR_ASSERT(false);
+			TYR_LOG_FATAL("The ray tracing pipeline is not supported by the GPU.");
+		}
+
+		if (!vulkanPhysicalDeviceRayQueryFeatures.rayQuery)
+		{
+			TYR_ASSERT(false);
+			TYR_LOG_FATAL("Ray query (inline ray tracing) is not supported by the GPU.");
+		}
+
+		if (!vulkanPhysicalDevice12Features.bufferDeviceAddress)
+		{
+			TYR_ASSERT(false);
+			TYR_LOG_FATAL("Buffer device address is not supported by the GPU.");
+		}
+
+		// Only enable the specific Vulkan 1.1 features actually used, for the same reason as
+		// the mesh shader features below - passing the query result straight through would
+		// enable every Vulkan 1.1 feature the GPU supports, some of which (eg. multiview)
+		// have their own extra requirements elsewhere that aren't satisfied here.
+		VkPhysicalDeviceVulkan11Features enabledVulkan11Features{};
+		enabledVulkan11Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+		enabledVulkan11Features.pNext = &vulkanPhysicalDevice12Features;
+		enabledVulkan11Features.storageBuffer16BitAccess = VK_TRUE;
+
+		// Only enable the specific mesh shader features actually used, rather than passing
+		// the query result above straight through - it reports every mesh-shader-related
+		// flag the GPU supports, and some of those (eg. multiviewMeshShader) require other
+		// features we don't enable (multiviewMeshShader requires core multiview, which
+		// nothing here uses) to also be on, which vkCreateDevice validation rejects.
+		VkPhysicalDeviceMeshShaderFeaturesEXT enabledMeshShaderFeatures{};
+		enabledMeshShaderFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
+		enabledMeshShaderFeatures.pNext = &enabledVulkan11Features;
+		enabledMeshShaderFeatures.taskShader = VK_TRUE;
+		enabledMeshShaderFeatures.meshShader = VK_TRUE;
+
+		VkPhysicalDeviceUnifiedImageLayoutsFeaturesKHR enabledUnifiedImageLayoutsFeatures{};
+		enabledUnifiedImageLayoutsFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFIED_IMAGE_LAYOUTS_FEATURES_KHR;
+		enabledUnifiedImageLayoutsFeatures.pNext = &enabledMeshShaderFeatures;
+		enabledUnifiedImageLayoutsFeatures.unifiedImageLayouts = VK_TRUE;
+
+		VkPhysicalDeviceAccelerationStructureFeaturesKHR enabledAccelerationStructureFeatures{};
+		enabledAccelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+		enabledAccelerationStructureFeatures.pNext = &enabledUnifiedImageLayoutsFeatures;
+		enabledAccelerationStructureFeatures.accelerationStructure = VK_TRUE;
+
+		VkPhysicalDeviceRayTracingPipelineFeaturesKHR enabledRayTracingPipelineFeatures{};
+		enabledRayTracingPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+		enabledRayTracingPipelineFeatures.pNext = &enabledAccelerationStructureFeatures;
+		enabledRayTracingPipelineFeatures.rayTracingPipeline = VK_TRUE;
+
+		VkPhysicalDeviceRayQueryFeaturesKHR enabledRayQueryFeatures{};
+		enabledRayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+		enabledRayQueryFeatures.pNext = &enabledRayTracingPipelineFeatures;
+		enabledRayQueryFeatures.rayQuery = VK_TRUE;
+
+		deviceInfo.pNext = &enabledRayQueryFeatures;
 
 		TYR_GASSERT(vkCreateDevice(device, &deviceInfo, g_VulkanAllocationCallbacks, &m_LogicalDevice));
 
@@ -312,6 +437,16 @@ namespace tyr
 	{
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
 		return new VulkanSwapChain(windowOSHandle, &device, desc);
+	}
+
+	CommandQueue* Device::CreateCommandQueue(CommandQueueType queueType, uint queueIndex, const GDebugString& debugName)
+	{
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		if (queueIndex >= device.GetNumQueues(queueType))
+		{
+			return nullptr;
+		}
+		return new CommandQueueInternal(device, debugName, queueType, queueIndex);
 	}
 
 	CommandAllocator* Device::CreateCommandAllocator(const CommandAllocatorDesc& desc)

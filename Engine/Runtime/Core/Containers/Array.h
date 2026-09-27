@@ -458,7 +458,9 @@ namespace tyr
 
         void Swap(uint indexA, uint indexB)
         {
-            TYR_ASSERT(indexA != indexB && indexA < m_Size && indexB < m_Size);
+            // indexA == indexB (self-swap) is valid and harmless - SwapToEnd/SwapAndPopBack
+            // legitimately hit this when the index being removed is already the last element.
+            TYR_ASSERT(indexA < m_Size && indexB < m_Size);
             std::swap(m_Data[indexA], m_Data[indexB]);
         }
 

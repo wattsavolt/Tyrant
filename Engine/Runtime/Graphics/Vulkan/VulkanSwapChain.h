@@ -24,9 +24,9 @@ namespace tyr
 
 		void DestroyOldSwapChain() override;
 
-		uint AcquireNextImage(SemaphoreHandle semaphore, bool& resized) override;
+		uint AcquireNextImage(SemaphoreHandle semaphore, bool& valid, bool& resizeNeeded) override;
 
-		void Present(const CommandQueue* queue, SemaphoreHandle semaphore, uint imageIndex, bool& resized) override;
+		void Present(const CommandQueue* queue, SemaphoreHandle semaphore, uint imageIndex, bool& resizeNeeded) override;
 
 		VkDevice GetLogicalDevice() const { return m_LogicalDevice; }
 

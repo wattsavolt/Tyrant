@@ -12,6 +12,7 @@ namespace tyr
 	// linked PRIVATE). Keeping it to a pointer here means only ModelImporter.cpp, which
 	// already needs the full glTF-parsing machinery, has to see that header.
 	class GltfModelLoader;
+	struct MeshHeader;
 
 	// Imports a 3D model file (glTF/GLB today) into mesh and material assets. Called by the
 	// editor when a user imports a model.
@@ -33,6 +34,15 @@ namespace tyr
 
 		bool ImportMaterials(const ModelImportResult& result, const char* outputFolderPath, const char* modelName, Array<AssetID>& outMaterialIDs) const;
 		bool ImportMesh(const ModelImportMesh& mesh, const char* outputFolderPath, const char* meshName, const Array<AssetID>& materialIDs) const;
+
+		// Generates meshlets for one LOD's geometry (one call per submesh internally, so
+		// meshlets never mix materials), compresses the result with Zstd, fills in
+		// 'header's remaining LOD/chunk fields, and writes the whole mesh file (header then
+		// chunk, back to back - see MeshChunkHeader's comment on compressedBlobSize) to
+		// absFilePath. header's sphere/aabb/submeshes/materials must already be filled in;
+		// its lods array must already have this LOD's entry (submeshOffset/submeshCount set,
+		// chunkOffset/chunkCount not yet).
+		bool ImportMeshGeometry(const ModelImportMesh& mesh, MeshHeader& header, const char* absFilePath) const;
 
 		// ImportModel is only ever called from the editor, one import at a time, so these
 		// are safe to reuse across calls rather than declaring fresh, heap-backed locals

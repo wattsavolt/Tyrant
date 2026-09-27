@@ -5,6 +5,7 @@
 #include "Math/Vector3.h"
 #include "Math/Matrix4.h"
 #include "RenderBase/RenderHandles.h"
+#include "RenderResource/MeshDesc.h"
 
 namespace tyr
 {
@@ -14,7 +15,10 @@ namespace tyr
 	{
 		Matrix4 transform;
 		MeshHandle mesh;
-		MaterialHandle material;
+		// One resolved material per submesh slot - see ShaderMeshInstance::materialIndices'
+		// comment (Shaders/ShaderTypes.h) for how these get decided (mesh defaults, per-slot
+		// overridden by a MeshComponent where present).
+		LocalArray<MaterialHandle, MeshConstants::c_MaxSubmeshes> materials;
 	};
 
 	struct SkeletalMeshInstanceInfo
@@ -22,7 +26,9 @@ namespace tyr
 		Matrix4 transform;
 		MeshHandle mesh;
 		SkeletonHandle skeleton;
-		MaterialHandle material;
+		// One resolved material per submesh slot - see MeshInstanceInfo::materials' comment
+		// above (same idea, just a separate, larger cap - see SkeletalMeshConstants).
+		LocalArray<MaterialHandle, SkeletalMeshConstants::c_MaxSubmeshes> materials;
 	};
 
 	struct DirectionalLightInfo

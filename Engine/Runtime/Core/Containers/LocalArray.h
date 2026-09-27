@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Memory/Allocation.h"
+#include <type_traits>
 
 namespace tyr
 {
@@ -28,10 +29,12 @@ namespace tyr
             m_Size = size;
         }
 
-        ~LocalArray()
-        {
-            
-        }
+        // Defaulted rather than an empty user-written body (which is all this ever was) so
+        // that LocalArray<T,C> stays trivially destructible whenever T is - a user-provided
+        // destructor disqualifies a type from std::is_trivially_copyable_v/destructible_v
+        // even with an empty body, which matters for ECS components (see
+        // ComponentReflection.h) that need to be memcpy-safe.
+        ~LocalArray() = default;
 
         uint Size() const
         {
@@ -60,7 +63,16 @@ namespace tyr
             return m_Data[index];
         }
 
-        LocalArray& operator=(const LocalArray& other)
+        // Defaulted (a single bulk copy of m_Data/m_Size, all C elements) when T is trivially
+        // copyable - cheaper than the element-by-element loop below and, since the unused
+        // slots past m_Size are meaningless anyway, copying all of them is harmless. Also
+        // what makes LocalArray<T,C> itself trivially copyable for trivial T (see the
+        // destructor above).
+        LocalArray& operator=(const LocalArray& other) requires std::is_trivially_copyable_v<T> = default;
+
+        // For non-trivial T, only copy the elements actually in use - avoids touching
+        // (and potentially triggering side effects via) the unused slots past m_Size.
+        LocalArray& operator=(const LocalArray& other) requires (!std::is_trivially_copyable_v<T>)
         {
             if (this == &other)
                 return *this;
@@ -189,7 +201,9 @@ namespace tyr
 
         void Swap(uint indexA, uint indexB)
         {
-            TYR_ASSERT(indexA != indexB && indexA < m_Size && indexB < m_Size);
+            // indexA == indexB (self-swap) is valid and harmless - SwapToEnd/SwapAndPopBack
+            // legitimately hit this when the index being removed is already the last element.
+            TYR_ASSERT(indexA < m_Size && indexB < m_Size);
             std::swap(m_Data[indexA], m_Data[indexB]);
         }
 

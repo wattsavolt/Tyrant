@@ -7,8 +7,8 @@ namespace tyr
 {
     struct ShaderModel
     {
-        uint8 majorVer : 6;
-        uint8 minorVer : 2;
+        uint8 majorVer;
+        uint8 minorVer;
     };
 
     struct ShaderDesc

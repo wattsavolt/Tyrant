@@ -125,6 +125,23 @@ namespace tyr
 		
 	}
 
+	size_t BufferedFileStream::GetOffset() const
+	{
+		// FileStream::GetOffset() reflects the underlying file handle's raw position, which
+		// is well ahead of (reads) or behind (writes) the caller's logical position because
+		// of buffering - the constructor's/a refill's read-ahead already advances the raw
+		// handle to the end of whatever's now sitting in m_Buffer, and a write doesn't reach
+		// the raw handle at all until the buffer fills up or this stream is destroyed.
+		if (m_Operation == Operation::Read)
+		{
+			return FileStream::GetOffset() - m_MemoryRead + m_BufferOffset;
+		}
+		else
+		{
+			return FileStream::GetOffset() + m_BufferOffset;
+		}
+	}
+
 	BinaryStream::Type BufferedFileStream::GetStreamType() const
 	{
 		return BinaryStream::Type::File;

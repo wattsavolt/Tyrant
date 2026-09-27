@@ -30,7 +30,7 @@ namespace tyr
 
 		// Currently just supporting BC3 / BC5 and BC7 which have same block dimensions and block size so hard code for now in below 3 functions
 
-		// Returns block width in pixels
+		// Returns block width in pixels. Uncompressed formats are just a 1x1 block.
 		static constexpr uint GetTextureBlockWidth(PixelFormat format)
 		{
 			switch (format)
@@ -42,12 +42,12 @@ namespace tyr
 			case PF_BC7_UNORM:
 			case PF_BC7_SRGB:
 				return 4;
+			default:
+				return 1;
 			}
-			TYR_ASSERT(false);
-			return 4;
 		}
 
-		// Returns block height in pixels
+		// Returns block height in pixels. Uncompressed formats are just a 1x1 block.
 		static constexpr uint GetTextureBlockHeight(PixelFormat format)
 		{
 			switch (format)
@@ -59,12 +59,12 @@ namespace tyr
 			case PF_BC7_UNORM:
 			case PF_BC7_SRGB:
 				return 4;
+			default:
+				return 1;
 			}
-			TYR_ASSERT(false);
-			return 4;
 		}
 
-		// Returns size in bytes
+		// Returns block size in bytes. Uncompressed formats are just one pixel's worth.
 		static constexpr uint GetTextureBlockSize(PixelFormat format)
 		{
 			switch (format)
@@ -76,9 +76,9 @@ namespace tyr
 			case PF_BC7_UNORM:
 			case PF_BC7_SRGB:
 				return 16;
+			default:
+				return CalculateTexelFormatSize(format);
 			}
-			TYR_ASSERT(false);
-			return 16;
 		}
 
 		// Returns total texture size including mips in bytes. Works for BC3, BC5 and BC7

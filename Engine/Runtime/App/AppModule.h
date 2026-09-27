@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Core.h"
+#include "Utility/LibraryLoader.h"
+
 namespace tyr
 {
 	class AppBase;
@@ -21,6 +23,9 @@ namespace tyr
 
 	private:
 		AppBase* m_App;
+		// Only actually loads anything when m_App is created via the DLL below, not when it's
+		// an in-process Editor - Unload() (called from ~LibraryLoader) is a safe no-op either way.
+		LibraryLoader m_Loader;
 	};
-	
+
 }

@@ -5,6 +5,7 @@
 #include "RenderAPITypes.h"
 #include "Buffer.h"
 #include "Image.h"
+#include "AccelerationStructure.h"
 
 namespace tyr
 {
@@ -35,7 +36,7 @@ namespace tyr
 		DescriptorBindingFlags bindingFlags;
 	};
 
-	static constexpr uint c_MaxDescriptorBindings = 16u;
+	static constexpr uint c_MaxDescriptorBindings = 32u;
 	struct DescriptorSetLayoutDesc
 	{
 		TYR_DECLARE_GDEBUGNAME(debugName);
@@ -74,6 +75,14 @@ namespace tyr
 		ImageViewHandle imageView;
 		SamplerHandle sampler;
 		bool hasSampler = true;
+		// The layout the image is expected to be in whenever this descriptor is actually read
+		// in a shader (not necessarily its layout right now, at write time) - a sampled/storage
+		// image descriptor needs a real layout here, never UNDEFINED, or the read is invalid
+		// usage, and it must match whatever layout the image is actually kept in (see
+		// RendererAPI::CreateTexture, which always sets both to GENERAL). Meaningless (left
+		// default) for a pure-sampler binding, which has no image at all - see this binding
+		// type's own handling at the call site.
+		ImageLayout layout = ImageLayout::IMAGE_LAYOUT_GENERAL;
 	};
 
 	struct ImageBindingUpdate : BindingUpdate
@@ -82,9 +91,15 @@ namespace tyr
 		uint infoCount = 0;
 	};
 
-	// TODO: Support below
+	// Can be multiple per binding slot (ie. array of top-level acceleration structures)
+	struct AccelerationStructureBindingInfo
+	{
+		AccelerationStructureHandle accelerationStructure;
+	};
+
 	struct AccelerationStructureBindingUpdate : BindingUpdate
 	{
-		int placeHolder;
+		const AccelerationStructureBindingInfo* accelerationStructureBindingInfos;
+		uint infoCount = 0;
 	};
 }

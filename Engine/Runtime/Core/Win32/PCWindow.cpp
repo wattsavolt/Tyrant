@@ -4,6 +4,7 @@
 #include "resource.h"
 #include <Utility/Utility.h>
 #include <String/StringUtil.h>
+#include <windowsx.h>
 
 namespace tyr
 {
@@ -148,6 +149,7 @@ namespace tyr
         {
             window.width = LOWORD(lParam);
             window.height = HIWORD(lParam);
+            window.resizePending = true;
             break;
         }
         case WM_COMMAND:
@@ -179,7 +181,63 @@ namespace tyr
         }
         break;
 
+        case WM_KEYDOWN:
+            if (wParam < c_MaxKeyCodes)
+            {
+                window.input.keysDown[wParam] = true;
+            }
+            break;
+
+        case WM_KEYUP:
+            if (wParam < c_MaxKeyCodes)
+            {
+                window.input.keysDown[wParam] = false;
+            }
+            break;
+
+        // ANSI window (see PCWindow::RegisterWindowClass's CreateWindow, not CreateWindowW) -
+        // wParam is a single-byte ANSI character, not UTF-16, so a plain char is enough here.
+        case WM_CHAR:
+            if (window.input.typedCharCount < c_MaxTypedCharsPerFrame)
+            {
+                window.input.typedChars[window.input.typedCharCount++] = static_cast<char>(wParam);
+            }
+            break;
+
+        case WM_LBUTTONDOWN:
+            window.input.mouseButtonsDown[0] = true;
+            break;
+        case WM_LBUTTONUP:
+            window.input.mouseButtonsDown[0] = false;
+            break;
+        case WM_RBUTTONDOWN:
+            window.input.mouseButtonsDown[1] = true;
+            break;
+        case WM_RBUTTONUP:
+            window.input.mouseButtonsDown[1] = false;
+            break;
+        case WM_MBUTTONDOWN:
+            window.input.mouseButtonsDown[2] = true;
+            break;
+        case WM_MBUTTONUP:
+            window.input.mouseButtonsDown[2] = false;
+            break;
+
+        case WM_MOUSEMOVE:
+            window.input.mouseX = GET_X_LPARAM(lParam);
+            window.input.mouseY = GET_Y_LPARAM(lParam);
+            break;
+
+        case WM_MOUSEWHEEL:
+            window.input.scrollDelta += static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;
+            break;
+
         case WM_DESTROY:
+            // The HWND (and anything tied to it, e.g. a Vulkan surface) is no longer valid from
+            // this point on - mark it dead immediately rather than waiting for WM_QUIT, which is
+            // a thread-level message (not specific to this window) that isn't even guaranteed to
+            // be the next one retrieved, let alone processed in this same tick.
+            window.handle = nullptr;
             PostQuitMessage(0);
             break;
 
@@ -192,18 +250,20 @@ namespace tyr
 
     void PCWindow::PollEvents(Window& window)
     {
+        // Drains everything queued this tick, not just one message - a single PeekMessage
+        // call here previously left extra input/resize messages sitting until later ticks,
+        // which reads as dropped/laggy input under any real message volume.
         MSG msg;
-        if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+        while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
         {
             if (msg.message == WM_QUIT)
             {
                 window.handle = nullptr;
+                break;
             }
-            else
-            {
-                TranslateMessage(&msg);
-                DispatchMessage(&msg);
-            }
+
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
         }
     }
 

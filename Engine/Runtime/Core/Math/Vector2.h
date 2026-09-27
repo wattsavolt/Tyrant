@@ -12,6 +12,8 @@ namespace tyr
 	public:
 		Vector2() = default;
 
+		~Vector2() = default;
+
 		constexpr Vector2(ArgZero)
 			:x(0), y(0)
 		{ }

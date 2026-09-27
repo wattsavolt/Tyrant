@@ -21,6 +21,9 @@ namespace tyr
 		Vector3 aabbMax;
 		uint lodOffset;
 		uint lodCount;
+		// The resource queue's timeline value that needs to be reached before this mesh's
+		// geometry is safely readable - 0 means its transfer hasn't been submitted yet.
+		uint64 geometryReadyValue = 0;
 	};
 
 	struct SkeletalMesh
@@ -30,5 +33,6 @@ namespace tyr
 		Vector3 aabbMax;
 		uint lodOffset;
 		uint lodCount;
+		uint64 geometryReadyValue = 0;
 	};
 }

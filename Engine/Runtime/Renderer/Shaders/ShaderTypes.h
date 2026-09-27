@@ -1,6 +1,27 @@
 #ifndef SHADER_TYPES_H
 #define SHADER_TYPES_H
 
+// Descriptor set 0 bindings - shared between the C++ pipeline/descriptor set setup and the
+// HLSL shaders so both sides always agree on the numbers.
+#define TYR_BINDING_SCENE_INFO 0
+#define TYR_BINDING_MESH 1
+#define TYR_BINDING_MESH_LOD 2
+#define TYR_BINDING_MESHLET 3
+#define TYR_BINDING_VERTEX 4
+#define TYR_BINDING_INDEX 5
+#define TYR_BINDING_MESH_INSTANCE 6
+#define TYR_BINDING_MATERIAL 7
+#define TYR_BINDING_DIR_LIGHT 8
+#define TYR_BINDING_POINT_LIGHT 9
+#define TYR_BINDING_SPOT_LIGHT 10
+#define TYR_BINDING_TEXTURES 11
+#define TYR_BINDING_SAMPLERS 12
+#define TYR_BINDING_GUI_VERTEX 13
+
+// Must match ModelImporter's meshlet build limits.
+#define TYR_MAX_MESHLET_VERTICES 64
+#define TYR_MAX_MESHLET_TRIANGLES 124
+
 #ifdef __cplusplus
 
 #include "RendererMacros.h"
@@ -46,12 +67,27 @@ namespace tyr
 		uint flags;
 	};
 
+	// Single-view scene data for the currently rendered scene - only one scene renders at a
+	// time (see Scene's own comment), so this always describes that scene's sole view.
 	TYR_SHADER_STRUCT(SceneInfo)
 	{
-		uint viewCount;
+		TYR_SHADER_FLOAT4x4 viewProj;
+		TYR_SHADER_FLOAT3 camPos;
 		float ambient;
-		float padding0;
-		float padding1;
+		// How many of directionalLightBuffer/pointLightBuffer/spotLightBuffer's entries are
+		// actually populated - each buffer is sized for its own RenderConstants::c_Max*Lights,
+		// so a shader looping the full fixed capacity instead of these counts would read
+		// whichever slots nothing has ever written to, which is not guaranteed to be zeroed
+		// (uninitialized GPU memory, e.g. validation-layer poison fill) - one such light's
+		// garbage intensity/colour/direction corrupts the entire summed result. See
+		// MeshPS.hlsl's light loops.
+		uint dirLightCount;
+		uint pointLightCount;
+		uint spotLightCount;
+		// camPos+ambient above already exactly fill a 16-byte cbuffer slot, so dirLightCount
+		// starts a fresh one on the HLSL side regardless of what follows it - pad the C++ side
+		// to match that same 16-byte size exactly, rather than leaving it implicitly smaller.
+		float _pad0;
 	};
 
 	/// Point light used in renderer 
@@ -138,9 +174,11 @@ namespace tyr
 		uint vertexCount;
 		uint indexOffset;
 		uint indexCount;
-		// Global index into the material buffer - a mesh's submeshes can each use a
-		// different material, so this lives per-meshlet rather than per-instance.
-		uint materialIndex;
+		// Which of the mesh's submeshes this meshlet belongs to - NOT a resolved material
+		// buffer index. The instance being drawn is what actually decides materials (see
+		// MeshInstance::materialIndices below); this is just which slot of that array to
+		// read, since a mesh's submeshes can each use a different material.
+		uint materialSlot;
 	};
 
 	TYR_SHADER_STRUCT(MeshLOD)
@@ -165,7 +203,12 @@ namespace tyr
 	{
 		TYR_SHADER_FLOAT4x4 transform;
 		uint meshIndex;
-		uint materialIndex;
+		// One resolved material buffer index per submesh slot (see Meshlet::materialSlot
+		// above) - this instance's own materials, defaulted from the mesh asset's own
+		// authored materials and overridden per-slot where a MeshComponent's overrides say
+		// so. Array size must match MeshConstants::c_MaxSubmeshes exactly. Slots
+		// beyond the mesh's actual submesh count are unused/ignored.
+		uint materialIndices[16];
 	};
 
 	TYR_SHADER_STRUCT(Skeleton)
@@ -188,8 +231,11 @@ namespace tyr
 	{
 		TYR_SHADER_FLOAT4x4 transform;
 		uint meshIndex;
-		uint materialIndex;
 		uint boneMatrixOffset;
+		// One resolved material buffer index per submesh slot - see
+		// ShaderMeshInstance::materialIndices' comment above. Array size must match
+		// SkeletalMeshConstants::c_MaxSubmeshes exactly.
+		uint materialIndices[24];
 	};
 
 #ifdef __cplusplus

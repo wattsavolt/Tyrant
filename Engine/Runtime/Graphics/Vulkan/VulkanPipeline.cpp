@@ -15,6 +15,48 @@ namespace tyr
 		}
 	}
 
+	namespace
+	{
+		// Shared by CreateComputePipeline/CreateRayTracingPipeline - CreateGraphicsPipeline
+		// builds its own inline (left as-is, working code, not worth touching to de-duplicate).
+		VkPipelineLayout CreateVkPipelineLayout(DeviceInternal& device, const PipelineLayoutDesc& layoutDesc, StackAllocManager& stack)
+		{
+			VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+			pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+			VkDescriptorSetLayout* vkDescriptorSetLayouts = nullptr;
+			pipelineLayoutInfo.setLayoutCount = static_cast<uint>(layoutDesc.descriptorSetLayouts.Size());
+			if (pipelineLayoutInfo.setLayoutCount > 0)
+			{
+				vkDescriptorSetLayouts = stack.Alloc<VkDescriptorSetLayout>(pipelineLayoutInfo.setLayoutCount);
+				for (uint i = 0; i < pipelineLayoutInfo.setLayoutCount; ++i)
+				{
+					vkDescriptorSetLayouts[i] = device.GetDescriptorSetLayout(layoutDesc.descriptorSetLayouts[i]).layout;
+				}
+			}
+			pipelineLayoutInfo.pSetLayouts = vkDescriptorSetLayouts;
+
+			VkPushConstantRange* vkConstantRanges = nullptr;
+			pipelineLayoutInfo.pushConstantRangeCount = static_cast<uint>(layoutDesc.pushConstantRanges.Size());
+			if (pipelineLayoutInfo.pushConstantRangeCount > 0)
+			{
+				vkConstantRanges = stack.Alloc<VkPushConstantRange>(pipelineLayoutInfo.pushConstantRangeCount);
+				for (uint i = 0; i < pipelineLayoutInfo.pushConstantRangeCount; ++i)
+				{
+					const PushConstantRange& range = layoutDesc.pushConstantRanges[i];
+					vkConstantRanges[i].stageFlags = range.stageFlags;
+					vkConstantRanges[i].offset = range.offset;
+					vkConstantRanges[i].size = range.size;
+				}
+			}
+			pipelineLayoutInfo.pPushConstantRanges = vkConstantRanges;
+
+			VkPipelineLayout layout;
+			TYR_GASSERT(vkCreatePipelineLayout(device.GetLogicalDevice(), &pipelineLayoutInfo, g_VulkanAllocationCallbacks, &layout));
+			return layout;
+		}
+	}
+
 	RenderPassHandle Device::CreateRenderPass(const RenderPassDesc& renderPassDesc)
 	{
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
@@ -118,6 +160,19 @@ namespace tyr
 		StackAllocManager stack;
 
 		VkDevice logicalDevice = device.m_LogicalDevice;
+
+		// Mesh shader pipelines don't have vertex input or input assembly state at all -
+		// mesh shaders read geometry data themselves instead of using fixed-function vertex
+		// fetch.
+		bool hasMeshShader = false;
+		for (ShaderModuleHandle shaderHandle : desc.shaders)
+		{
+			if (device.GetShaderModule(shaderHandle).stage == VK_SHADER_STAGE_MESH_BIT_EXT)
+			{
+				hasMeshShader = true;
+				break;
+			}
+		}
 
 		// Create vertex input state
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
@@ -333,8 +388,8 @@ namespace tyr
 		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
 		pipelineInfo.stageCount = shaderCount;
 		pipelineInfo.pStages = vkStages;
-		pipelineInfo.pVertexInputState = &vertexInputInfo;
-		pipelineInfo.pInputAssemblyState = &inputAssembly;
+		pipelineInfo.pVertexInputState = hasMeshShader ? nullptr : &vertexInputInfo;
+		pipelineInfo.pInputAssemblyState = hasMeshShader ? nullptr : &inputAssembly;
 		pipelineInfo.pViewportState = &viewportState;
 		pipelineInfo.pRasterizationState = &rasterizer;
 		pipelineInfo.pMultisampleState = &multisampling;
@@ -393,7 +448,22 @@ namespace tyr
 
 		VkDevice logicalDevice = device.m_LogicalDevice;
 
-		// TODO: Finish constructor
+		pipeline.pipelineLayout = CreateVkPipelineLayout(device, desc.pipelineLayoutDesc, stack);
+
+		const ShaderModule& shader = device.GetShaderModule(desc.shader);
+
+		VkPipelineShaderStageCreateInfo stageInfo{};
+		stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		stageInfo.stage = shader.stage;
+		stageInfo.module = shader.shaderModule;
+		stageInfo.pName = shader.entryPoint.CStr();
+
+		VkComputePipelineCreateInfo pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+		pipelineInfo.stage = stageInfo;
+		pipelineInfo.layout = pipeline.pipelineLayout;
+
+		TYR_GASSERT(vkCreateComputePipelines(logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, g_VulkanAllocationCallbacks, &pipeline.pipeline));
 
 		return handle;
 	}
@@ -417,7 +487,168 @@ namespace tyr
 
 		VkDevice logicalDevice = device.m_LogicalDevice;
 
-		// TODO: Finish constructor
+		pipeline.pipelineLayout = CreateVkPipelineLayout(device, desc.pipelineLayoutDesc, stack);
+
+		const uint shaderCount = desc.shaders.Size();
+		VkPipelineShaderStageCreateInfo* stages = stack.Alloc<VkPipelineShaderStageCreateInfo>(shaderCount);
+		for (uint i = 0; i < shaderCount; ++i)
+		{
+			const ShaderModule& shader = device.GetShaderModule(desc.shaders[i]);
+			stages[i] = {};
+			stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+			stages[i].stage = shader.stage;
+			stages[i].module = shader.shaderModule;
+			stages[i].pName = shader.entryPoint.CStr();
+		}
+
+		const uint groupCount = desc.shaderGroups.Size();
+		VkRayTracingShaderGroupCreateInfoKHR* groups = stack.Alloc<VkRayTracingShaderGroupCreateInfoKHR>(groupCount);
+		for (uint i = 0; i < groupCount; ++i)
+		{
+			const RayTracingShaderGroupDesc& groupDesc = desc.shaderGroups[i];
+			VkRayTracingShaderGroupCreateInfoKHR& group = groups[i];
+			group = {};
+			group.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+			// c_InvalidShaderIndex and VK_SHADER_UNUSED_KHR are both ~0u, so an unused index can
+			// be passed straight through below with no translation.
+			group.generalShader = VK_SHADER_UNUSED_KHR;
+			group.closestHitShader = VK_SHADER_UNUSED_KHR;
+			group.anyHitShader = VK_SHADER_UNUSED_KHR;
+			group.intersectionShader = VK_SHADER_UNUSED_KHR;
+
+			switch (groupDesc.type)
+			{
+			case ShaderGroupType::General:
+				group.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+				group.generalShader = groupDesc.generalShaderIndex;
+				break;
+			case ShaderGroupType::TrianglesHitGroup:
+				group.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+				group.closestHitShader = groupDesc.closestHitShaderIndex;
+				group.anyHitShader = groupDesc.anyHitShaderIndex;
+				break;
+			case ShaderGroupType::ProceduralHitGroup:
+				group.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR;
+				group.closestHitShader = groupDesc.closestHitShaderIndex;
+				group.anyHitShader = groupDesc.anyHitShaderIndex;
+				group.intersectionShader = groupDesc.intersectionShaderIndex;
+				break;
+			}
+		}
+
+		VkRayTracingPipelineCreateInfoKHR pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
+		pipelineInfo.stageCount = shaderCount;
+		pipelineInfo.pStages = stages;
+		pipelineInfo.groupCount = groupCount;
+		pipelineInfo.pGroups = groups;
+		pipelineInfo.maxPipelineRayRecursionDepth = desc.maxRecursionDepth;
+		pipelineInfo.layout = pipeline.pipelineLayout;
+
+		TYR_GASSERT(vkCreateRayTracingPipelinesKHR(logicalDevice, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &pipelineInfo, g_VulkanAllocationCallbacks, &pipeline.pipeline));
+
+		// Shader binding table - one handle per group, laid out into four base-aligned regions
+		// (raygen/miss/hit/callable), each entry within a region aligned to the handle alignment.
+		const VkPhysicalDeviceRayTracingPipelinePropertiesKHR& rtProps = device.GetRayTracingPipelineProperties();
+		const uint handleSize = rtProps.shaderGroupHandleSize;
+		const VkDeviceSize handleSizeAligned = MemoryUtil::Align<VkDeviceSize>(handleSize, rtProps.shaderGroupHandleAlignment);
+		const VkDeviceSize baseAlignment = rtProps.shaderGroupBaseAlignment;
+
+		const uint handlesByteSize = groupCount * handleSize;
+		uint8* handles = stack.Alloc<uint8>(handlesByteSize);
+		TYR_GASSERT(vkGetRayTracingShaderGroupHandlesKHR(logicalDevice, pipeline.pipeline, 0, groupCount, handlesByteSize, handles));
+
+		uint raygenCount = 0, missCount = 0, hitCount = 0, callableCount = 0;
+		for (uint i = 0; i < groupCount; ++i)
+		{
+			const RayTracingShaderGroupDesc& groupDesc = desc.shaderGroups[i];
+			if (groupDesc.type != ShaderGroupType::General)
+			{
+				++hitCount;
+				continue;
+			}
+			const VkShaderStageFlagBits stage = device.GetShaderModule(desc.shaders[groupDesc.generalShaderIndex]).stage;
+			if (stage == VK_SHADER_STAGE_RAYGEN_BIT_KHR) ++raygenCount;
+			else if (stage == VK_SHADER_STAGE_MISS_BIT_KHR) ++missCount;
+			else ++callableCount;
+		}
+
+		const VkDeviceSize raygenRegionSize = MemoryUtil::Align<VkDeviceSize>(raygenCount * handleSizeAligned, baseAlignment);
+		const VkDeviceSize missRegionSize = MemoryUtil::Align<VkDeviceSize>(missCount * handleSizeAligned, baseAlignment);
+		const VkDeviceSize hitRegionSize = MemoryUtil::Align<VkDeviceSize>(hitCount * handleSizeAligned, baseAlignment);
+		const VkDeviceSize callableRegionSize = MemoryUtil::Align<VkDeviceSize>(callableCount * handleSizeAligned, baseAlignment);
+
+		const VkDeviceSize raygenOffset = 0;
+		const VkDeviceSize missOffset = raygenOffset + raygenRegionSize;
+		const VkDeviceSize hitOffset = missOffset + missRegionSize;
+		const VkDeviceSize callableOffset = hitOffset + hitRegionSize;
+
+		BufferDesc sbtDesc;
+		sbtDesc.debugName = "Shader Binding Table";
+		sbtDesc.usage = static_cast<BufferUsage>(BUFFER_USAGE_SHADER_BINDING_TABLE_BIT | BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+		sbtDesc.memoryProperty = static_cast<MemoryProperty>(MEMORY_PROPERTY_HOST_VISIBLE_BIT | MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		sbtDesc.size = static_cast<size_t>(callableOffset + callableRegionSize);
+		pipeline.sbtBuffer = CreateBuffer(sbtDesc);
+
+		uint8* sbtData = static_cast<uint8*>(MapBuffer(pipeline.sbtBuffer));
+		memset(sbtData, 0, sbtDesc.size);
+
+		uint raygenIndex = 0, missIndex = 0, hitIndex = 0, callableIndex = 0;
+		for (uint i = 0; i < groupCount; ++i)
+		{
+			const RayTracingShaderGroupDesc& groupDesc = desc.shaderGroups[i];
+			const uint8* srcHandle = &handles[i * handleSize];
+
+			if (groupDesc.type != ShaderGroupType::General)
+			{
+				memcpy(sbtData + hitOffset + hitIndex * handleSizeAligned, srcHandle, handleSize);
+				++hitIndex;
+				continue;
+			}
+
+			const VkShaderStageFlagBits stage = device.GetShaderModule(desc.shaders[groupDesc.generalShaderIndex]).stage;
+			if (stage == VK_SHADER_STAGE_RAYGEN_BIT_KHR)
+			{
+				memcpy(sbtData + raygenOffset + raygenIndex * handleSizeAligned, srcHandle, handleSize);
+				++raygenIndex;
+			}
+			else if (stage == VK_SHADER_STAGE_MISS_BIT_KHR)
+			{
+				memcpy(sbtData + missOffset + missIndex * handleSizeAligned, srcHandle, handleSize);
+				++missIndex;
+			}
+			else
+			{
+				memcpy(sbtData + callableOffset + callableIndex * handleSizeAligned, srcHandle, handleSize);
+				++callableIndex;
+			}
+		}
+
+		UnmapBuffer(pipeline.sbtBuffer);
+
+		const VkDeviceAddress sbtAddress = static_cast<VkDeviceAddress>(GetBufferDeviceAddress(pipeline.sbtBuffer));
+
+		pipeline.raygenRegion = {};
+		pipeline.raygenRegion.deviceAddress = sbtAddress + raygenOffset;
+		// Raygen is special-cased by the spec - stride must equal size, since exactly one record
+		// is ever addressed per TraceRays call.
+		pipeline.raygenRegion.stride = raygenRegionSize;
+		pipeline.raygenRegion.size = raygenRegionSize;
+
+		pipeline.missRegion = {};
+		pipeline.missRegion.deviceAddress = missRegionSize > 0 ? sbtAddress + missOffset : 0;
+		pipeline.missRegion.stride = handleSizeAligned;
+		pipeline.missRegion.size = missRegionSize;
+
+		pipeline.hitRegion = {};
+		pipeline.hitRegion.deviceAddress = hitRegionSize > 0 ? sbtAddress + hitOffset : 0;
+		pipeline.hitRegion.stride = handleSizeAligned;
+		pipeline.hitRegion.size = hitRegionSize;
+
+		pipeline.callableRegion = {};
+		pipeline.callableRegion.deviceAddress = callableRegionSize > 0 ? sbtAddress + callableOffset : 0;
+		pipeline.callableRegion.stride = handleSizeAligned;
+		pipeline.callableRegion.size = callableRegionSize;
 
 		return handle;
 	}
@@ -428,6 +659,7 @@ namespace tyr
 		RayTracingPipeline& pipeline = device.GetRayTracingPipeline(handle);
 		vkDestroyPipeline(device.m_LogicalDevice, pipeline.pipeline, g_VulkanAllocationCallbacks);
 		vkDestroyPipelineLayout(device.m_LogicalDevice, pipeline.pipelineLayout, g_VulkanAllocationCallbacks);
+		DeleteBuffer(pipeline.sbtBuffer);
 		device.m_RayTracingPipelinePool.Delete(handle.h);
 	}
 }

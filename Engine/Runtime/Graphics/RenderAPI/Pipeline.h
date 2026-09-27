@@ -194,10 +194,26 @@ namespace tyr
 		ShaderModuleHandle shader;
 	};
 
-	// TODO: Finish this when adding ray tracing support.
+	static constexpr uint c_InvalidShaderIndex = ~0u;
+
+	// One VkRayTracingShaderGroupCreateInfoKHR entry. General is a single raygen/miss/callable
+	// shader (generalShaderIndex only); the two hit group kinds combine a closest-hit shader
+	// with an optional any-hit (both) and, for procedural geometry, an intersection shader -
+	// each index is into RayTracingPipelineDesc::shaders, c_InvalidShaderIndex if unused.
+	struct RayTracingShaderGroupDesc
+	{
+		ShaderGroupType type = ShaderGroupType::General;
+		uint generalShaderIndex = c_InvalidShaderIndex;
+		uint closestHitShaderIndex = c_InvalidShaderIndex;
+		uint anyHitShaderIndex = c_InvalidShaderIndex;
+		uint intersectionShaderIndex = c_InvalidShaderIndex;
+	};
+
 	struct RayTracingPipelineDesc
 	{
 		PipelineLayoutDesc pipelineLayoutDesc;
 		LocalArray<ShaderModuleHandle, 7> shaders;
+		LocalArray<RayTracingShaderGroupDesc, 7> shaderGroups;
+		uint maxRecursionDepth = 1;
 	};
 }

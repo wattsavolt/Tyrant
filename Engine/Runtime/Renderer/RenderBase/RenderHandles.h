@@ -6,6 +6,7 @@
 namespace tyr
 {
 	TYR_CREATE_HANDLE_TYPE(RenderWindowHandle);
+	TYR_CREATE_HANDLE_TYPE(SceneHandle);
 	TYR_CREATE_HANDLE_TYPE(RenderBufferHandle);
 	TYR_CREATE_HANDLE_TYPE(TextureHandle);
 	TYR_CREATE_HANDLE_TYPE(MaterialHandle);

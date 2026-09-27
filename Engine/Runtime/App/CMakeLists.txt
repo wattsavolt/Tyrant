@@ -56,6 +56,14 @@ endif()
 # IDE specific
 set_property(TARGET TyrantApp PROPERTY FOLDER Runtime)
 
+# Visual Studio's F5/Ctrl+F5 debug launch only - a plain double-click from Explorer still
+# gets no arguments (Windows has no equivalent "default args baked into the exe" concept).
+# Without -editor, an editor-mode build runs as the plain App instead of the Editor - see
+# AppModule::AppModule.
+if(TYR_EDITOR_MODE)
+	set_property(TARGET TyrantApp PROPERTY VS_DEBUGGER_COMMAND_ARGUMENTS "-editor")
+endif()
+
 # Make name of executable the app name
 if(TYR_EDITOR_MODE)
 	set_property(TARGET TyrantApp PROPERTY OUTPUT_NAME ${TYR_APP_NAME}_Editor)

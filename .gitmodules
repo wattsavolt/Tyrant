@@ -1,6 +1,15 @@
 [submodule "ThirdParty/fastgltf"]
-	path = ThirdParty/fastgltf
+	path = ThirdParty/Submodule/fastgltf
 	url = https://github.com/spnda/fastgltf.git
 [submodule "ThirdParty/zstd"]
-	path = ThirdParty/zstd
+	path = ThirdParty/Submodule/zstd
 	url = https://github.com/facebook/zstd.git
+[submodule "ThirdParty/meshoptimizer"]
+	path = ThirdParty/Submodule/meshoptimizer
+	url = https://github.com/zeux/meshoptimizer.git
+[submodule "ThirdParty/imgui"]
+	path = ThirdParty/Submodule/imgui
+	url = https://github.com/ocornut/imgui.git
+[submodule "ThirdParty/nuklear"]
+	path = ThirdParty/Submodule/nuklear
+	url = https://github.com/Immediate-Mode-UI/Nuklear.git

@@ -13,17 +13,20 @@ namespace tyr
     };
 
     class PooledThread;
+    class TaskScheduler;
+    struct WorkerContext;
+
     class ThreadPool final
     {
     public:
-        ThreadPool(const ThreadPoolConfig& config);
+        ThreadPool(const ThreadPoolConfig& config, TaskScheduler* scheduler);
         ~ThreadPool();
 
-        PooledThread* GetAvailableThread();
+        uint GetWorkerCount() const;
+        WorkerContext& GetWorkerContext(uint index);
 
     private:
         Array<PooledThread> m_Threads;
-        Mutex m_Mutex;
     };
 
 }

@@ -15,12 +15,19 @@
 #include "AssetSystem/AssetUtil.h"
 #include "Importing/MaterialImporter.h"
 #include "Importing/ModelImporter.h"
+#include "ECS/Components.h"
+#include "RendererModule.h"
+#include "Rendering/RendererAPI.h"
+#include "GUI/GUIModule.h"
+#include "Input/InputModule.h"
+#include "Input/InputManager.h"
 
 namespace tyr
 {
-	Editor::Editor()
+	Editor::Editor(GUIModule& guiModule)
+		: m_GUIModule(&guiModule)
+		, m_EditorUI(guiModule)
 	{
-		
 	}
 
 	Editor::~Editor()
@@ -31,14 +38,6 @@ namespace tyr
 	void Editor::Initialize()
 	{
 		TYR_GET_MODULE(WindowModule, m_WindowModule);
-		{
-			// Get project related properties from the config later
-			WindowDesc desc;
-			desc.showFlag = 1;
-			desc.name = c_AppName;
-			Platform::GetMaxWindowResolution(desc.width, desc.height);
-			m_PrimaryWindow = m_WindowModule->MakeWindow(desc);
-		}
 
 		AssetModule* assetModule;
 		TYR_GET_MODULE(AssetModule, assetModule);
@@ -48,58 +47,98 @@ namespace tyr
 		TYR_GET_MODULE(WorldModule, worldModule);
 		m_WorldManager = worldModule->GetWorldManager();
 
+		RendererModule* rendererModule;
+		TYR_GET_MODULE(RendererModule, rendererModule);
+		m_RendererAPI = rendererModule->GetRendererAPI();
+
+		// Get project related properties from the config later
+		WindowDesc desc;
+		desc.showFlag = 1;
+		desc.name = c_AppName;
+		Platform::GetMaxWindowResolution(desc.width, desc.height);
+
+		// Pulled back from the origin along -Z, looking down +Z (c_Forward) toward it - the test
+		// cube below is placed at the origin too, and a camera sitting exactly on top of what
+		// it's meant to look at ends up with the whole thing behind or inside the near plane.
+		m_Camera = MakeURef<Camera>(Vector3(0, 0, -3), Vector3::c_Up, Vector3::c_Forward, 90, 1.0f, 2000);
+
 		// Default viewport
 		WorldConfig worldParams{};
-
-		m_Camera = MakeURef<Camera>(Vector3(0, 0 ,0), Vector3::c_Up, Vector3::c_Forward, 90, 1.0f, 2000);
-
 		worldParams.camera = m_Camera.get();
-		m_LevelEditorWorld = m_WorldManager->AddWorld(worldParams);
 
-		// TEMPORARY CODE FOR TESTING
-		if (false)
+		m_LevelEditorWorld = CreatePrimaryWorld(*m_WindowModule, *m_WorldManager, desc, worldParams, m_PrimaryWindow);
+		m_GUIModule->SetPrimaryWindow(m_WindowModule, m_PrimaryWindow);
+
+		InputModule* inputModule;
+		TYR_GET_MODULE(InputModule, inputModule);
+		inputModule->GetInputManager()->SetWindow(m_WindowModule, m_PrimaryWindow);
+
+		m_EditorViewport = MakeURef<EditorViewport>(*m_RendererAPI);
+
+		// Step 7 test entity: import the test cube mesh if it hasn't been imported yet, then
+		// spawn a single entity for it with a transform and mesh component. This is
+		// temporary roadmap test code, not permanent editor logic.
 		{
-			PbrMaterialImportDesc desc;
-			char materialOutputFolderPath[PathConstants::c_MaxAssetPathTotalSize];
-			snprintf(materialOutputFolderPath, sizeof(materialOutputFolderPath), "%s/%s", AssetConstants::c_DefaultMaterialFolderName, AssetConstants::c_DefaultMaterialName);
-			desc.outputFolderPath = materialOutputFolderPath;
-			desc.materialName = AssetConstants::c_DefaultMaterialName;
-			desc.albedoSource.path = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_albedo.png";
-			desc.normalSource.path = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_normal.png";
-			desc.heightSource.path = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_height.png";
-			desc.occlusionSource.path = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_ao.png";
-			desc.roughnessMetallicSource.path = "C:\\Users\\volca\\Content\\used-stainless-steel\\used-stainless-steel_roughness.png";
+			char meshPath[PathConstants::c_MaxAssetPathTotalSize];
+			snprintf(meshPath, sizeof(meshPath), "Models/Cube/Cube%s", AssetConstants::c_MeshFileExtension);
 
-			const char* materialPath = m_AssetManager->GetDefaultMaterialPath();
-			char absMaterialPath[TYR_MAX_PATH_TOTAL_SIZE];
-			AssetUtil::CreateFullPath(absMaterialPath, materialPath);
-
-			const StringView fsPath(absMaterialPath);
-
-			bool loadMaterial = true;
-			if (!fs::exists(fsPath))
+			AssetID meshAssetID = AssetRegistry::Instance().GetAssetIDSafe(meshPath);
+			if (!AssetUtil::IsValidAssetID(meshAssetID))
 			{
-				loadMaterial = MaterialImporter::Instance().ImportPbrMaterial(desc);
-				TYR_ASSERT(loadMaterial);
+				const bool importedModel = ModelImporter::Instance().ImportModel(
+					"C:\\Users\\volca\\Content\\Cube\\Cube.glb", "Models/Cube", "Cube");
+				TYR_ASSERT(importedModel);
+
+				meshAssetID = AssetRegistry::Instance().GetAssetIDSafe(meshPath);
+				TYR_ASSERT(AssetUtil::IsValidAssetID(meshAssetID));
 			}
+
+			World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
+			Entity testEntity = world.entities.CreateEntity();
+
+			ComponentTransform transform;
+			transform.local.scale = Vector3::c_One;
+			transform.local.rotation = Quaternion::c_Identity;
+			transform.local.position = Vector3::c_Zero;
+			transform.world = transform.local;
+			world.entities.AddComponent<ComponentTransform>(testEntity, transform);
+
+			MeshComponent meshComponent;
+			meshComponent.mesh = meshAssetID;
+			world.entities.AddComponent<MeshComponent>(testEntity, meshComponent);
+			// WorldManager::UpdateWorld creates the actual mesh instance from this component -
+			// no need (and would double up the instance) to also call CreateMeshInstance here.
 		}
 
-		// TEMPORARY CODE FOR TESTING
-		if (false)
+		// Test light: without at least one directional light plus the ambient term set in
+		// WorldManager::UpdateWorld, MeshPS.hlsl has literally nothing to shade with and every
+		// pixel comes out black regardless of whether the geometry/camera are otherwise correct.
 		{
-			const bool importedModel = ModelImporter::Instance().ImportModel(
-				"C:\\Users\\volca\\Content\\Cube\\Cube.glb", "Models/Cube", "Cube");
-			TYR_ASSERT(importedModel);
+			World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
+			Entity lightEntity = world.entities.CreateEntity();
+
+			DirLightComponent lightComponent;
+			// The direction the light travels (light -> scene, matching SpotLightInfo's own
+			// direction convention) - see ComputeDirectionalLightEffect's comment.
+			lightComponent.direction = Vector3::Normalize(Vector3(-0.4f, -0.8f, 0.4f));
+			lightComponent.colour = Vector3::c_One;
+			lightComponent.intensity = 3.0f;
+			lightComponent.castsShadow = false;
+			world.entities.AddComponent<DirLightComponent>(lightEntity, lightComponent);
+			// WorldManager::UpdateWorld creates the actual renderer-side light from this
+			// component - no need to also call CreateDirectionalLight here.
 		}
 	}
 
 	void Editor::Update(float deltaTime)
 	{
-		
+		m_EditorUI.Draw();
+		m_EditorViewport->Draw();
 	}
 
 	void Editor::Shutdown()
 	{
+		m_EditorViewport->Shutdown();
 		m_WorldManager->RemoveWorld(m_LevelEditorWorld);
 		m_LevelEditorWorld = {};
 		m_WorldManager = nullptr;

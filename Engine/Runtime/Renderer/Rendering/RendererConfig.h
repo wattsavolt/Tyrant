@@ -16,7 +16,6 @@ namespace tyr
 		ShaderCreatorConfig shaderConfig;
 
 		bool vSyncEnabled{};
-		bool useTripleBuffering{};
 		bool voxelRendering{};
 	};
 }

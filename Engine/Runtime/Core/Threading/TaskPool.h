@@ -26,13 +26,20 @@ namespace tyr
         Task& operator[](Handle h);
         const Task& operator[](Handle h) const;
 
+        // Returns task slots this thread has freed via Delete() back to the shared pool.
+        // Frees are batched per-thread (see s_LocalFreeCache below) to keep contention off
+        // the shared free list, which means a thread that deletes fewer than
+        // c_LocalCacheSize tasks never flushes automatically and those slots stay stuck.
+        // Worker threads flush this on their own while idle; any other thread that deletes
+        // tasks (e.g. main) needs to call this periodically itself - TaskScheduler exposes
+        // it as FlushCurrentThreadCache() for that purpose.
+        void FlushCurrentThreadCache();
+
     private:
 
         static Handle MakeHandle(uint index, uint generation);
         static uint GetIndex(Handle h);
         static uint GetGeneration(Handle h);
-
-        void FlushLocalCache();
 
     private:
         Task m_Pool[c_Capacity];

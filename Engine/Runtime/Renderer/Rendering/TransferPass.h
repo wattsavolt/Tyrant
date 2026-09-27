@@ -8,11 +8,18 @@ namespace tyr
 	class Device;
 	class RenderData;
 	class CommandList;
+	class RenderRegistry;
+	class RenderGraphBuilder;
+	struct RenderResources;
+	struct RenderFrame;
 
 	struct TransferPassArgs
 	{
 		Device* device;
 		RenderData* data;
+		RenderRegistry* registry;
+		RenderResources* resources;
+		RenderFrame* renderFrame;
 	};
 
 	// A pass that executes the transfer of data from the cpu to gpu
@@ -23,11 +30,19 @@ namespace tyr
 		TransferPass(const TransferPassArgs& args);
 		~TransferPass();
 
+		void Recreate(const TransferPassArgs& args);
+
+		void Setup(RenderGraphBuilder& builder);
+		void Execute(CommandList& cmdList);
+
 	private:
 		Device* m_Device;
 		RenderData* m_Data;
+		RenderRegistry* m_Registry;
+		RenderResources* m_Resources;
+		RenderFrame* m_RenderFrame;
 		bool m_Initialized;
-		
+
 	};
-	
+
 }

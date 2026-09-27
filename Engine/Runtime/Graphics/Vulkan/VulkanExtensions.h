@@ -32,6 +32,15 @@ namespace tyr
 	TYR_VK_DECLARE_PROC_NULL(vkDestroyDebugUtilsMessengerEXT);
 	TYR_VK_DECLARE_PROC_NULL(vkSubmitDebugUtilsMessageEXT);
 	TYR_VK_DECLARE_PROC_NULL(vkCmdDrawMeshTasksEXT);
+
+	TYR_VK_DECLARE_PROC_NULL(vkGetAccelerationStructureBuildSizesKHR);
+	TYR_VK_DECLARE_PROC_NULL(vkCreateAccelerationStructureKHR);
+	TYR_VK_DECLARE_PROC_NULL(vkDestroyAccelerationStructureKHR);
+	TYR_VK_DECLARE_PROC_NULL(vkGetAccelerationStructureDeviceAddressKHR);
+	TYR_VK_DECLARE_PROC_NULL(vkCmdBuildAccelerationStructuresKHR);
+	TYR_VK_DECLARE_PROC_NULL(vkCreateRayTracingPipelinesKHR);
+	TYR_VK_DECLARE_PROC_NULL(vkGetRayTracingShaderGroupHandlesKHR);
+	TYR_VK_DECLARE_PROC_NULL(vkCmdTraceRaysKHR);
 }
 
 

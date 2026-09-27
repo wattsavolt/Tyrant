@@ -79,10 +79,17 @@ namespace tyr
 		void BindDescriptorSet(DescriptorSetHandle set, GraphicsPipelineHandle pipeline);
 		void BindDescriptorSet(DescriptorSetHandle set, ComputePipelineHandle pipeline);
 		void BindDescriptorSet(DescriptorSetHandle set, RayTracingPipelineHandle pipeline);
+		void PushConstants(GraphicsPipelineHandle pipeline, ShaderStage stages, uint offset, uint size, const void* data);
+		void PushConstants(ComputePipelineHandle pipeline, ShaderStage stages, uint offset, uint size, const void* data);
 		void DrawIndexed(uint indexCount, uint instanceCount, uint firstIndex, int vertexOffset, uint firstInstance);
 		void Draw(uint vertexCount, uint instanceCount, uint firstVertex, uint firstInstance);
 		void DrawMeshTasks(uint groupCountX, uint groupCountY, uint groupCountZ);
 		void Dispatch(uint groupCountX, uint groupCountY, uint groupCountZ);
+		// Builds (or, with AccelerationStructureBuildInfo::update, fast-refits) one or more
+		// acceleration structures. Bottom-level builds reuse their own stored geometry
+		// description; top-level builds read buildInfos[i].instanceBuffer.
+		void BuildAccelerationStructures(const AccelerationStructureBuildInfo* buildInfos, uint count);
+		void TraceRays(RayTracingPipelineHandle pipeline, uint width, uint height, uint depth);
 
 		const CommandListDesc& GetDesc() const { return m_Desc; }
 

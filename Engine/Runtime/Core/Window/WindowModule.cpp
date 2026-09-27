@@ -2,6 +2,8 @@
 
 #include "WindowDesc.h"
 #include "Window.h"
+#include <algorithm>
+#include <cstring>
 
 #if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
 #include "Win32/PCWindow.h"
@@ -15,9 +17,10 @@ namespace tyr
 		Array<WindowHandle> windows;
 
 		WindowModulePrivate()
-			: windows(WindowConstants::c_MaxWindows)
 		{
-
+			// Array(uint size) sets the initial SIZE, not just capacity - it would populate
+			// this with c_MaxWindows default (invalid-index) WindowHandle entries otherwise.
+			windows.Reserve(WindowConstants::c_MaxWindows);
 		}
 	};
 
@@ -43,7 +46,7 @@ namespace tyr
 		delete m_Private;
 	}
 
-	void WindowModule::Update(float deltaTime)
+	void WindowModule::BeginFrame()
 	{
 		for (const WindowHandle window : m_Private->windows)
 		{
@@ -51,6 +54,10 @@ namespace tyr
 			PCWindow::PollEvents(m_Private->windowPool[window.h.index]);
 #endif
 		}
+	}
+
+	void WindowModule::Update(float deltaTime)
+	{
 	}
 
 	WindowHandle WindowModule::MakeWindow(const WindowDesc& desc)
@@ -94,5 +101,34 @@ namespace tyr
 	const bool WindowModule::IsWindowActive(WindowHandle handle) const
 	{
 		return m_Private->windowPool[handle.h].handle != nullptr;
+	}
+
+	bool WindowModule::ConsumeResizePending(WindowHandle handle)
+	{
+		Window& window = m_Private->windowPool[handle.h];
+		const bool pending = window.resizePending;
+		window.resizePending = false;
+		return pending;
+	}
+
+	const WindowInputState& WindowModule::GetInputState(WindowHandle handle) const
+	{
+		return m_Private->windowPool[handle.h].input;
+	}
+
+	void WindowModule::ConsumeTypedChars(WindowHandle handle, char* outBuffer, uint bufferCapacity, uint& outCount)
+	{
+		WindowInputState& input = m_Private->windowPool[handle.h].input;
+		outCount = std::min(input.typedCharCount, bufferCapacity);
+		memcpy(outBuffer, input.typedChars, outCount);
+		input.typedCharCount = 0;
+	}
+
+	float WindowModule::ConsumeScrollDelta(WindowHandle handle)
+	{
+		WindowInputState& input = m_Private->windowPool[handle.h].input;
+		const float delta = input.scrollDelta;
+		input.scrollDelta = 0.0f;
+		return delta;
 	}
 }

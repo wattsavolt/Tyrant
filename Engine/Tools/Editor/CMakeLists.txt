@@ -42,6 +42,9 @@ target_compile_definitions(TyrantEditor PRIVATE
 
 # Libraries
 target_link_libraries(TyrantEditor PRIVATE TyrantEngine)
+# Editor code always builds under TYR_EDITOR_MODE, which is mutually exclusive with
+# TYR_FINAL_MODE, so imgui is always available here.
+target_link_libraries(TyrantEditor PRIVATE imgui)
 
 # IDE specific
 set_property(TARGET TyrantEditor PROPERTY FOLDER Tools)

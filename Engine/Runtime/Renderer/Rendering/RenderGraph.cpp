@@ -4,6 +4,7 @@
 #include "RenderAPI/CommandList.h"
 #include "RenderResource/RenderBuffer.h"
 #include "RenderResource/Texture.h"
+#include "Memory/StackAllocation.h"
 
 namespace tyr
 {
@@ -25,13 +26,13 @@ namespace tyr
     // ----------------------------------------------------------------
     // Add pass
     // ----------------------------------------------------------------
-    uint RenderGraph::AddPass(const char* name, RenderGraphPassSetupFn setup, RenderGraphPassExecuteFn&& execute, RenderGraphPhase phase, bool enabled)
+    uint RenderGraph::AddPass(const char* name, RenderGraphPassSetupFn setup, RenderGraphPassExecuteFn&& execute, RenderGraphPhase phase, CommandQueueType queueType, bool enabled)
     {
-        if (!enabled) 
+        if (!enabled)
             return c_RenderGraphInvalidIndex;
 
         const uint index = m_PassNodes.Size();
-        m_PassNodes.Add({ name, std::move(execute), phase });
+        m_PassNodes.Add({ name, std::move(execute), phase, queueType });
 
         RenderGraphBuilder builder(*this, index);
         setup(builder);
@@ -105,11 +106,25 @@ namespace tyr
             const RenderGraphSpan span = node.usageSpan;
 
             BarrierAccess currentAccess = node.buffer->accessState;
+            CommandQueueType currentQueueType = node.buffer->queueTypeState;
 
             for (uint u = 0; u < span.count; ++u)
             {
                 const RenderGraphResourceUsage& usage =
                     m_BufferUsages[span.start + u];
+
+                RenderGraphPassNode& pass = m_PassNodes[usage.passIndex];
+
+                // A same-queue pipeline barrier can't synchronize against a different
+                // queue's prior access - that's handled by a cross-queue semaphore wait
+                // instead (the buffer is concurrent-shared, so no ownership transfer is
+                // needed either).
+                if (currentQueueType != pass.queueType)
+                {
+                    currentAccess = usage.access;
+                    currentQueueType = pass.queueType;
+                    continue;
+                }
 
                 if (currentAccess == usage.access)
                     continue;
@@ -120,8 +135,6 @@ namespace tyr
                 barrier.srcAccess = currentAccess;
                 barrier.dstStage = usage.stage;
                 barrier.dstAccess = usage.access;
-
-                RenderGraphPassNode& pass = m_PassNodes[usage.passIndex];
 
                 if (pass.bufferBarrierSpan.count == 0)
                     pass.bufferBarrierSpan.start = m_BufferBarriers.Size();
@@ -138,6 +151,7 @@ namespace tyr
 
             // Persist final state for next frame
             node.buffer->accessState = currentAccess;
+            node.buffer->queueTypeState = currentQueueType;
         }
 
         // ------------------------------------------------------------
@@ -150,11 +164,24 @@ namespace tyr
 
             BarrierAccess currentAccess = node.texture->accessState;
             ImageLayout currentLayout = node.texture->imageLayout;
+            CommandQueueType currentQueueType = node.texture->queueTypeState;
 
             for (uint u = 0; u < span.count; ++u)
             {
                 const RenderGraphResourceUsage& usage =
                     m_TextureUsages[span.start + u];
+
+                RenderGraphPassNode& pass = m_PassNodes[usage.passIndex];
+
+                // Same reasoning as the buffer loop above - a different queue's prior
+                // access is synchronized via a semaphore wait, not a same-queue barrier.
+                if (currentQueueType != pass.queueType)
+                {
+                    currentAccess = usage.access;
+                    currentLayout = usage.layout;
+                    currentQueueType = pass.queueType;
+                    continue;
+                }
 
                 if (currentAccess == usage.access && currentLayout == usage.layout)
                     continue;
@@ -167,8 +194,6 @@ namespace tyr
                 barrier.dstStage = usage.stage;
                 barrier.dstAccess = usage.access;
                 barrier.dstLayout = usage.layout;
-
-                RenderGraphPassNode& pass = m_PassNodes[usage.passIndex];
 
                 if (pass.textureBarrierSpan.count == 0)
                     pass.textureBarrierSpan.start = m_TextureBarriers.Size();
@@ -187,6 +212,7 @@ namespace tyr
             // Persist final state for next frame
             node.texture->accessState = currentAccess;
             node.texture->imageLayout = currentLayout;
+            node.texture->queueTypeState = currentQueueType;
         }
     }
 
@@ -215,22 +241,41 @@ namespace tyr
     // ----------------------------------------------------------------
     // Execute
     // ----------------------------------------------------------------
-    void RenderGraph::Execute(CommandList& cmdList)
+    void RenderGraph::Execute(CommandList* const cmdLists[CommandQueueType::CQ_COUNT])
     {
         for (uint i = 0; i < m_PassNodes.Size(); ++i)
         {
             const RenderGraphPassNode& pass = m_PassNodes[i];
 
+            CommandList& cmdList = *cmdLists[pass.queueType];
+
             if (pass.bufferBarrierSpan.count != 0 || pass.textureBarrierSpan.count != 0)
             {
+                // m_BufferBarriers/m_TextureBarriers store a BufferBarrier/ImageBarrier embedded
+                // inside a larger struct (alongside passIndex/bufferIndex-or-textureIndex
+                // bookkeeping) - a span of them is NOT contiguous BufferBarrier/ImageBarrier
+                // data, so &m_BufferBarriers[start].barrier can't just be indexed as one. Copy
+                // just the barrier out of each entry into its own tightly-packed array instead -
+                // this data is only needed for the AddBarriers call below, so a stack allocation
+                // is enough; no need for it to live in the render graph's own frame allocator.
+                const SmartStack<BufferBarrier> bufferBarrierStack = SmartStackAlloc<BufferBarrier>(pass.bufferBarrierSpan.count);
+                BufferBarrier* const bufferBarriers = bufferBarrierStack;
+                for (uint b = 0; b < pass.bufferBarrierSpan.count; ++b)
+                {
+                    bufferBarriers[b] = m_BufferBarriers[pass.bufferBarrierSpan.start + b].barrier;
+                }
+
+                const SmartStack<ImageBarrier> textureBarrierStack = SmartStackAlloc<ImageBarrier>(pass.textureBarrierSpan.count);
+                ImageBarrier* const textureBarriers = textureBarrierStack;
+                for (uint t = 0; t < pass.textureBarrierSpan.count; ++t)
+                {
+                    textureBarriers[t] = m_TextureBarriers[pass.textureBarrierSpan.start + t].barrier;
+                }
+
                 cmdList.AddBarriers(
-                    pass.bufferBarrierSpan.count != 0
-                    ? &m_BufferBarriers[pass.bufferBarrierSpan.start].barrier
-                    : nullptr,
+                    pass.bufferBarrierSpan.count != 0 ? bufferBarriers : nullptr,
                     pass.bufferBarrierSpan.count,
-                    pass.textureBarrierSpan.count != 0
-                    ? &m_TextureBarriers[pass.textureBarrierSpan.start].barrier
-                    : nullptr,
+                    pass.textureBarrierSpan.count != 0 ? textureBarriers : nullptr,
                     pass.textureBarrierSpan.count
                 );
             }

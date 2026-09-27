@@ -4,6 +4,7 @@
 #include "RendererMacros.h"
 #include "Rendering/RenderConstants.h"
 #include "RenderTransfer/UploadRequest.h"
+#include "Memory/PoolHandle.h"
 
 namespace tyr
 {
@@ -29,7 +30,9 @@ namespace tyr
 
 		bool RequestResourceUploadAllocation(size_t size, UploadBufferAllocation& allocation);
 
-		void SignalResourceUpload(uint64 timelineValue);
+		// Only ever called from the main thread - see Renderer::DrainSubmissionCompletions,
+		// once a submission's timeline value is known.
+		void SignalResourceUpload(Handle resourceId, uint64 timelineValue);
 
 		void ReclaimResourceUploadMemory(uint64 timelineValue);
 

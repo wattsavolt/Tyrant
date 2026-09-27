@@ -65,17 +65,18 @@ namespace tyr
 		if (success)
 		{
 			allocation.buffer = m_ResourceUploadBuffer;
-			allocation.cpuPtr = buffer.mappedMemory;
+			allocation.cpuPtr = alloc.cpuPtr;
 			allocation.offset = alloc.offset;
 			allocation.size = alloc.size;
+			allocation.resourceId = alloc.id;
 		}
-	
+
 		return success;
 	}
 
-	void RenderAllocationManager::SignalResourceUpload(uint64 timelineValue)
+	void RenderAllocationManager::SignalResourceUpload(Handle resourceId, uint64 timelineValue)
 	{
-		m_ResourceUploadAllocator->Signal(timelineValue);
+		m_ResourceUploadAllocator->Signal(resourceId, timelineValue);
 	}
 
 	void RenderAllocationManager::ReclaimResourceUploadMemory(uint64 timelineValue)
@@ -125,7 +126,7 @@ namespace tyr
 
 	void RenderAllocationManager::FreeMeshLODs(uint offset, uint lodCount)
 	{
-		for (uint i = offset; i < lodCount; ++i)
+		for (uint i = offset; i < offset + lodCount; ++i)
 		{
 			m_MeshLODAllocInfos[i] = {};
 		}

@@ -248,9 +248,16 @@ function(set_shader_config srcs)
 			elseif(${FILE_NAME} MATCHES "CS$")
 				set_property(SOURCE ${f} PROPERTY VS_SHADER_TYPE Compute)
 			elseif(${FILE_NAME} MATCHES "MS$")
-				set_property(SOURCE ${f} PROPERTY VS_SHADER_TYPE Mesh)
+				# Visual Studio's built-in HLSL build step invokes the legacy FXC compiler for
+				# mesh shaders, which doesn't support them at all (mesh/amplification shaders
+				# are SM6.5+, DXC-only) - always fails with "invalid profile ms_x_x". These are
+				# compiled at runtime by ShaderCreator (via DXC) instead, so exclude them from
+				# MSBuild's own shader build step entirely.
+				set_property(SOURCE ${f} PROPERTY VS_TOOL_OVERRIDE "None")
 			elseif(${FILE_NAME} MATCHES "AS$")
-				set_property(SOURCE ${f} PROPERTY VS_SHADER_TYPE Amplification)
+				# See the Mesh branch's comment above - same FXC limitation applies to
+				# amplification shaders.
+				set_property(SOURCE ${f} PROPERTY VS_TOOL_OVERRIDE "None")
 			else()
 				message(FATAL_ERROR "Shader file name is invalid!")
 			endif()

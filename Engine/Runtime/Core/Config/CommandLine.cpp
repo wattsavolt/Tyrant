@@ -2,13 +2,66 @@
 #include "Logging/Logger.h"
 #include "Platform/Platform.h"
 #include <charconv>
+#include <cstring>
 
 namespace tyr
 {
-	CommandLine::CommandLine(const char* filePath)
+	namespace
+	{
+		CommandLine* s_Instance = nullptr;
+	}
+
+	void CommandLine::Create(int argc, const char* const* argv)
+	{
+		TYR_ASSERT(!s_Instance);
+		s_Instance = new CommandLine(argc, argv);
+	}
+
+	CommandLine& CommandLine::Instance()
+	{
+		TYR_ASSERT(s_Instance);
+		return *s_Instance;
+	}
+
+	CommandLine::CommandLine(int argc, const char* const* argv)
 		: m_Map(c_MaxEntries)
 	{
-		// TODO Implement support for loading .ini
+		for (int i = 0; i < argc; ++i)
+		{
+			const char* token = argv[i];
+			if (token[0] != '-')
+			{
+				continue;
+			}
+
+			const char* nameStart = token;
+			while (*nameStart == '-')
+			{
+				++nameStart;
+			}
+			const uint nameLen = static_cast<uint>(std::strlen(nameStart));
+			if (nameLen == 0)
+			{
+				continue;
+			}
+
+			const Key key(nameStart, nameLen);
+			const bool hasValue = (i + 1 < argc) && (argv[i + 1][0] != '-');
+			if (hasValue)
+			{
+				m_Map[key] = argv[i + 1];
+				++i;
+			}
+			else
+			{
+				m_Map[key] = "";
+			}
+		}
+	}
+
+	bool CommandLine::HasFlag(const char* name) const
+	{
+		return m_Map.Find(Key(name)) != nullptr;
 	}
 
 	const CommandLine::Value& CommandLine::GetValue(const char* name) const

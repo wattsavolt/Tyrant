@@ -18,12 +18,33 @@ namespace tyr
 		uint decompressedMeshletsSize;
 		uint decompressedVerticesSize;
 		uint decompressedIndicesSize;
+		// Size of this chunk's compressed blob on disk - also how far to seek forward to
+		// reach the next chunk, since chunks are written back-to-back with no gaps.
 		uint compressedBlobSize;
+		// Size of this chunk's data once decompressed - not just the sum of the three
+		// sizes above, since meshlets/vertices/indices are each aligned within the blob
+		// (see meshletsOffset/verticesOffset/indicesOffset).
 		uint decompressedBlobSize;
-		uint blobFileOffset;
 		uint meshletsOffset;
 		uint verticesOffset;
 		uint indicesOffset;
+	};
+
+	// One generated meshlet's local ranges into a chunk's decompressed meshlet-local index
+	// buffer / mesh vertex buffer, plus which of the mesh's submeshes it belongs to (see
+	// Meshlet::materialSlot in Shaders/ShaderTypes.h - same meaning; materialSlot is
+	// mesh-intrinsic, not runtime-resolved, so there's no reason not to bake it in here at
+	// import time). Deliberately kept field-for-field identical to Meshlet/ShaderMeshlet so a
+	// chunk's decompressed meshlet bytes are already GPU-upload-ready as-is, with no further
+	// per-meshlet transform needed - see AssetManager::UploadMeshGeometry, which uploads them
+	// the same way it does vertices/indices.
+	struct MeshChunkMeshlet
+	{
+		uint vertexOffset;
+		uint vertexCount;
+		uint indexOffset;
+		uint indexCount;
+		uint materialSlot;
 	};
 
 	struct MeshLODHeader

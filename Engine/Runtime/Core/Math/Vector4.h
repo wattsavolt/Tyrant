@@ -11,6 +11,8 @@ namespace tyr
 	public:
 		Vector4() = default;
 
+		~Vector4() = default;
+
 		constexpr Vector4(ArgZero)
 			:x(0), y(0), z(0), w(0)
 		{ }

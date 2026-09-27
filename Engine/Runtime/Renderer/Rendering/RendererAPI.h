@@ -27,7 +27,11 @@ namespace tyr
 	struct DirectionalLightInfo;
 	struct PointLightInfo;
 	struct SpotLightInfo;
+	struct GUIDrawData;
 
+	// Every Create*/Delete* function here must only ever be called from the main thread -
+	// RenderRegistry's pools aren't safe for concurrent creation/deletion against
+	// RenderAsync's own reads of them on a worker thread.
 	class TYR_RENDERER_API RendererAPI final : INonCopyable
 	{
 	public:
@@ -38,13 +42,13 @@ namespace tyr
 
 		void RemoveWindow(RenderWindowHandle window);
 
-		void ResizeWindow(RenderWindowHandle window, uint width, uint height);
+		void ResizeWindow(RenderWindowHandle window);
 
-		uint AddScene(const char* name);
+		SceneHandle AddScene(const char* name);
 
-		void RemoveScene(uint index);
-	
-		void SetActiveSceneIndex(uint index, bool visible);
+		void RemoveScene(SceneHandle handle);
+
+		void SetActiveScene(SceneHandle handle, bool visible);
 
 		void AddBufferUploadRequest(const BufferUploadRequest& request);
 
@@ -56,6 +60,12 @@ namespace tyr
 		void DeleteTexture(TextureHandle handle);
 
 		const TextureInfo& GetTextureInfo(TextureHandle handle);
+
+		// Creates the editor viewport panel's offscreen colour render target on first call, or
+		// resizes it (deleting the old one, creating a new one at the requested size) if
+		// width/height differ from last time. Safe to call every frame from editor code - only
+		// actually does work when the size has changed.
+		TextureHandle GetOrCreateViewportTexture(const char* name, uint width, uint height);
 
 		MaterialHandle CreateMaterial(const MaterialDesc& desc);
 
@@ -90,6 +100,11 @@ namespace tyr
 		// Adds a view for the next frame. Must be called for each view every frame
 		void AddView(const SceneView& view);
 
+		// Flat ambient term added to every pixel regardless of any light - see MeshPS.hlsl.
+		// RenderFrame is per-frame buffered state (see AddView's own comment on the same
+		// pattern), so this needs to be resupplied every frame too, not just once.
+		void SetAmbient(float ambient);
+
 		DirLightHandle CreateDirectionalLight(const DirectionalLightDesc& desc);
 
 		void UpdateDirectionalLight(DirLightHandle handle, const DirectionalLightDesc& desc);
@@ -111,6 +126,14 @@ namespace tyr
 		bool RequestResourceUploadAllocation(size_t size, UploadBufferAllocation& allocation);
 
 		void FlushBufferUploadAllocation(const UploadBufferAllocation& alloc);
+
+		// Uploads one immediate-mode UI source's draw data (editor chrome, in-game HUD/menu) for
+		// this frame, ready for GUIPass to render. A no-op if data has no vertices/indices.
+		void SubmitGUIDrawData(const GUIDrawData& data);
+
+		// Discards whatever GUI draw data is still sitting unrendered in the current render
+		// frame slot - see GUIModule::EndFrame's call site for why this is needed.
+		void ResetGUIDrawData();
 
 	private:
 		void UploadMeshInstance(const MeshInstanceInfo& info, uint index);

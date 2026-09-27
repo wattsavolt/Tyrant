@@ -26,5 +26,12 @@ namespace tyr
 	{
 		VkPipelineLayout pipelineLayout;
 		VkPipeline pipeline;
+		// Shader binding table - one GPU buffer holding every shader group's handle, laid out
+		// per the four regions below (see Device::CreateRayTracingPipeline).
+		BufferHandle sbtBuffer;
+		VkStridedDeviceAddressRegionKHR raygenRegion{};
+		VkStridedDeviceAddressRegionKHR missRegion{};
+		VkStridedDeviceAddressRegionKHR hitRegion{};
+		VkStridedDeviceAddressRegionKHR callableRegion{};
 	};
 }

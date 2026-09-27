@@ -10,7 +10,6 @@ namespace tyr
 		Serialize<uint>(stream, header.decompressedIndicesSize);
 		Serialize<uint>(stream, header.compressedBlobSize);
 		Serialize<uint>(stream, header.decompressedBlobSize);
-		Serialize<uint>(stream, header.blobFileOffset);
 		Serialize<uint>(stream, header.meshletsOffset);
 		Serialize<uint>(stream, header.verticesOffset);
 		Serialize<uint>(stream, header.indicesOffset);
@@ -24,7 +23,6 @@ namespace tyr
 		Deserialize<uint>(stream, header.decompressedIndicesSize);
 		Deserialize<uint>(stream, header.compressedBlobSize);
 		Deserialize<uint>(stream, header.decompressedBlobSize);
-		Deserialize<uint>(stream, header.blobFileOffset);
 		Deserialize<uint>(stream, header.meshletsOffset);
 		Deserialize<uint>(stream, header.verticesOffset);
 		Deserialize<uint>(stream, header.indicesOffset);

@@ -69,12 +69,13 @@ namespace tyr
 		if (desc.usage != RenderBufferUsage::Upload)
 		{
 			BufferViewDesc viewDesc;
-#if !TYR_FINAL 
-			{
-				GDebugString debugName;
-				debugName.Set(desc.debugName, "_View");
-				viewDesc.debugName = debugName.Str();
-			}
+#if !TYR_FINAL
+			// debugName must outlive the CreateBufferView call below - viewDesc.debugName is
+			// a non-owning pointer into its buffer (see TYR_DECLARE_GDEBUGNAME), so it can't
+			// be confined to a narrower scope than that.
+			GDebugString debugName;
+			debugName.Set(desc.debugName, "_View");
+			viewDesc.debugName = debugName.Str();
 #endif
 			viewDesc.buffer = buffer.buffer;
 			viewDesc.offset = 0;
@@ -164,11 +165,11 @@ namespace tyr
 
 		ImageViewDesc viewDesc;
 #if !TYR_FINAL
-		{
-			GDebugString debugName;
-			debugName.Set(desc.debugName, "_View");
-			viewDesc.debugName = debugName.Str();
-		}
+		// debugName must outlive the CreateImageView call below - see the matching comment
+		// in InitializeRenderBuffer above.
+		GDebugString debugName;
+		debugName.Set(desc.debugName, "_View");
+		viewDesc.debugName = debugName.Str();
 #endif
 		viewDesc.image = texture.image;
 		viewDesc.isSwapChainView = false;

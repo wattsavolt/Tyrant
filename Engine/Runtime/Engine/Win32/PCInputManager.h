@@ -14,6 +14,7 @@ namespace tyr
 
 		void Initialize() override;
 		void Shutdown() override;
+		void Update() override;
 
 	private:
 		HINSTANCE hInstance;

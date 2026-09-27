@@ -1,4 +1,5 @@
 #include "EntitySystem.h"
+#include <cstring>
 
 namespace tyr
 {
@@ -8,15 +9,21 @@ namespace tyr
 
     EntitySystem::~EntitySystem()
     {
-        // Delete() now calls Archetype::Reset() itself (see m_ArchetypePool's
-        // ResetObjectPolicy), which releases entities/columns - no need to do that here too.
+        Reset();
+    }
+
+    void EntitySystem::Reset()
+    {
+        // Delete() calls Archetype::Reset() itself (see m_ArchetypePool's
+        // ResetObjectPolicy), which releases entities/columns.
         for (auto kv : m_Archetypes)
         {
-            Archetype* arch = kv.second;
-            m_ArchetypePool.Delete(arch->poolHandle);
+            m_ArchetypePool.Delete(kv.second->poolHandle);
         }
 
         m_Archetypes.Clear();
+        m_EntityRecords.Clear();
+        m_NextEntityID = 0;
     }
 
     Entity EntitySystem::CreateEntity()
@@ -54,7 +61,7 @@ namespace tyr
 
         if (record.archetype)
         {
-            CopyComponents(record, newArch);
+            CopyComponents(record, newArch, newIndex);
             RemoveFromArchetype(record);
         }
 
@@ -75,18 +82,44 @@ namespace tyr
 
             m_EntityRecords[moved].index = index;
 
-            // TODO: once CopyComponents can actually copy component data, do this same
-            // swap for every column that's in use here too (moved <-> index), just like
-            // we did for entities above, so every column still lines up row for row.
+            // Every component column needs the same swap as entities above, or a
+            // surviving row's data would end up misaligned with which entity it belongs
+            // to. Safe as a raw memcpy - see ComponentReflection.h's comment: a component
+            // type is never allowed to own a dynamic allocation, so there's nothing for a
+            // real copy/move/destructor to do that a byte copy doesn't already do.
+            arch->key.ForEachSet([&](uint id)
+            {
+                EcsColumn& column = arch->columns[id];
+                memcpy(column.GetElement(index), column.GetElement(last), column.elementSize);
+            });
         }
 
         arch->count--;
     }
 
-    void EntitySystem::CopyComponents(const EntityRecord& from, Archetype* to)
+    void EntitySystem::CopyComponents(const EntityRecord& from, Archetype* to, uint toIndex)
     {
-        // TODO: for every column that's in use on from.archetype, set up the matching
-        // column on `to` (Init it if it isn't already, make sure it has room), then
-        // copy the entity's data at from.index into the new row.
+        if (!from.archetype)
+        {
+            return;
+        }
+
+        // Carries every component the entity already had over to its new archetype's row -
+        // the new component AddComponent<T> is actually adding gets written into its own
+        // column separately, after this returns. Raw memcpy is safe for the same reason as
+        // RemoveFromArchetype above.
+        from.archetype->key.ForEachSet([&](uint id)
+        {
+            EcsColumn& srcColumn = from.archetype->columns[id];
+            EcsColumn& dstColumn = to->columns[id];
+
+            if (!dstColumn.IsInitialized())
+            {
+                dstColumn.Init(srcColumn.elementSize);
+            }
+            dstColumn.EnsureCapacity(toIndex + 1);
+
+            memcpy(dstColumn.GetElement(toIndex), srcColumn.GetElement(from.index), srcColumn.elementSize);
+        });
     }
 }

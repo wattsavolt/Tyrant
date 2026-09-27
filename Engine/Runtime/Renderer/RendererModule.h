@@ -27,7 +27,7 @@ namespace tyr
 		void Update(float deltaTime) override;
 
 		void EndFrame() override;
-	
+
 		Device* GetDevice() const;
 
 		RendererAPI* GetRendererAPI() const { return m_RendererAPI; }

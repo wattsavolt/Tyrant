@@ -13,36 +13,189 @@ namespace tyr
 		, m_ComputeQueue(args.computeQueue)
 		, m_TransferQueue(args.transferQueue)
 	{
-		
+		m_Thread = Thread(&RenderSubmissionThread::Run, this);
 	}
 
 	RenderSubmissionThread::~RenderSubmissionThread()
 	{
-		
-	}
+		{
+			LockGuard guard(m_Mutex);
+			m_Stop.store(true, std::memory_order_relaxed);
+		}
+		m_CV.notify_one();
 
-	void RenderSubmissionThread::Run()
-	{
-		// TODO : Implement
+		if (m_Thread.joinable())
+		{
+			m_Thread.join();
+		}
 	}
 
 	void RenderSubmissionThread::EnqueueRenderSubmissionRequest(const RenderSubmissionRequest& request)
 	{
-		// TODO : Implement
+		const bool enqueued = m_SubmissionQueue.Enqueue(request);
+		TYR_ASSERT(enqueued);
+		(void)enqueued;
+
+		m_CV.notify_one();
 	}
 
 	void RenderSubmissionThread::EnqueueRenderPresentRequest(const RenderPresentRequest& request)
 	{
-		// TODO : Implement
+		const bool enqueued = m_PresentQueue.Enqueue(request);
+		TYR_ASSERT(enqueued);
+		(void)enqueued;
+
+		m_CV.notify_one();
 	}
 
 	void RenderSubmissionThread::EnqueueRenderNotification(const RenderNotification& notification)
 	{
-		// TODO : Implement
+		const bool enqueued = m_NotificationQueue.Enqueue(notification);
+		TYR_ASSERT(enqueued);
+		(void)enqueued;
+
+		m_CV.notify_one();
 	}
 
-	void RenderSubmissionThread::ProcessRequests()
+	void RenderSubmissionThread::EnqueueRenderAcquireRequest(const RenderAcquireRequest& request)
 	{
-		// TODO : Implement
+		const bool enqueued = m_AcquireQueue.Enqueue(request);
+		TYR_ASSERT(enqueued);
+		(void)enqueued;
+
+		m_CV.notify_one();
+	}
+
+	Optional<RenderFrameCompletion> RenderSubmissionThread::DequeueFrameCompletion()
+	{
+		return m_CompletionQueue.Dequeue();
+	}
+
+	Optional<RenderAcquireResult> RenderSubmissionThread::DequeueAcquireResult()
+	{
+		return m_AcquireResultQueue.Dequeue();
+	}
+
+	Optional<RenderNotification> RenderSubmissionThread::DequeueRenderNotification()
+	{
+		return m_NotificationQueue.Dequeue();
+	}
+
+	uint64 RenderSubmissionThread::GetLastPresentedFrame() const
+	{
+		return m_LastPresentedFrame.load(std::memory_order_acquire);
+	}
+
+	void RenderSubmissionThread::Run()
+	{
+		while (!m_Stop.load(std::memory_order_relaxed))
+		{
+			if (ProcessRequests())
+			{
+				continue;
+			}
+
+			Lock lock(m_Mutex);
+			m_CV.wait_for(lock, std::chrono::microseconds(200), [this] { return m_Stop.load(std::memory_order_relaxed); });
+		}
+
+		// Drain whatever's left so nothing queued right before shutdown is silently dropped.
+		ProcessRequests();
+	}
+
+	bool RenderSubmissionThread::ProcessRequests()
+	{
+		bool processedAny = false;
+
+		// Processed first, ahead of submissions/presents, since RenderAsync is blocked
+		// spin-waiting on the result - it needs the acquired image index before it can even
+		// start recording.
+		while (Optional<RenderAcquireRequest> request = m_AcquireQueue.Dequeue())
+		{
+			bool valid = false;
+			bool resizeNeeded = false;
+			const uint imageIndex = request->swapChain->AcquireNextImage(request->semaphore, valid, resizeNeeded);
+
+			const bool resultEnqueued = m_AcquireResultQueue.Enqueue({ imageIndex, valid, resizeNeeded });
+			TYR_ASSERT(resultEnqueued);
+			(void)resultEnqueued;
+
+			if (resizeNeeded)
+			{
+				const bool notified = m_NotificationQueue.Enqueue({ request->window, true });
+				TYR_ASSERT(notified);
+				(void)notified;
+			}
+
+			processedAny = true;
+		}
+
+		while (Optional<RenderSubmissionRequest> request = m_SubmissionQueue.Dequeue())
+		{
+			CommandQueue* queue = m_GraphicsQueue;
+			switch (request->queueType)
+			{
+			case CommandQueueType::CQ_COMPUTE:
+				queue = m_ComputeQueue;
+				break;
+			case CommandQueueType::CQ_TRANSFER:
+				queue = m_TransferQueue;
+				break;
+			default:
+				break;
+			}
+
+			CommandQueueExecuteArgs executeArgs{};
+			executeArgs.commandLists = request->commandLists.Data();
+			executeArgs.commandListCount = request->commandLists.Size();
+			executeArgs.waitSemaphores = request->waitSemaphores.Data();
+			executeArgs.waitValues = request->waitValues.Data();
+			executeArgs.waitValueCount = request->waitValues.Size();
+			executeArgs.waitDstPipelineStages = request->waitDstPipelineStages.Data();
+			executeArgs.waitSemaphoreCount = request->waitSemaphores.Size();
+			executeArgs.waitDstPipelineStageCount = request->waitDstPipelineStages.Size();
+			executeArgs.signalSemaphores = request->signalSemaphores.Data();
+			executeArgs.signalValues = request->signalValues.Data();
+			executeArgs.signalSemaphoreCount = request->signalSemaphores.Size();
+			executeArgs.signalValueCount = request->signalValues.Size();
+
+			const uint64 timelineValue = queue->Execute(&executeArgs, 1, 0, request->fence);
+
+			if (request->reportCompletion)
+			{
+				const bool completionEnqueued = m_CompletionQueue.Enqueue({ request->renderFrameIndex, timelineValue, request->frameNumber });
+				TYR_ASSERT(completionEnqueued);
+				(void)completionEnqueued;
+			}
+
+			processedAny = true;
+		}
+
+		while (Optional<RenderPresentRequest> request = m_PresentQueue.Dequeue())
+		{
+			if (request->present)
+			{
+				bool resizeNeeded = false;
+				request->swapChain->Present(request->queue, request->waitSemaphore, request->imageIndex, resizeNeeded);
+
+				if (resizeNeeded)
+				{
+					const bool notified = m_NotificationQueue.Enqueue({ request->window, true });
+					TYR_ASSERT(notified);
+					(void)notified;
+				}
+			}
+
+			// Presents are enqueued (by Renderer) in strictly increasing frame order and this
+			// queue is FIFO, so a plain monotonic store is enough - no read-modify-write needed.
+			// Stored even when present is false above (nothing to actually issue) - this frame
+			// number still needs to be recorded as "handled", or Render()'s pacing wait would
+			// stall forever waiting for a present that was never going to happen.
+			m_LastPresentedFrame.store(request->frameNumber, std::memory_order_release);
+
+			processedAny = true;
+		}
+
+		return processedAny;
 	}
 }

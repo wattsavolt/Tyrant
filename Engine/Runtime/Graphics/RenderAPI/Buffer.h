@@ -14,6 +14,8 @@ namespace tyr
 		BufferUsage usage = BUFFER_USAGE_UNKNOWN;
 		MemoryProperty memoryProperty;
 		SharingMode sharingMode = SharingMode::Exclusive;
+		// Which queue families can access this buffer - only used when sharingMode is Concurrent.
+		LocalArray<uint, CommandQueueType::CQ_COUNT> concurrentQueueFamilyIndices;
 		size_t size = 0;
 		// Stride only needed for index buffers
 		uint stride = 0;

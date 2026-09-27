@@ -8,6 +8,7 @@
 #include <intrin.h>
 #include <rpc.h>
 #include <shlobj.h>
+#include <commdlg.h>
 
 namespace tyr
 {
@@ -126,7 +127,14 @@ namespace tyr
 			return nullptr;
 		}
 		
-		HANDLE handle = CreateFile(filename, desiredAccess, 0, nullptr, creationDisposition, FILE_ATTRIBUTE_NORMAL, nullptr);
+		// Share mode 0 (exclusive - no other handle, ours or anyone else's, may touch the file
+		// at all while this one's open) is unnecessarily strict for an asset-loading pipeline:
+		// files here get written by an importer and then read back shortly after (often from a
+		// different thread), and multiple readers may legitimately want the same file open at
+		// once. Exclusive access made any transient second open - even just another reader -
+		// fail outright (CreateFile returning INVALID_HANDLE_VALUE, tripping the assert just
+		// below), rather than the sharing that's actually intended here.
+		HANDLE handle = CreateFile(filename, desiredAccess, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, creationDisposition, FILE_ATTRIBUTE_NORMAL, nullptr);
 
 		TYR_ASSERT(handle && handle != INVALID_HANDLE_VALUE);
 		
@@ -219,6 +227,21 @@ namespace tyr
 	void Platform::ShowAlertMessage(const char* msg)
 	{
 		MessageBox(NULL, msg, "Alert!", MB_OK | MB_ICONINFORMATION);
+	}
+
+	bool Platform::ShowOpenFileDialog(char* outPath, size_t maxPathSize, const char* filter, const char* title)
+	{
+		outPath[0] = '\0';
+
+		OPENFILENAMEA ofn{};
+		ofn.lStructSize = sizeof(ofn);
+		ofn.lpstrFilter = filter;
+		ofn.lpstrFile = outPath;
+		ofn.nMaxFile = (DWORD)maxPathSize;
+		ofn.lpstrTitle = title;
+		ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+
+		return GetOpenFileNameA(&ofn) != 0;
 	}
 
 	void Platform::CreateGuid(Guid& guid)

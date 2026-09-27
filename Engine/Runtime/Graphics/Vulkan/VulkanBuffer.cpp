@@ -16,8 +16,17 @@ namespace tyr
 		bufferCI.size = static_cast<VkDeviceSize>(desc.size);
 		bufferCI.usage = static_cast<VkBufferUsageFlags>(desc.usage);
 		bufferCI.sharingMode = VulkanUtility::ToVulkanSharingMode(desc.sharingMode);
-		bufferCI.queueFamilyIndexCount = 0;
-		bufferCI.pQueueFamilyIndices = nullptr;
+		if (desc.sharingMode == SharingMode::Concurrent)
+		{
+			TYR_ASSERT(desc.concurrentQueueFamilyIndices.Size() >= 2);
+			bufferCI.queueFamilyIndexCount = desc.concurrentQueueFamilyIndices.Size();
+			bufferCI.pQueueFamilyIndices = desc.concurrentQueueFamilyIndices.Data();
+		}
+		else
+		{
+			bufferCI.queueFamilyIndexCount = 0;
+			bufferCI.pQueueFamilyIndices = nullptr;
+		}
 		
 		TYR_ASSERT(device.HasMemoryType(desc.memoryProperty));
 		TYR_GASSERT(vkCreateBuffer(device.m_LogicalDevice, &bufferCI, g_VulkanAllocationCallbacks, &buffer.buffer));
@@ -111,6 +120,17 @@ namespace tyr
 		UnmapBuffer(handle);
 	}
 
+	uint64 Device::GetBufferDeviceAddress(BufferHandle handle) const
+	{
+		const DeviceInternal& device = static_cast<const DeviceInternal&>(*this);
+		const Buffer& buffer = device.GetBuffer(handle);
+
+		VkBufferDeviceAddressInfo addressInfo{};
+		addressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+		addressInfo.buffer = buffer.buffer;
+		return static_cast<uint64>(vkGetBufferDeviceAddress(device.m_LogicalDevice, &addressInfo));
+	}
+
 	BufferViewHandle Device::CreateBufferView(const BufferViewDesc& desc)
 	{
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
@@ -127,8 +147,8 @@ namespace tyr
 		bufferViewCI.offset = desc.offset;
 		bufferViewCI.range = desc.size;
 
-		// Only makes sense to create a buffer view in vulkan for buffers with uniform texel or storage texel usage. 
-		if (Utility::HasFlag(buffer.usage, VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT) || Utility::HasFlag(buffer.usage, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT))
+		// Only makes sense to create a buffer view in vulkan for buffers with uniform texel or storage texel usage.
+		if (Utility::HasFlag(buffer.usage, VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT) || Utility::HasFlag(buffer.usage, VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT))
 		{
 			TYR_GASSERT(vkCreateBufferView(device.m_LogicalDevice, &bufferViewCI, g_VulkanAllocationCallbacks, &bufferView.bufferView));
 			TYR_SET_GFX_DEBUG_NAME(device.m_LogicalDevice, desc.debugName, VK_OBJECT_TYPE_BUFFER_VIEW, reinterpret_cast<uint64>(bufferView.bufferView));
@@ -146,7 +166,7 @@ namespace tyr
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
 		BufferView& bufferView = device.GetBufferView(handle);
 		Buffer& buffer = device.GetBuffer(bufferView.buffer);
-		if (Utility::HasFlag(buffer.usage, VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT) || Utility::HasFlag(buffer.usage, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT))
+		if (Utility::HasFlag(buffer.usage, VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT) || Utility::HasFlag(buffer.usage, VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT))
 		{
 			vkDestroyBufferView(device.m_LogicalDevice, bufferView.bufferView, g_VulkanAllocationCallbacks);
 		}

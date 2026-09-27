@@ -15,6 +15,7 @@
 #include "HashMap.h"
 #include "SPSCRingBuffer.h"
 #include "MPSCRingBuffer.h"
+#include "MPMCRingBuffer.h"
 
 namespace tyr
 {

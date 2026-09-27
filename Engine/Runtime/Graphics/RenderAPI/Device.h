@@ -18,6 +18,7 @@ namespace tyr
 	class SwapChain;
 	class CommandAllocator;
 	class CommandList;
+	class CommandQueue;
 
 	struct DeviceProperties
 	{
@@ -51,6 +52,9 @@ namespace tyr
 		
 		// No virtuals as implementations determined at compile time for faster performance
 		SwapChain* CreateSwapChain(void* windowOSHandle, const SwapChainDesc& desc);
+		// Returns nullptr if this device has no queue of the requested type (a dedicated
+		// compute/transfer queue isn't guaranteed to exist).
+		CommandQueue* CreateCommandQueue(CommandQueueType queueType, uint queueIndex, const GDebugString& debugName);
 		CommandAllocator* CreateCommandAllocator(const CommandAllocatorDesc& desc);
 		CommandList* CreateCommandList(const CommandListDesc& desc);
 		BufferHandle CreateBuffer(const BufferDesc& desc);
@@ -71,8 +75,14 @@ namespace tyr
 		void DeleteComputePipeline(ComputePipelineHandle handle);
 		RayTracingPipelineHandle CreateRayTracingPipeline(const RayTracingPipelineDesc& desc);
 		void DeleteRayTracingPipeline(RayTracingPipelineHandle handle);
-		AccelerationStructureHandle CreateAccelerationStructure(const AccelerationStructureDesc& desc);	
+		AccelerationStructureHandle CreateAccelerationStructure(const AccelerationStructureDesc& desc);
 		void DeleteAccelerationStructure(AccelerationStructureHandle handle);
+		uint64 GetAccelerationStructureDeviceAddress(AccelerationStructureHandle handle) const;
+		// How large a scratch buffer BuildAccelerationStructures needs for this acceleration
+		// structure - build (initial construction) is always usable, update (fast refit) only if
+		// the structure was created with ACCELERATION_STRUCTURE_BUILD_ALLOW_UPDATE_BIT.
+		size_t GetAccelerationStructureBuildScratchSize(AccelerationStructureHandle handle) const;
+		size_t GetAccelerationStructureUpdateScratchSize(AccelerationStructureHandle handle) const;
 		DescriptorPoolHandle CreateDescriptorPool(const DescriptorPoolDesc& desc);
 		void DeleteDescriptorPool(DescriptorPoolHandle handle);
 		DescriptorSetLayoutHandle CreateDescriptorSetLayout(const DescriptorSetLayoutDesc& desc);
@@ -98,6 +108,9 @@ namespace tyr
 		void WriteBuffer(BufferHandle handle, const void* data, size_t offset, size_t size);
 		void FlushBufferAllocation(BufferHandle handle, size_t offset, size_t size);
 		void ReadBuffer(BufferHandle handle, void* data, size_t offset, size_t size);
+		// Buffer must have been created with BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT set - needed
+		// for acceleration structure geometry/instance input and shader binding table buffers.
+		uint64 GetBufferDeviceAddress(BufferHandle handle) const;
 
 		size_t GetImageAllocationSize(ImageHandle handle);
 

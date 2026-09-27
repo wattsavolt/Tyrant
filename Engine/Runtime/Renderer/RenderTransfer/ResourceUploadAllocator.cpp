@@ -6,83 +6,99 @@ namespace tyr
 	ResourceUploadAllocator::ResourceUploadAllocator(const ResourceUploadAllocatorDesc& desc)
 		: m_Desc(desc)
 	{
-		m_SemaphorePoints.Reserve(64);
-	}
+		m_ChunkCount = (uint)(desc.totalSize / c_ChunkSize);
+		TYR_ASSERT(m_ChunkCount > 0 && m_ChunkCount <= c_MaxChunks);
 
-	bool ResourceUploadAllocator::HasSpace(size_t head, size_t tail, size_t size) const
-	{
-		if (head >= tail)
+		for (uint i = 0; i < m_ChunkCount; ++i)
 		{
-			// free space is [head -> end] + [0 -> tail)
-			const size_t spaceToEnd = m_Desc.totalSize - head;
-
-			if (spaceToEnd >= size)
-				return true;
-
-			return size <= tail;
-		}
-		else
-		{
-			// free space is [head -> tail)
-			return (tail - head) >= size;
+			m_ChunkFree[i] = true;
 		}
 	}
 
 	bool ResourceUploadAllocator::Allocate(size_t size, size_t alignment, Allocation& allocation)
 	{
-		size_t alignedHead = MemoryUtil::Align(m_Head, alignment);
+		TYR_ASSERT(alignment <= c_ChunkSize);
 
-		// Case 1: no wrap
-		if (alignedHead + size <= m_Desc.totalSize)
+		const uint chunksNeeded = (uint)((size + c_ChunkSize - 1) / c_ChunkSize);
+
+		uint runStart = 0;
+		uint runLength = 0;
+		for (uint i = 0; i < m_ChunkCount; ++i)
 		{
-			if (m_Head >= m_Tail && alignedHead < m_Tail && (alignedHead + size) > m_Tail)
+			if (m_ChunkFree[i])
 			{
-				// Ensure we don't overlap tail
-				return false;
+				if (runLength == 0)
+				{
+					runStart = i;
+				}
+				++runLength;
+
+				if (runLength == chunksNeeded)
+				{
+					break;
+				}
 			}
-
-			allocation.offset = alignedHead;
-			allocation.size = size;
-			allocation.cpuPtr = static_cast<uint8*>(m_Desc.mappedBase) + alignedHead;
-
-			m_Head = alignedHead + size;
-			return true;
+			else
+			{
+				runLength = 0;
+			}
 		}
 
-		// Case 2: wrap to beginning
-		alignedHead = MemoryUtil::Align(0ull, alignment);
-
-		if (alignedHead + size > m_Tail)
+		if (runLength < chunksNeeded)
+		{
 			return false;
+		}
 
-		allocation.offset = alignedHead;
+		for (uint i = runStart; i < runStart + chunksNeeded; ++i)
+		{
+			m_ChunkFree[i] = false;
+		}
+
+		const Handle id = m_InFlightPool.Create();
+		InFlightAllocation& record = m_InFlightPool[id];
+		record.startChunk = runStart;
+		record.chunkCount = chunksNeeded;
+		record.signalled = false;
+		record.fenceValue = 0;
+
+		m_LiveIds.Add(id);
+
+		allocation.offset = (size_t)runStart * c_ChunkSize;
 		allocation.size = size;
-		allocation.cpuPtr = static_cast<uint8*>(m_Desc.mappedBase) + alignedHead;
+		allocation.cpuPtr = static_cast<uint8*>(m_Desc.mappedBase) + allocation.offset;
+		allocation.id = id;
 
-		m_Head = alignedHead + size;
 		return true;
 	}
 
-	void ResourceUploadAllocator::Signal(uint64 signalValue)
+	void ResourceUploadAllocator::Signal(Handle id, uint64 signalValue)
 	{
-		m_SemaphorePoints.Add({ m_Head, signalValue });
+		InFlightAllocation& record = m_InFlightPool[id];
+		record.signalled = true;
+		record.fenceValue = signalValue;
 	}
 
 	void ResourceUploadAllocator::Reclaim(uint64 completedValue)
 	{
-		m_SemaphoreValue = completedValue;
-
-		uint removeCount = 0;
-
-		while (removeCount < m_SemaphorePoints.Size() && m_SemaphorePoints[removeCount].semaphoreValue <= completedValue)
+		for (uint i = 0; i < m_LiveIds.Size();)
 		{
-			m_Tail = m_SemaphorePoints[removeCount].offset;
-			++removeCount;
-		}
+			const Handle id = m_LiveIds[i];
+			InFlightAllocation& record = m_InFlightPool[id];
 
-		if (removeCount > 0)
-		{
-			m_SemaphorePoints.EraseFromFront(removeCount);
+			if (record.signalled && record.fenceValue <= completedValue)
+			{
+				for (uint c = record.startChunk; c < record.startChunk + record.chunkCount; ++c)
+				{
+					m_ChunkFree[c] = true;
+				}
+
+				m_InFlightPool.Delete(id);
+				m_LiveIds.SwapAndPopBack(i);
+			}
+			else
+			{
+				++i;
+			}
 		}
 	}
 }

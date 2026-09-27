@@ -74,7 +74,13 @@ namespace tyr
 		}
 		VkClearColorValue* vkClearValue = (VkClearColorValue*)&clearValue;
 		Image imageData = commandList.m_Device.GetImage(image);
-		vkCmdClearColorImage(commandList.m_CommandBuffer, imageData.image, static_cast<VkImageLayout>(layout), vkClearValue, rangeCount, vkSubresourceRanges);
+		// A raw static_cast only happens to be correct for ImageLayout's first 9 values (they
+		// match core Vulkan 1.0's VkImageLayout by coincidence of declaration order) - anything
+		// from IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL onward is a KHR/1.2-
+		// promoted enum with a large, non-sequential real Vulkan value (see
+		// VulkanUtility::ToVulkanImageLayout, the real mapping every other call site already
+		// goes through).
+		vkCmdClearColorImage(commandList.m_CommandBuffer, imageData.image, VulkanUtility::ToVulkanImageLayout(layout), vkClearValue, rangeCount, vkSubresourceRanges);
 		StackFreeLast();
 	}
 
@@ -92,7 +98,9 @@ namespace tyr
 		}
 		VkClearDepthStencilValue* vkClearValue = (VkClearDepthStencilValue*)&clearValue;
 		Image imageData = commandList.m_Device.GetImage(image);
-		vkCmdClearDepthStencilImage(commandList.m_CommandBuffer, imageData.image, static_cast<VkImageLayout>(layout), vkClearValue, rangeCount, vkSubresourceRanges);
+		// Same reasoning as ClearColorImage's own comment just above - use the real mapping,
+		// not a raw cast.
+		vkCmdClearDepthStencilImage(commandList.m_CommandBuffer, imageData.image, VulkanUtility::ToVulkanImageLayout(layout), vkClearValue, rangeCount, vkSubresourceRanges);
 		StackFreeLast();
 	}
 
@@ -518,6 +526,20 @@ namespace tyr
 			&setData.set, 0, nullptr);
 	}
 
+	void CommandList::PushConstants(GraphicsPipelineHandle pipeline, ShaderStage stages, uint offset, uint size, const void* data)
+	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		const GraphicsPipeline& pipelineData = commandList.m_Device.GetGraphicsPipeline(pipeline);
+		vkCmdPushConstants(commandList.m_CommandBuffer, pipelineData.pipelineLayout, static_cast<VkShaderStageFlags>(stages), offset, size, data);
+	}
+
+	void CommandList::PushConstants(ComputePipelineHandle pipeline, ShaderStage stages, uint offset, uint size, const void* data)
+	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		const ComputePipeline& pipelineData = commandList.m_Device.GetComputePipeline(pipeline);
+		vkCmdPushConstants(commandList.m_CommandBuffer, pipelineData.pipelineLayout, static_cast<VkShaderStageFlags>(stages), offset, size, data);
+	}
+
 	void CommandList::DrawIndexed(uint indexCount, uint instanceCount, uint firstIndex, int vertexOffset, uint firstInstance)
 	{
 		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
@@ -541,5 +563,106 @@ namespace tyr
 	{
 		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 		vkCmdDispatch(commandList.m_CommandBuffer, groupCountX, groupCountY, groupCountZ);
+	}
+
+	namespace
+	{
+		VkIndexType ToVulkanASIndexType(IndexType type)
+		{
+			return type == IndexType::UInt16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
+		}
+	}
+
+	void CommandList::BuildAccelerationStructures(const AccelerationStructureBuildInfo* buildInfos, uint count)
+	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		DeviceInternal& device = commandList.m_Device;
+
+		StackAllocManager stack;
+		VkAccelerationStructureBuildGeometryInfoKHR* vkBuildInfos = stack.Alloc<VkAccelerationStructureBuildGeometryInfoKHR>(count);
+		VkAccelerationStructureBuildRangeInfoKHR** vkRangeInfoPtrs = stack.Alloc<VkAccelerationStructureBuildRangeInfoKHR*>(count);
+
+		for (uint i = 0; i < count; ++i)
+		{
+			const AccelerationStructureBuildInfo& buildInfo = buildInfos[i];
+			AccelerationStructure& as = device.GetAccelerationStructure(buildInfo.accelerationStructure);
+			const bool isTopLevel = as.desc.type == AccelerationStructureType::TopLevel;
+			const VkAccelerationStructureTypeKHR vkType = isTopLevel
+				? VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR
+				: VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+
+			VkAccelerationStructureGeometryKHR* vkGeometries;
+			VkAccelerationStructureBuildRangeInfoKHR* vkRanges;
+			uint geometryCount;
+
+			if (isTopLevel)
+			{
+				geometryCount = 1;
+				vkGeometries = stack.Alloc<VkAccelerationStructureGeometryKHR>(1);
+				vkRanges = stack.Alloc<VkAccelerationStructureBuildRangeInfoKHR>(1);
+
+				VkAccelerationStructureGeometryKHR& geom = vkGeometries[0];
+				geom = {};
+				geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+				geom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+				geom.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+				geom.geometry.instances.arrayOfPointers = VK_FALSE;
+				geom.geometry.instances.data.deviceAddress = device.GetBufferDeviceAddress(buildInfo.instanceBuffer) + buildInfo.instanceBufferOffset;
+
+				vkRanges[0] = {};
+				vkRanges[0].primitiveCount = buildInfo.instanceCount;
+			}
+			else
+			{
+				geometryCount = as.desc.geometries.Size();
+				vkGeometries = stack.Alloc<VkAccelerationStructureGeometryKHR>(geometryCount);
+				vkRanges = stack.Alloc<VkAccelerationStructureBuildRangeInfoKHR>(geometryCount);
+
+				for (uint g = 0; g < geometryCount; ++g)
+				{
+					const AccelerationStructureGeometryDesc& geomDesc = as.desc.geometries[g];
+					VkAccelerationStructureGeometryKHR& geom = vkGeometries[g];
+					geom = {};
+					geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+					geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+					VkAccelerationStructureGeometryTrianglesDataKHR& tri = geom.geometry.triangles;
+					tri.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+					tri.vertexFormat = VulkanUtility::ToVulkanPixelFormat(geomDesc.vertexFormat);
+					tri.vertexData.deviceAddress = device.GetBufferDeviceAddress(geomDesc.vertexBuffer) + geomDesc.vertexOffset;
+					tri.vertexStride = geomDesc.vertexStride;
+					tri.maxVertex = geomDesc.maxVertexCount > 0 ? geomDesc.maxVertexCount - 1 : 0;
+					tri.indexType = ToVulkanASIndexType(geomDesc.indexType);
+					tri.indexData.deviceAddress = device.GetBufferDeviceAddress(geomDesc.indexBuffer) + geomDesc.indexOffset;
+					geom.flags = geomDesc.isOpaque ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0;
+
+					vkRanges[g] = {};
+					vkRanges[g].primitiveCount = geomDesc.maxPrimitiveCount;
+				}
+			}
+
+			VkAccelerationStructureBuildGeometryInfoKHR& vkBuildInfo = vkBuildInfos[i];
+			vkBuildInfo = {};
+			vkBuildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+			vkBuildInfo.type = vkType;
+			vkBuildInfo.flags = static_cast<VkBuildAccelerationStructureFlagsKHR>(as.desc.buildFlags);
+			vkBuildInfo.mode = buildInfo.update ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+			vkBuildInfo.srcAccelerationStructure = buildInfo.update ? as.accelerationStructure : VK_NULL_HANDLE;
+			vkBuildInfo.dstAccelerationStructure = as.accelerationStructure;
+			vkBuildInfo.geometryCount = geometryCount;
+			vkBuildInfo.pGeometries = vkGeometries;
+			vkBuildInfo.scratchData.deviceAddress = device.GetBufferDeviceAddress(buildInfo.scratchBuffer) + buildInfo.scratchOffset;
+
+			vkRangeInfoPtrs[i] = vkRanges;
+		}
+
+		vkCmdBuildAccelerationStructuresKHR(commandList.m_CommandBuffer, count, vkBuildInfos, vkRangeInfoPtrs);
+	}
+
+	void CommandList::TraceRays(RayTracingPipelineHandle pipeline, uint width, uint height, uint depth)
+	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		const RayTracingPipeline& pipelineData = commandList.m_Device.GetRayTracingPipeline(pipeline);
+		vkCmdTraceRaysKHR(commandList.m_CommandBuffer, &pipelineData.raygenRegion, &pipelineData.missRegion,
+			&pipelineData.hitRegion, &pipelineData.callableRegion, width, height, depth);
 	}
 }

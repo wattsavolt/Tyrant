@@ -9,46 +9,8 @@ namespace tyr
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
 		const ImageHandle handle(device.m_ImagePool.Create());
 		Image& image = device.m_ImagePool[handle.h];
-		VkImageCreateInfo imageCI;
-		imageCI.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-		imageCI.pNext = nullptr;
-
-		switch (desc.type)
-		{
-		case ImageType::Image1D:
-			imageCI.imageType = VK_IMAGE_TYPE_1D;
-			break;
-		case ImageType::Image1DArray:
-		case ImageType::Image2D:
-			imageCI.imageType = VK_IMAGE_TYPE_2D;
-			break;
-		case ImageType::Cubemap:
-		case ImageType::CubemapArray:
-			imageCI.imageType = VK_IMAGE_TYPE_2D;
-			imageCI.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
-			break;
-		case ImageType::Image2DArray:
-		case ImageType::Image3D:
-			imageCI.imageType = VK_IMAGE_TYPE_3D;
-			imageCI.flags = VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
-			break;
-		}
-		
-		imageCI.format = VulkanUtility::ToVulkanPixelFormat(desc.format);
-		imageCI.extent = { desc.width, desc.height, desc.depth };
-		imageCI.mipLevels = desc.mipCount;
-		imageCI.arrayLayers = desc.arrayLayerCount;
-		imageCI.samples = static_cast<VkSampleCountFlagBits>(desc.sampleCount);
-		imageCI.tiling = VK_IMAGE_TILING_OPTIMAL;
-		imageCI.usage = static_cast<VkImageUsageFlags>(desc.usage) | (desc.mipCount > 1 ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
-		imageCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-		imageCI.queueFamilyIndexCount = 0;
-		imageCI.pQueueFamilyIndices = nullptr;
-		imageCI.initialLayout = static_cast<VkImageLayout>(desc.layout);
-
-		image.format = imageCI.format;
-		image.usage = imageCI.usage;
-	
+		image.format = VulkanUtility::ToVulkanPixelFormat(desc.format);
+		image.usage = static_cast<VkImageUsageFlags>(desc.usage) | (desc.mipCount > 1 ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
 		image.memoryProperty = static_cast<VkMemoryPropertyFlagBits>(desc.memoryProperty);
 
 		if (desc.externalImage)
@@ -59,10 +21,63 @@ namespace tyr
 		}
 		else
 		{
+			VkImageCreateInfo imageCI;
+			imageCI.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+			imageCI.pNext = nullptr;
+			// Only the Cubemap/CubemapArray and Image2DArray/Image3D cases below actually need a
+			// real flag - everything else (Image1D/Image1DArray/Image2D, the common case for an
+			// ordinary sampled texture) needs none, but flags is still a mandatory field the spec
+			// requires be a valid VkImageCreateFlagBits combination (0 counts). Left unset here,
+			// this read back as garbage stack memory instead - undefined content passed straight to
+			// vkCreateImage.
+			imageCI.flags = 0;
+
+			switch (desc.type)
+			{
+			case ImageType::Image1D:
+				imageCI.imageType = VK_IMAGE_TYPE_1D;
+				break;
+			case ImageType::Image1DArray:
+			case ImageType::Image2D:
+				imageCI.imageType = VK_IMAGE_TYPE_2D;
+				break;
+			case ImageType::Cubemap:
+			case ImageType::CubemapArray:
+				imageCI.imageType = VK_IMAGE_TYPE_2D;
+				imageCI.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+				break;
+			case ImageType::Image2DArray:
+			case ImageType::Image3D:
+				imageCI.imageType = VK_IMAGE_TYPE_3D;
+				imageCI.flags = VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
+				break;
+			}
+			imageCI.format = image.format;
+			imageCI.extent = { desc.width, desc.height, desc.depth };
+			imageCI.mipLevels = desc.mipCount;
+			imageCI.arrayLayers = desc.arrayLayerCount;
+			// SampleCount's enum values are sequential (OneBit = 0), not bit flags like Vulkan's
+			// VkSampleCountFlagBits (VK_SAMPLE_COUNT_1_BIT = 1) - a raw static_cast silently maps
+			// OneBit to 0, an invalid VkSampleCountFlagBits value, instead of 1. Every other call
+			// site already goes through this real mapping (see VulkanPipeline.cpp) - this was the
+			// one place still bypassing it.
+			imageCI.samples = VulkanUtility::ToVulkanSampleCount(desc.sampleCount);
+			imageCI.tiling = VK_IMAGE_TILING_OPTIMAL;
+			imageCI.usage = image.usage;
+			imageCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+			imageCI.queueFamilyIndexCount = 0;
+			imageCI.pQueueFamilyIndices = nullptr;
+			// VkImageCreateInfo::initialLayout may only legally be UNDEFINED or PREINITIALIZED -
+			// desc.layout (the caller's intended steady-state layout, e.g. GENERAL for a sampled
+			// texture) describes what the image should be transitioned to before first use, not
+			// what it can be created as. An actual transition barrier is still needed for that -
+			// see GpuTransferUtil::UploadToTextures' own comment on this.
+			imageCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 			TYR_GASSERT(vkCreateImage(device.m_LogicalDevice, &imageCI, g_VulkanAllocationCallbacks, &image.image));
 			image.allocation = device.AllocateMemory(image.image, image.memoryProperty);
 			image.isExternal = false;
 		}
+		
 		TYR_SET_GFX_DEBUG_NAME(device.m_LogicalDevice, desc.debugName, VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64>(image.image));
 		return handle;
 	}

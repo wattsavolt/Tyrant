@@ -1,7 +1,9 @@
 #include "AppModule.h"
+#include "Config/CommandLine.h"
 
 #if TYR_EDITOR
 #include "Editor.h"
+#include "GUI/GUIModule.h"
 #endif
 
 namespace tyr
@@ -17,21 +19,22 @@ namespace tyr
 	AppModule::AppModule()
 	{
 #if TYR_EDITOR
-		m_App = new tyr::Editor();
-#else
-		tyr::LibraryLoader loader;
-		const char* libName = TYR_TO_LITERAL(TYR_APP_LIB_NAME);
-		TYR_ASSERT(loader.Load(libName));
-		m_App = LoadApp(loader);
+		if (CommandLine::Instance().HasFlag("editor"))
+		{
+			GUIModule* guiModule;
+			TYR_GET_MODULE(GUIModule, guiModule);
+			m_App = new tyr::Editor(*guiModule);
+			return;
+		}
 #endif
+		const char* libName = TYR_TO_LITERAL(TYR_APP_LIB_NAME);
+		TYR_ASSERT(m_Loader.Load(libName));
+		m_App = LoadApp(m_Loader);
 	}
 
 	AppModule::~AppModule()
 	{
 		delete m_App;
-#if !TYR_EDITOR
-		loader.Unload();
-#endif
 	}
 
 	void AppModule::Initialize()

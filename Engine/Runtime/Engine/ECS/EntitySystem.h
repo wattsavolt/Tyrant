@@ -8,6 +8,7 @@
 namespace tyr
 {
     using Entity = uint;
+    constexpr Entity c_InvalidEntity = ~0u;
 
     constexpr uint c_ComponentMaskBitsPerWord = 64;
     constexpr uint c_ComponentMaskWordCount = (c_MaxComponentTypes + c_ComponentMaskBitsPerWord - 1) / c_ComponentMaskBitsPerWord;
@@ -186,7 +187,7 @@ namespace tyr
         uint index;
     };
 
-    class EntitySystem final
+    class TYR_ENGINE_API EntitySystem final
     {
     public:
         EntitySystem();
@@ -224,6 +225,35 @@ namespace tyr
             return column.At<T>(record.index);
         }
 
+        // Calls func(Entity, T&) once for every entity that has a T, across every archetype
+        // that includes it. No react/event system yet - this is a plain, on-demand scan,
+        // meant to be called by whatever wants the current set right now (e.g. once at
+        // startup for the handful of test entities), not something that runs every frame.
+        template<typename T, typename Func>
+        void ForEach(Func&& func)
+        {
+            const ComponentTypeID typeID = ComponentRegistry::GetComponentTypeID<T>();
+            for (auto kv : m_Archetypes)
+            {
+                Archetype* archetype = kv.second;
+                if (!archetype->key.Test(typeID))
+                {
+                    continue;
+                }
+
+                EcsColumn& column = archetype->columns[typeID];
+                for (uint row = 0; row < archetype->count; ++row)
+                {
+                    func(archetype->entities.At<Entity>(row), column.At<T>(row));
+                }
+            }
+        }
+
+        // Puts this back to a blank, no-entities state - see World::Reset(), which owns one
+        // of these and needs to clear it out along with everything else when a pooled World
+        // slot is recycled for a new level.
+        void Reset();
+
     private:
         Entity m_NextEntityID{ 0 };
 
@@ -235,7 +265,7 @@ namespace tyr
         Archetype* GetOrCreateArchetype(const ArchetypeKey& key);
         void MoveEntity(Entity e, EntityRecord& record, Archetype* newArch);
         void RemoveFromArchetype(EntityRecord& record);
-        void CopyComponents(const EntityRecord& from, Archetype* to);
+        void CopyComponents(const EntityRecord& from, Archetype* to, uint toIndex);
 
         template<typename T>
         void AddTypeToKey(ArchetypeKey& key)

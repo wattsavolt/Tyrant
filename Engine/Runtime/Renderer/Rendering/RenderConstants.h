@@ -14,6 +14,8 @@ namespace tyr
 		static constexpr size_t c_VertexBufferSize = 256 * 1024 * 1024; // 256 MB
 		static constexpr size_t c_IndexBufferSize = 128 * 1024 * 1024; // 128 MB
 		static constexpr size_t c_MeshletBufferSize = 64 * 1024 * 1024; // 64 MB
+		static constexpr size_t c_GUIVertexBufferSize = 4 * 1024 * 1024; // 4 MB
+		static constexpr size_t c_GUIIndexBufferSize = 1 * 1024 * 1024; // 1 MB
 		static constexpr uint c_MaxBuffers = 16;
 		static constexpr uint c_MaxTextures = 3000;
 		static constexpr uint c_MaxMaterials = 1000;

@@ -38,8 +38,12 @@ namespace tyr
 
 		uint GetQueueFamilyIndex(CommandQueueType type) const { return m_QueueGroups[(int)type].familyIndex; }
 
-		/// Returns a set of properties describing the physical device. 
+		/// Returns a set of properties describing the physical device.
 		const VkPhysicalDeviceProperties& GetDeviceProperties() const { return m_VulkanDeviceProperties; }
+
+		/// Shader group handle size/alignment and max recursion depth - needed to lay out a ray
+		/// tracing pipeline's shader binding table.
+		const VkPhysicalDeviceRayTracingPipelinePropertiesKHR& GetRayTracingPipelineProperties() const { return m_RayTracingPipelineProperties; }
 
 		/// Returns a set of features that the application can use to check if a specific feature is supported. 
 		const VkPhysicalDeviceFeatures& GetDeviceFeatures() const { return m_VulkanDeviceFeatures; }
@@ -88,7 +92,8 @@ namespace tyr
 
 		VkPhysicalDeviceProperties m_VulkanDeviceProperties;
 		VkPhysicalDeviceFeatures m_VulkanDeviceFeatures;
-		VkPhysicalDeviceMemoryProperties m_VulkanMemoryProperties;	
+		VkPhysicalDeviceMemoryProperties m_VulkanMemoryProperties;
+		VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_RayTracingPipelineProperties{};
 
 		VulkanQueueGroup m_QueueGroups[c_QueueGroupCount];
 

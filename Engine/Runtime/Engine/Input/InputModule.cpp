@@ -26,9 +26,13 @@ namespace tyr
 		m_InputManager->Initialize();
 	}
 
+	void InputModule::BeginFrame()
+	{
+		m_InputManager->Update();
+	}
+
 	void InputModule::Update(float deltaTime)
 	{
-		
 	}
 
 	void InputModule::Shutdown()

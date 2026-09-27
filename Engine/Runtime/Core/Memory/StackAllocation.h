@@ -3,6 +3,7 @@
 
 #include "Allocation.h"
 #include "Utility/Utility.h"
+#include <type_traits>
 
 namespace tyr
 {
@@ -332,19 +333,23 @@ namespace tyr
 		SmartStack& operator=(SmartStack&&) = delete;
 		SmartStack& operator=(SmartStack const&) = delete;
 
-		/// Frees the stack allocation. 
+		/// Frees the stack allocation. Trivially destructible types (including void, which
+		/// covers raw SmartStackAlloc() buffers) skip the destructor loop entirely and just
+		/// pop the memory - StackDelete<T> would otherwise call ~T() on memory that was
+		/// often never actually constructed, which is only safe when there's nothing for the
+		/// destructor to do. Non-trivial types are assumed properly constructed (eg. via
+		/// SmartStackNew()) and go through StackDelete<T> so their real destructors run.
 		~SmartStack()
 		{
 			if (m_Ptr != nullptr)
 			{
-				/// Count will only be greater than zero if the memory was initialized and not just allocated.
-				if (m_Count > 0)
+				if constexpr (std::is_void_v<T> || std::is_trivially_destructible_v<T>)
 				{
-					StackDelete(m_Ptr, (uint)m_Count);
+					StackFreeLast();
 				}
 				else
 				{
-					StackFreeLast();
+					StackDelete<T>(m_Ptr, (uint)m_Count);
 				}
 			}
 		}

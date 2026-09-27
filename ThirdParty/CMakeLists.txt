@@ -38,7 +38,7 @@ if (TYR_EDITOR_MODE)
 	## install fastgltf as its own redistributable package - it's only ever
 	## statically linked straight into our own build - so skip its install rules.
 	set(CMAKE_SKIP_INSTALL_RULES ON)
-	add_subdirectory(fastgltf)
+	add_subdirectory(Submodule/fastgltf)
 	set(CMAKE_SKIP_INSTALL_RULES OFF)
 
 	if(MSVC)
@@ -60,7 +60,7 @@ if (TYR_EDITOR_MODE)
 	## Same reasoning as fastgltf above - we only ever statically link zstd straight
 	## into our own build, never install it as its own redistributable package.
 	set(CMAKE_SKIP_INSTALL_RULES ON)
-	add_subdirectory(zstd/build/cmake)
+	add_subdirectory(Submodule/zstd/build/cmake)
 	set(CMAKE_SKIP_INSTALL_RULES OFF)
 
 	if(MSVC)
@@ -73,4 +73,69 @@ if (TYR_EDITOR_MODE)
 
 	set_target_properties(libzstd_static PROPERTIES FOLDER ThirdParty)
 	set_target_properties(libzstd PROPERTIES FOLDER ThirdParty)
+
+	## meshoptimizer - submodule, pinned to v1.2. Used for mesh geometry processing at
+	## import time (meshlet generation). Static lib only; we don't need its demo/gltfpack
+	## tools or its own install/export rules any more than fastgltf/zstd do above.
+	set(MESHOPT_BUILD_DEMO OFF CACHE BOOL "" FORCE)
+	set(MESHOPT_BUILD_GLTFPACK OFF CACHE BOOL "" FORCE)
+	set(MESHOPT_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+	set(MESHOPT_WERROR OFF CACHE BOOL "" FORCE)
+	set(MESHOPT_INSTALL OFF CACHE BOOL "" FORCE)
+
+	set(CMAKE_SKIP_INSTALL_RULES ON)
+	add_subdirectory(Submodule/meshoptimizer)
+	set(CMAKE_SKIP_INSTALL_RULES OFF)
+
+	if(MSVC)
+		# Vendored code - don't hold it to our own warning level.
+		target_compile_options(meshoptimizer PRIVATE /w)
+		# Same reasoning as simdjson/fastgltf/zstd above - keep this target's
+		# _ITERATOR_DEBUG_LEVEL in sync so the linker doesn't reject the mix.
+		target_compile_definitions(meshoptimizer PRIVATE _ITERATOR_DEBUG_LEVEL=0)
+	endif()
+
+	set_target_properties(meshoptimizer PROPERTIES FOLDER ThirdParty)
 endif()
+
+## Dear ImGui - submodule, pinned to v1.92.9. Editor-tool UI only, driven through the engine's
+## own GUIModule - so only built when TYR_FINAL_MODE is off, same as GUIModule.cpp's own
+## #if !TYR_FINAL gate on the C++ side. No official Vulkan/Win32 backend files are used here -
+## GUIModule renders through Tyrant's own RenderAPI instead (see Renderer/Rendering/GUIPass),
+## so only the core library itself needs building.
+if (NOT TYR_FINAL_MODE)
+	add_library(imgui STATIC
+		Submodule/imgui/imgui.cpp
+		Submodule/imgui/imgui_draw.cpp
+		Submodule/imgui/imgui_tables.cpp
+		Submodule/imgui/imgui_widgets.cpp
+	)
+
+	target_include_directories(imgui PUBLIC Submodule/imgui)
+	target_compile_features(imgui PUBLIC cxx_std_17)
+
+	if(MSVC)
+		# Vendored code - don't hold it to our own warning level.
+		target_compile_options(imgui PRIVATE /w)
+		# Same reasoning as simdjson/fastgltf/zstd/meshoptimizer above - keep this target's
+		# _ITERATOR_DEBUG_LEVEL in sync so the linker doesn't reject the mix.
+		target_compile_definitions(imgui PRIVATE _ITERATOR_DEBUG_LEVEL=0)
+	endif()
+
+	set_target_properties(imgui PROPERTIES FOLDER ThirdParty)
+endif()
+
+## Nuklear - submodule, pinned to v4.13.3. Single header, no build of its own needed - always
+## available (not gated on TYR_FINAL_MODE/TYR_EDITOR_MODE) since it's the always-on runtime GUI
+## (in-game HUD/menu), used by both an editor "play in editor" preview and the final shipped
+## game (see GUIModule.cpp).
+add_library(nuklear INTERFACE)
+target_include_directories(nuklear INTERFACE Submodule/nuklear)
+set_target_properties(nuklear PROPERTIES FOLDER ThirdParty)
+
+# An INTERFACE library with no sources gets no project of its own in Visual Studio - attaching
+# the header via target_sources isn't enough for this generator to create one either, so this
+# is purely to make nuklear.h browsable under the ThirdParty solution folder; it builds nothing
+# and nothing links against it (the nuklear target above is still what does that).
+add_custom_target(nuklear_ide SOURCES Submodule/nuklear/nuklear.h)
+set_target_properties(nuklear_ide PROPERTIES FOLDER ThirdParty)

@@ -26,6 +26,12 @@ namespace tyr
             using Decayed = std::decay_t<Lambda>;
 
             TYR_STATIC_ASSERT(sizeof(Decayed) <= c_BufferSize,"Lambda too big; exceeds max captures");
+            // Moving/destroying this Function just copies its raw bytes around (see the move
+            // constructor below) rather than calling the captured lambda's own move/destructor.
+            // That's only correct if the lambda is trivially copyable, e.g. it only captures
+            // pointers, references or plain data - never something like a String or Array that
+            // owns memory and needs real move/copy logic to run.
+            TYR_STATIC_ASSERT(std::is_trivially_copyable_v<Decayed>, "Captured lambda must be trivially copyable - capture pointers/references/POD data only");
 
             new (m_Buffer) Decayed(std::forward<Lambda>(l));
 

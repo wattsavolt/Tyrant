@@ -1,7 +1,7 @@
 #pragma once
 
 #include "RenderConstants.h"
-#include "RenderAPI/Sync.h"
+#include "RenderAPI/RenderAPITypes.h"
 
 namespace tyr
 {
@@ -12,8 +12,9 @@ namespace tyr
 
 	struct FrameContext
 	{
-		CommandAllocator* commandAllocator;
-		Array<CommandList*> commandLists;
+		// One command allocator/list group per queue type.
+		CommandAllocator* commandAllocators[CommandQueueType::CQ_COUNT] = {};
+		Array<CommandList*> commandLists[CommandQueueType::CQ_COUNT];
 	};
 
 	struct RenderContext
@@ -24,10 +25,6 @@ namespace tyr
 		CommandQueue* transferQueue = nullptr;
 		FrameContext frameContexts[RenderConstants::c_BufferedFrameCount];
 		GraphicsRect renderArea;
-		FenceHandle completionFence;
-		SemaphoreHandle completionSemaphore;
-		// Value must be greater than the initial value 0, which the semaphore was created with 
-		uint64 currentTimelineValue = 1;
 	};
 
 }

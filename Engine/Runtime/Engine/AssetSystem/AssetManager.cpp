@@ -6,9 +6,14 @@
 #include "RendererModule.h"
 #include "RenderAPI/Device.h"
 #include "Rendering/RendererAPI.h"
+#include "RenderInstance/RenderInstanceDescs.h"
 #include "RenderTransfer/UploadRequest.h"
 #include "Memory/TempAllocation.h"
+#include "Memory/StackAllocation.h"
 #include "Shaders/ShaderTypes.h"
+#include "Threading/TaskScheduler.h"
+#include "IO/BufferedFileStream.h"
+#include <zstd.h>
 
 namespace tyr
 {
@@ -24,6 +29,10 @@ namespace tyr
 
 		AssetRegistry::Instance().Load();
 		m_MaterialsAwaitingTextures.Reserve(100);
+		m_PendingMeshInstances.Reserve(100);
+		m_PendingTextureDeletes.Reserve(16);
+		m_PendingMaterialDeletes.Reserve(16);
+		m_PendingMeshDeletes.Reserve(16);
 
 		snprintf(c_DefaultMaterialPath, sizeof(c_DefaultMaterialPath), "%s/%s%s", AssetConstants::c_DefaultMaterialFolderName, AssetConstants::c_DefaultMaterialName, AssetConstants::c_MaterialFileExtension);
 		c_DefaultMaterialAssetID = AssetRegistry::Instance().GetAssetID(c_DefaultMaterialPath);
@@ -41,11 +50,29 @@ namespace tyr
 
 	void AssetManager::ProcessPendingAssets()
 	{
+		while (Optional<TextureHeaderLoadData*> ld = m_TextureHeadersLoadedQueue.Dequeue())
 		{
-			while (Optional<TexturePixelLoadData*> ld = m_TexturesLoadedQueue.Dequeue())
-			{
-				UploadTexture(ld.value());
-			}
+			CreateTexture(ld.value());
+		}
+
+		while (Optional<TexturePixelLoadData*> ld = m_TexturesLoadedQueue.Dequeue())
+		{
+			UploadTexture(ld.value());
+		}
+
+		while (Optional<MaterialLoadData*> ld = m_MaterialFilesLoadedQueue.Dequeue())
+		{
+			ResolveMaterialTextures(ld.value());
+		}
+
+		while (Optional<MeshHeaderLoadData*> ld = m_MeshHeadersLoadedQueue.Dequeue())
+		{
+			CreateMesh(ld.value());
+		}
+
+		while (Optional<MeshGeometryLoadData*> ld = m_MeshesLoadedQueue.Dequeue())
+		{
+			UploadMeshGeometry(ld.value());
 		}
 
 		for (uint i = 0; i < m_MaterialsAwaitingTextures.Size();)
@@ -74,6 +101,12 @@ namespace tyr
 				++i;
 			}
 		}
+
+		TryResolvePendingMeshInstances();
+
+		ProcessPendingTextureDeletes();
+		ProcessPendingMaterialDeletes();
+		ProcessPendingMeshDeletes();
 	}
 
 	void AssetManager::LoadTexture(AssetID assetID)
@@ -93,14 +126,17 @@ namespace tyr
 
 			TextureHeaderLoadData* ld = TempNew<TextureHeaderLoadData>();
 			ld->assetID = assetID;
-			ld->filePath = AssetRegistry::Instance().GetAssetData(assetID).filePath.CStr();
+			ld->filePath = AssetRegistry::Instance().GetAssetData(assetID).filePath;
 
-			// Do following in async task	
-			AssetUtil::LoadAsset<TextureHeader>(ld->filePath, ld->header);
-			// End create async task
-
-			// TODO: Process batch in another function and do following
-			CreateTexture(ld);
+			// TempNew above (and every other allocation in this pipeline) must stay on the
+			// main thread - TempAllocator is thread-local, so a task's worker thread would
+			// allocate/free through a *different* instance than this one. The task below
+			// only ever reads/writes into already-allocated memory, never allocates itself.
+			TaskScheduler::Instance().CreateAndEnqueueTask([this, ld]()
+			{
+				AssetUtil::LoadAsset<TextureHeader>(ld->filePath.CStr(), ld->header);
+				m_TextureHeadersLoadedQueue.Enqueue(ld);
+			});
 		}
 	}
 
@@ -110,12 +146,55 @@ namespace tyr
 		TYR_ASSERT(assetData);
 		if (assetData->refCount <= 1)
 		{
-			m_RendererAPI->DeleteTexture(TextureHandle(assetData->resourceHandle));
-			m_AssetMap.Erase(assetID);
+			assetData->refCount = 0;
+			if (assetData->loadState == AssetLoadState::Loaded)
+			{
+				DeleteTextureResources(assetID, *assetData);
+			}
+			else
+			{
+				// Still loading (pixel data not read in yet) - UploadTexture (main thread,
+				// once that finishes) reads this same AssetData and the renderer's texture
+				// pool slot, so freeing either now could race with it. Deferred until
+				// ProcessPendingTextureDeletes sees this asset reach Loaded.
+				m_PendingTextureDeletes.Add(assetID);
+			}
 		}
 		else
 		{
 			assetData->refCount--;
+		}
+	}
+
+	void AssetManager::DeleteTextureResources(AssetID assetID, AssetData& assetData)
+	{
+		m_RendererAPI->DeleteTexture(TextureHandle(assetData.resourceHandle));
+		m_AssetMap.Erase(assetID);
+	}
+
+	void AssetManager::ProcessPendingTextureDeletes()
+	{
+		for (uint i = 0; i < m_PendingTextureDeletes.Size();)
+		{
+			const AssetID assetID = m_PendingTextureDeletes[i];
+			AssetData* assetData = m_AssetMap.Find(assetID);
+			// A missing entry, or a refCount that's no longer 0, means something else (a fresh
+			// Load* call) already resolved this one way or another - nothing left to do here.
+			if (!assetData || assetData->refCount != 0)
+			{
+				m_PendingTextureDeletes.SwapAndPopBack(i);
+				continue;
+			}
+
+			if (assetData->loadState == AssetLoadState::Loaded)
+			{
+				DeleteTextureResources(assetID, *assetData);
+				m_PendingTextureDeletes.SwapAndPopBack(i);
+			}
+			else
+			{
+				++i;
+			}
 		}
 	}
 
@@ -124,52 +203,55 @@ namespace tyr
 		TextureDesc desc;
 #if !TYR_FINAL
 		char fileName[TYR_MAX_FILENAME_TOTAL_SIZE];
-		PathUtil::GetFileNameWithoutExtension(ld->filePath, fileName);
+		PathUtil::GetFileNameWithoutExtension(ld->filePath.CStr(), fileName);
 		desc.debugName = fileName;
 #endif
 		desc.info = ld->header.info;
-		desc.info.arrayLayerCount = 0;
 		// Settings for sampled textures. Different values needed for render targets
 		desc.sampleCount = SampleCount::OneBit;
 		desc.usage = static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_TRANSFER_DST_BIT);
 		desc.layout = ImageLayout::IMAGE_LAYOUT_GENERAL;
 
 		AssetData& assetData = m_AssetMap[ld->assetID];
-		assetData.resourceHandle = m_RendererAPI->CreateTexture(desc).h;
+		const TextureHandle textureHandle = m_RendererAPI->CreateTexture(desc);
+		assetData.resourceHandle = textureHandle.h;
 
 		TexturePixelLoadData* pixelLD = TempNew<TexturePixelLoadData>();
 		pixelLD->assetID = ld->assetID;
+		pixelLD->texture = textureHandle;
+		pixelLD->filePath = ld->filePath;
 
-		pixelLD->allocation.data = TempAlloc(ld->header.dataSize);
-		pixelLD->allocation.size = ld->header.dataSize;
-
-		// TODO: Create async task for following 
-		const size_t bytesRead = FileStream::ReadLastBytes(ld->filePath, pixelLD->allocation.data, ld->header.dataSize);
-		TYR_ASSERT(bytesRead >= ld->header.dataSize);
-		// End create async task
+		// TODO: Retry if allocation is unsuccessful
+		const bool allocSuccess = m_RendererAPI->RequestResourceUploadAllocation(ld->header.dataSize, pixelLD->allocation);
+		TYR_ASSERT(allocSuccess);
 
 		TempDelete<TextureHeaderLoadData>(ld);
-		m_TexturesLoadedQueue.Enqueue(pixelLD);
+
+		// Reads straight into the already-reserved upload allocation - no separate CPU-side
+		// buffer or memcpy needed, since a texture's raw pixel bytes need no processing
+		// before upload.
+		TaskScheduler::Instance().CreateAndEnqueueTask([this, pixelLD]()
+		{
+			char absFilePath[TYR_MAX_PATH_TOTAL_SIZE];
+			AssetUtil::CreateFullPath(absFilePath, pixelLD->filePath.CStr());
+			const size_t bytesRead = FileStream::ReadLastBytes(absFilePath, pixelLD->allocation.cpuPtr, pixelLD->allocation.size);
+			TYR_ASSERT(bytesRead >= pixelLD->allocation.size);
+			m_TexturesLoadedQueue.Enqueue(pixelLD);
+		});
 	}
 
 	void AssetManager::UploadTexture(TexturePixelLoadData* ld)
 	{
-		UploadBufferAllocation uploadAlloc;
-		// TODO: Retry if upload is unsuccessful
-		const bool allocSuccess = m_RendererAPI->RequestResourceUploadAllocation(ld->allocation.size, uploadAlloc);
-		TYR_ASSERT(allocSuccess);
-
-		memcpy(static_cast<uint8*>(uploadAlloc.cpuPtr) + uploadAlloc.offset, ld->allocation.data, ld->allocation.size);
-
-		m_RendererAPI->FlushBufferUploadAllocation(uploadAlloc);
+		m_RendererAPI->FlushBufferUploadAllocation(ld->allocation);
 
 		const TextureInfo& textureInfo = m_RendererAPI->GetTextureInfo(ld->texture);
 		TextureUploadRequest request{};
-		request.srcBuffer = uploadAlloc.buffer;
-		request.srcOffset = uploadAlloc.offset;
+		request.srcBuffer = ld->allocation.buffer;
+		request.srcOffset = ld->allocation.offset;
 		request.dstTexture = ld->texture;
 		request.highestMip = 0;
 		request.mipCount = textureInfo.mipCount;
+		request.resourceId = ld->allocation.resourceId;
 		m_RendererAPI->AddTextureUploadRequest(request);
 
 		AssetData& assetData = m_AssetMap[ld->assetID];
@@ -178,7 +260,6 @@ namespace tyr
 		TempDelete<TexturePixelLoadData>(ld);
 	}
 
-	// TODO: Add async tasks later and use placeholder material while waiting for material to load
 	void AssetManager::LoadMaterial(AssetID assetID)
 	{
 		if (AssetData* assetData = m_AssetMap.Find(assetID))
@@ -196,8 +277,11 @@ namespace tyr
 			ld->assetID = assetID;
 
 			const RegAssetData& regAssetData = registry.GetAssetData(assetID);
-			ld->filePath = regAssetData.filePath.CStr();
-			
+			ld->filePath = regAssetData.filePath;
+
+			// The registry already knows a material's texture dependencies from import time,
+			// so these can start loading in parallel with the material file itself below,
+			// rather than waiting on the file load to find out what to depend on.
 			uint depCount;
 			const AssetID* dependencies = registry.GetAssetDependencies(assetID, depCount);
 			for (uint i = 0; i < depCount; ++i)
@@ -205,18 +289,11 @@ namespace tyr
 				LoadTexture(dependencies[i]);
 			}
 
-			// TODO: Do this in async task in a batch
-			AssetUtil::LoadAsset<MaterialAssetFile>(ld->filePath, ld->file);
-			for (AssetID id : ld->file.textures)
+			TaskScheduler::Instance().CreateAndEnqueueTask([this, ld]()
 			{
-				const RegAssetData& assetData = registry.GetAssetData(id);
-				ld->remainingDependencies.Add(id);
-			}
-			// End async task
-
-
-			// TODO: Process batch in another function and do following
-			m_MaterialsAwaitingTextures.Add(ld);
+				AssetUtil::LoadAsset<MaterialAssetFile>(ld->filePath.CStr(), ld->file);
+				m_MaterialFilesLoadedQueue.Enqueue(ld);
+			});
 		}
 	}
 
@@ -226,18 +303,80 @@ namespace tyr
 		TYR_ASSERT(assetData);
 		if (assetData->refCount <= 1)
 		{
-			uint depCount;
-			const AssetID* dependencies = AssetRegistry::Instance().GetAssetDependencies(assetID, depCount);
-			for (uint i = 0; i < depCount; ++i)
+			assetData->refCount = 0;
+			if (assetData->loadState == AssetLoadState::Loaded)
 			{
-				DeleteTexture(dependencies[i]);
+				DeleteMaterialResources(assetID, *assetData);
 			}
-			m_RendererAPI->DeleteMaterial(MaterialHandle(assetData->resourceHandle));
-			m_AssetMap.Erase(assetID);
+			else
+			{
+				// Still loading (file parse/texture-dependency resolution in flight) -
+				// CreateMaterial (main thread, once that finishes) reads each texture
+				// dependency's AssetData and this material's own renderer resource doesn't
+				// exist yet (resourceHandle is only set once CreateMaterial actually runs), so
+				// tearing down now - including the texture-dependency deletes below, which
+				// DeleteMaterialResources runs only once this is confirmed safe - could race
+				// with or outright corrupt that. Deferred until ProcessPendingMaterialDeletes
+				// sees this asset reach Loaded.
+				m_PendingMaterialDeletes.Add(assetID);
+			}
 		}
 		else
 		{
 			assetData->refCount--;
+		}
+	}
+
+	void AssetManager::DeleteMaterialResources(AssetID assetID, AssetData& assetData)
+	{
+		uint depCount;
+		const AssetID* dependencies = AssetRegistry::Instance().GetAssetDependencies(assetID, depCount);
+		for (uint i = 0; i < depCount; ++i)
+		{
+			DeleteTexture(dependencies[i]);
+		}
+		m_RendererAPI->DeleteMaterial(MaterialHandle(assetData.resourceHandle));
+		m_AssetMap.Erase(assetID);
+	}
+
+	void AssetManager::ProcessPendingMaterialDeletes()
+	{
+		for (uint i = 0; i < m_PendingMaterialDeletes.Size();)
+		{
+			const AssetID assetID = m_PendingMaterialDeletes[i];
+			AssetData* assetData = m_AssetMap.Find(assetID);
+			if (!assetData || assetData->refCount != 0)
+			{
+				m_PendingMaterialDeletes.SwapAndPopBack(i);
+				continue;
+			}
+
+			if (assetData->loadState == AssetLoadState::Loaded)
+			{
+				DeleteMaterialResources(assetID, *assetData);
+				m_PendingMaterialDeletes.SwapAndPopBack(i);
+			}
+			else
+			{
+				++i;
+			}
+		}
+	}
+
+	void AssetManager::ResolveMaterialTextures(MaterialLoadData* ld)
+	{
+		for (AssetID id : ld->file.textures)
+		{
+			ld->remainingDependencies.Add(id);
+		}
+
+		if (ld->remainingDependencies.IsEmpty())
+		{
+			CreateMaterial(ld);
+		}
+		else
+		{
+			m_MaterialsAwaitingTextures.Add(ld);
 		}
 	}
 
@@ -251,7 +390,7 @@ namespace tyr
 		{
 			desc.textures.Add(m_AssetMap[id].resourceHandle);
 		}
-		
+
 		TempDelete<MaterialLoadData>(ld);
 
 		asset.loadState = AssetLoadState::Loaded;
@@ -275,20 +414,30 @@ namespace tyr
 			ld->assetID = assetID;
 
 			const RegAssetData& regAssetData = registry.GetAssetData(assetID);
-			ld->filePath = regAssetData.filePath.CStr();
+			ld->filePath = regAssetData.filePath;
 
+			// Pool create/destroy has to stay on the thread that owns the pool (main) - only
+			// reading/writing the header's already-allocated slot is safe from the task below.
 			ld->header = m_MeshHeaderPool.Create();
 
-			MeshHeader& header = m_MeshHeaderPool[ld->header];
+			TaskScheduler::Instance().CreateAndEnqueueTask([this, ld]()
+			{
+				char absFilePath[TYR_MAX_PATH_TOTAL_SIZE];
+				AssetUtil::CreateFullPath(absFilePath, ld->filePath.CStr());
 
-			// TODO: Do this in async task in a batch
-			AssetUtil::LoadAsset<MeshHeader>(ld->filePath, header);
-			// End async task
+				constexpr size_t c_StreamBufferSize = 65536;
+				SmartStack<uint8> streamBufferStack = SmartStackAlloc<uint8>((uint)c_StreamBufferSize);
+				BufferedFileStream stream(streamBufferStack, c_StreamBufferSize, absFilePath, BinaryStream::Operation::Read);
 
-			// Note: The default material is not loaded in here as it may be overridden by the entity's material component
+				MeshHeader& header = m_MeshHeaderPool[ld->header];
+				Deserialize<MeshHeader>(stream, header);
+				// Exact on-disk header size, from the stream's position right after reading
+				// it - lets CreateMesh compute each chunk's absolute file offset below
+				// without the file needing to store them (see MeshChunkHeader's comment).
+				ld->headerByteSize = stream.GetOffset();
 
-			// TODO: Process batch in another function and do following
-			CreateMesh(ld);
+				m_MeshHeadersLoadedQueue.Enqueue(ld);
+			});
 		}
 	}
 
@@ -298,8 +447,20 @@ namespace tyr
 		TYR_ASSERT(assetData);
 		if (assetData->refCount <= 1)
 		{
-			m_RendererAPI->DeleteMesh(MeshHandle(assetData->resourceHandle));
-			m_AssetMap.Erase(assetID);
+			assetData->refCount = 0;
+			if (assetData->loadState == AssetLoadState::Loaded)
+			{
+				DeleteMeshResources(assetID, *assetData);
+			}
+			else
+			{
+				// Still loading (header and/or LOD geometry not finished yet - meshHeader isn't
+				// even set until CreateMesh runs) - UploadMeshGeometry/CreateMesh (main thread,
+				// as each stage finishes) read/write this same AssetData, and freeing the header
+				// pool slot now would leave them working with a deleted (or since-reused) slot.
+				// Deferred until ProcessPendingMeshDeletes sees this asset reach Loaded.
+				m_PendingMeshDeletes.Add(assetID);
+			}
 		}
 		else
 		{
@@ -307,27 +468,322 @@ namespace tyr
 		}
 	}
 
+	void AssetManager::DeleteMeshResources(AssetID assetID, AssetData& assetData)
+	{
+		m_RendererAPI->DeleteMesh(MeshHandle(assetData.resourceHandle));
+		m_MeshHeaderPool.Delete(assetData.meshHeader);
+		m_AssetMap.Erase(assetID);
+	}
+
+	void AssetManager::ProcessPendingMeshDeletes()
+	{
+		for (uint i = 0; i < m_PendingMeshDeletes.Size();)
+		{
+			const AssetID assetID = m_PendingMeshDeletes[i];
+			AssetData* assetData = m_AssetMap.Find(assetID);
+			if (!assetData || assetData->refCount != 0)
+			{
+				m_PendingMeshDeletes.SwapAndPopBack(i);
+				continue;
+			}
+
+			if (assetData->loadState == AssetLoadState::Loaded)
+			{
+				DeleteMeshResources(assetID, *assetData);
+				m_PendingMeshDeletes.SwapAndPopBack(i);
+			}
+			else
+			{
+				++i;
+			}
+		}
+	}
+
 	void AssetManager::CreateMesh(MeshHeaderLoadData* ld)
 	{
-		AssetData& assetData = m_AssetMap[ld->assetID];
+		MeshHeader& header = m_MeshHeaderPool[ld->header];
 
 		MeshDesc desc;
+		desc.sphere = header.sphere;
+		desc.aabbMin = header.aabbMin;
+		desc.aabbMax = header.aabbMax;
+		desc.lodCount = header.lods.Size();
 
-		assetData.resourceHandle = m_RendererAPI->CreateMesh(desc).h;
+		AssetData& assetData = m_AssetMap[ld->assetID];
+		const MeshHandle meshHandle = m_RendererAPI->CreateMesh(desc);
+		assetData.resourceHandle = meshHandle.h;
+		// Marks the header available to other code - see AssetData::meshHeader's comment.
+		// Geometry loading below doesn't need to wait on anything else, but
+		// TryResolvePendingMeshInstances does wait on this being set.
+		assetData.meshHeader = ld->header;
+		assetData.pendingLodCount = header.lods.Size();
 
-		MeshGeometryLoadData* geoLD = TempNew<MeshGeometryLoadData>();
-		geoLD->assetID = ld->assetID;
+		// Running byte offset into the file, starting right after the header - advances by
+		// each chunk's compressed size as we walk them in the order they were written
+		// (chunks sit back-to-back with no gaps, see MeshChunkHeader's comment).
+		size_t fileOffset = ld->headerByteSize;
 
-		// TODO: Get the resource buffer upload allocations for transfers to the LOD buffer, meshlet buffer, indices and vertices buffer
-		// and get the GPU allocations for these buffers as well. 
+		for (uint chunkIndex = 0; chunkIndex < header.chunks.Size(); ++chunkIndex)
+		{
+			const MeshChunkHeader& chunkHeader = header.chunks[chunkIndex];
 
-		// TODO: Create async task for loading data from file. Don't decompress directly to upload buffer memory as slower to write to than RAM. Use stack allocator
-		// for allocations for compressed and decompressed data as will be temporary before writing to the upload buffer.
-		
-		// End async task
+			// One chunk per LOD currently - find which LOD this one belongs to.
+			uint lodIndex = 0;
+			for (; lodIndex < header.lods.Size(); ++lodIndex)
+			{
+				if (header.lods[lodIndex].chunkOffset == chunkIndex)
+				{
+					break;
+				}
+			}
+
+			MeshGeometryLoadData* geoLD = TempNew<MeshGeometryLoadData>();
+			geoLD->assetID = ld->assetID;
+			geoLD->mesh = meshHandle;
+			geoLD->filePath = ld->filePath;
+			geoLD->lodIndex = lodIndex;
+			geoLD->fileOffset = fileOffset;
+			geoLD->compressedBlobSize = chunkHeader.compressedBlobSize;
+			geoLD->decompressedBlobSize = chunkHeader.decompressedBlobSize;
+			geoLD->meshletsOffset = chunkHeader.meshletsOffset;
+			geoLD->verticesOffset = chunkHeader.verticesOffset;
+			geoLD->indicesOffset = chunkHeader.indicesOffset;
+			geoLD->decompressedMeshletsSize = chunkHeader.decompressedMeshletsSize;
+			geoLD->decompressedVerticesSize = chunkHeader.decompressedVerticesSize;
+			geoLD->decompressedIndicesSize = chunkHeader.decompressedIndicesSize;
+
+			const uint meshletCount = chunkHeader.decompressedMeshletsSize / (uint)sizeof(MeshChunkMeshlet);
+
+			// TODO: Retry if any allocation below is unsuccessful
+			bool allocSuccess = m_RendererAPI->RequestResourceUploadAllocation(chunkHeader.decompressedVerticesSize, geoLD->verticesUpload);
+			TYR_ASSERT(allocSuccess);
+			allocSuccess = m_RendererAPI->RequestResourceUploadAllocation(chunkHeader.decompressedIndicesSize, geoLD->indicesUpload);
+			TYR_ASSERT(allocSuccess);
+			allocSuccess = m_RendererAPI->RequestResourceUploadAllocation(chunkHeader.decompressedMeshletsSize, geoLD->meshletsUpload);
+			TYR_ASSERT(allocSuccess);
+
+			allocSuccess = m_RendererAPI->RequestVertexBufferAllocation(meshHandle, lodIndex, chunkHeader.decompressedVerticesSize, geoLD->verticesGpuAlloc);
+			TYR_ASSERT(allocSuccess);
+			allocSuccess = m_RendererAPI->RequestIndexBufferAllocation(meshHandle, lodIndex, chunkHeader.decompressedIndicesSize, geoLD->indicesGpuAlloc);
+			TYR_ASSERT(allocSuccess);
+			allocSuccess = m_RendererAPI->RequestMeshletBufferAllocation(meshHandle, lodIndex, meshletCount * (uint)sizeof(ShaderMeshlet), geoLD->meshletsGpuAlloc);
+			TYR_ASSERT(allocSuccess);
+
+			// The LOD descriptor doesn't need to wait on the async geometry load below - it
+			// only needs the allocation offsets just requested above, already known here.
+			GpuBufferAllocation meshLODGpuAlloc;
+			allocSuccess = m_RendererAPI->RequestMeshLODBufferAllocation(meshHandle, lodIndex, meshLODGpuAlloc);
+			TYR_ASSERT(allocSuccess);
+
+			UploadBufferAllocation meshLODUpload;
+			allocSuccess = m_RendererAPI->RequestResourceUploadAllocation(sizeof(ShaderMeshLOD), meshLODUpload);
+			TYR_ASSERT(allocSuccess);
+
+			ShaderMeshLOD* shaderMeshLOD = reinterpret_cast<ShaderMeshLOD*>(meshLODUpload.cpuPtr);
+			// GpuBufferAllocation offsets are in bytes (shared buffers, byte-granular
+			// allocators); ShaderMeshLOD's offsets are element indices, as read by shaders.
+			shaderMeshLOD->vertexOffset = (uint)(geoLD->verticesGpuAlloc.offset / sizeof(ShaderVertex));
+			shaderMeshLOD->indexOffset = (uint)(geoLD->indicesGpuAlloc.offset / sizeof(uint));
+			shaderMeshLOD->meshletOffset = (uint)(geoLD->meshletsGpuAlloc.offset / sizeof(ShaderMeshlet));
+			shaderMeshLOD->meshletCount = meshletCount;
+
+			m_RendererAPI->FlushBufferUploadAllocation(meshLODUpload);
+
+			BufferUploadRequest meshLODRequest{};
+			meshLODRequest.srcBuffer = meshLODUpload.buffer;
+			meshLODRequest.srcOffset = meshLODUpload.offset;
+			meshLODRequest.dstBuffer = meshLODGpuAlloc.buffer;
+			meshLODRequest.dstOffset = meshLODGpuAlloc.offset;
+			meshLODRequest.size = sizeof(ShaderMeshLOD);
+			meshLODRequest.resourceId = meshLODUpload.resourceId;
+			m_RendererAPI->AddBufferUploadRequest(meshLODRequest);
+
+			fileOffset += chunkHeader.compressedBlobSize;
+
+			// Reads this chunk's compressed bytes, decompresses them (all CPU work, off the
+			// main thread), and copies each region straight into its already-reserved upload
+			// allocation - meshlets included, since MeshChunkMeshlet is byte-identical to
+			// ShaderMeshlet (see its own comment), needing no further transform before upload.
+			TaskScheduler::Instance().CreateAndEnqueueTask([this, geoLD]()
+			{
+				char absFilePath[TYR_MAX_PATH_TOTAL_SIZE];
+				AssetUtil::CreateFullPath(absFilePath, geoLD->filePath.CStr());
+
+				SmartStack<uint8> compressedStack = SmartStackAlloc<uint8>(geoLD->compressedBlobSize);
+				uint8* compressed = compressedStack;
+				{
+					FileStream fileStream(absFilePath);
+					fileStream.Seek(geoLD->fileOffset);
+					fileStream.Read(compressed, geoLD->compressedBlobSize);
+				}
+
+				SmartStack<uint8> decompressedStack = SmartStackAlloc<uint8>(geoLD->decompressedBlobSize);
+				uint8* decompressed = decompressedStack;
+				const size_t decompressedSize = ZSTD_decompress(decompressed, geoLD->decompressedBlobSize, compressed, geoLD->compressedBlobSize);
+				TYR_ASSERT(!ZSTD_isError(decompressedSize) && decompressedSize == geoLD->decompressedBlobSize);
+
+				memcpy(geoLD->verticesUpload.cpuPtr, decompressed + geoLD->verticesOffset, geoLD->decompressedVerticesSize);
+				memcpy(geoLD->indicesUpload.cpuPtr, decompressed + geoLD->indicesOffset, geoLD->decompressedIndicesSize);
+				memcpy(geoLD->meshletsUpload.cpuPtr, decompressed + geoLD->meshletsOffset, geoLD->decompressedMeshletsSize);
+
+				m_MeshesLoadedQueue.Enqueue(geoLD);
+			});
+		}
 
 		TempDelete<MeshHeaderLoadData>(ld);
-		m_MeshesLoadedQueue.Enqueue(geoLD);
+	}
+
+	void AssetManager::UploadMeshGeometry(MeshGeometryLoadData* ld)
+	{
+		// No CPU-side transform needed - MeshChunkMeshlet is byte-identical to ShaderMeshlet
+		// (materialSlot baked in at import time, see MeshChunkMeshlet's own comment), so the
+		// task already decompressed straight into ld->meshletsUpload in its final, GPU-ready
+		// form, same as vertices/indices.
+		const uint meshletCount = ld->decompressedMeshletsSize / (uint)sizeof(ShaderMeshlet);
+
+		m_RendererAPI->FlushBufferUploadAllocation(ld->verticesUpload);
+		m_RendererAPI->FlushBufferUploadAllocation(ld->indicesUpload);
+		m_RendererAPI->FlushBufferUploadAllocation(ld->meshletsUpload);
+
+		BufferUploadRequest verticesRequest{};
+		verticesRequest.srcBuffer = ld->verticesUpload.buffer;
+		verticesRequest.srcOffset = ld->verticesUpload.offset;
+		verticesRequest.dstBuffer = ld->verticesGpuAlloc.buffer;
+		verticesRequest.dstOffset = ld->verticesGpuAlloc.offset;
+		verticesRequest.size = ld->decompressedVerticesSize;
+		verticesRequest.resourceId = ld->verticesUpload.resourceId;
+		m_RendererAPI->AddBufferUploadRequest(verticesRequest);
+
+		BufferUploadRequest indicesRequest{};
+		indicesRequest.srcBuffer = ld->indicesUpload.buffer;
+		indicesRequest.srcOffset = ld->indicesUpload.offset;
+		indicesRequest.dstBuffer = ld->indicesGpuAlloc.buffer;
+		indicesRequest.dstOffset = ld->indicesGpuAlloc.offset;
+		indicesRequest.size = ld->decompressedIndicesSize;
+		indicesRequest.resourceId = ld->indicesUpload.resourceId;
+		m_RendererAPI->AddBufferUploadRequest(indicesRequest);
+
+		BufferUploadRequest meshletsRequest{};
+		meshletsRequest.srcBuffer = ld->meshletsUpload.buffer;
+		meshletsRequest.srcOffset = ld->meshletsUpload.offset;
+		meshletsRequest.dstBuffer = ld->meshletsGpuAlloc.buffer;
+		meshletsRequest.dstOffset = ld->meshletsGpuAlloc.offset;
+		meshletsRequest.size = meshletCount * (uint)sizeof(ShaderMeshlet);
+		meshletsRequest.resourceId = ld->meshletsUpload.resourceId;
+		m_RendererAPI->AddBufferUploadRequest(meshletsRequest);
+
+		// All LODs currently start loading together (see CreateMesh), so this just needs to
+		// count down as each one finishes - the mesh is Loaded once every LOD is in.
+		AssetData& assetData = m_AssetMap[ld->assetID];
+		TYR_ASSERT(assetData.pendingLodCount > 0);
+		if (--assetData.pendingLodCount == 0)
+		{
+			assetData.loadState = AssetLoadState::Loaded;
+		}
+
+		TempDelete<MeshGeometryLoadData>(ld);
+	}
+
+	void AssetManager::CreateMeshInstance(AssetID meshAssetID, const Matrix4& transform, const LocalArray<MaterialOverride, MeshConstants::c_MaxSubmeshes>& overrides, Function<void(MeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated)
+	{
+		LoadMesh(meshAssetID);
+
+		MeshInstanceCreateData* instData = TempNew<MeshInstanceCreateData>();
+		instData->meshAssetID = meshAssetID;
+		instData->transform = transform;
+		instData->overrides = overrides;
+		instData->onCreated = std::move(onCreated);
+		m_PendingMeshInstances.Add(instData);
+	}
+
+	AssetID AssetManager::GetEffectiveMaterialForSlot(const MeshHeader& header, const MeshInstanceCreateData& instData, uint slot) const
+	{
+		for (const MaterialOverride& override : instData.overrides)
+		{
+			if (override.submeshSlot == slot)
+			{
+				return override.material;
+			}
+		}
+		return header.materials[slot];
+	}
+
+	void AssetManager::TryResolvePendingMeshInstances()
+	{
+		for (uint i = 0; i < m_PendingMeshInstances.Size();)
+		{
+			MeshInstanceCreateData* instData = m_PendingMeshInstances[i];
+			const AssetData& meshAssetData = m_AssetMap[instData->meshAssetID];
+
+			bool ready = false;
+
+			// The header has to be available before anything else here can happen - it's
+			// what says how many submesh slots there are and what their defaults are.
+			if ((bool)meshAssetData.meshHeader)
+			{
+				const MeshHeader& header = m_MeshHeaderPool[meshAssetData.meshHeader];
+				TYR_ASSERT(header.materials.Size() <= MeshConstants::c_MaxSubmeshes);
+
+				if (!instData->materialsRequested)
+				{
+					// Every slot needs *something* loaded - either its override or the
+					// mesh's own default for that slot. Only safe to work out now that the
+					// header (and so the default list) is actually available.
+					for (uint slot = 0; slot < header.materials.Size(); ++slot)
+					{
+						LoadMaterial(GetEffectiveMaterialForSlot(header, *instData, slot));
+					}
+					instData->materialsRequested = true;
+				}
+
+				ready = true;
+				for (uint slot = 0; slot < header.materials.Size(); ++slot)
+				{
+					const AssetID materialID = GetEffectiveMaterialForSlot(header, *instData, slot);
+					if (m_AssetMap[materialID].loadState != AssetLoadState::Loaded)
+					{
+						ready = false;
+						break;
+					}
+				}
+			}
+
+			if (ready)
+			{
+				CreateResolvedMeshInstance(instData);
+				m_PendingMeshInstances.SwapAndPopBack(i);
+			}
+			else
+			{
+				++i;
+			}
+		}
+	}
+
+	void AssetManager::CreateResolvedMeshInstance(MeshInstanceCreateData* instData)
+	{
+		const AssetData& meshAssetData = m_AssetMap[instData->meshAssetID];
+		const MeshHeader& header = m_MeshHeaderPool[meshAssetData.meshHeader];
+
+		MeshInstanceDesc desc;
+		desc.info.transform = instData->transform;
+		desc.info.mesh = MeshHandle(meshAssetData.resourceHandle);
+		desc.info.materials.Resize(header.materials.Size());
+		LocalArray<AssetID, MeshConstants::c_MaxSubmeshes> materialAssetIDs;
+		for (uint slot = 0; slot < header.materials.Size(); ++slot)
+		{
+			const AssetID materialID = GetEffectiveMaterialForSlot(header, *instData, slot);
+			desc.info.materials[slot] = MaterialHandle(m_AssetMap[materialID].resourceHandle);
+			materialAssetIDs.Add(materialID);
+		}
+
+		const MeshInstanceHandle handle = m_RendererAPI->CreateMeshInstance(desc);
+		if (instData->onCreated)
+		{
+			instData->onCreated(handle, materialAssetIDs);
+		}
+
+		TempDelete<MeshInstanceCreateData>(instData);
 	}
 
 	void AssetManager::LoadLocation(AssetID assetID)
@@ -338,6 +794,6 @@ namespace tyr
 		/*for (AssetID id : location.textures)
 		{
 
-		}*/ 
+		}*/
 	}
 }

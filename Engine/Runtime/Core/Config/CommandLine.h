@@ -6,7 +6,9 @@
 
 namespace tyr
 {
-	// Loads and stores config data from a .ini file
+	// Parses and stores process command line arguments (e.g. "-editor", "-level Level01").
+	// A "-key value" pair stores value under key; a bare "-key" (no following value, or the
+	// next token is itself a key) stores an empty value - see HasFlag for querying those.
 	class TYR_CORE_API CommandLine final
 	{
 	public:
@@ -15,7 +17,16 @@ namespace tyr
 
 		static constexpr uint8 c_MaxEntries = 50;
 
-		CommandLine(const char* filePath);
+		// Constructs the single instance - call once, from main/WinMain, before Instance() is
+		// used anywhere else.
+		static void Create(int argc, const char* const* argv);
+
+		static CommandLine& Instance();
+
+		// True if "name" was passed at all (with or without a value) - the safe way to check
+		// an optional switch like "-editor", unlike GetValue/GetValueAsInt/GetValueAsBool
+		// below, which assert if "name" wasn't passed.
+		bool HasFlag(const char* name) const;
 
 		const Value& GetValue(const char* name) const;
 
@@ -29,6 +40,8 @@ namespace tyr
 		}
 
 	private:
+		CommandLine(int argc, const char* const* argv);
+
 		HashMap<Key, Value> m_Map;
 	};
 }

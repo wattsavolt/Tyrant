@@ -23,7 +23,7 @@ namespace tyr
             const uint writeIndex = m_WriteIndex.load(std::memory_order_relaxed);
             const uint next = (writeIndex + 1) & c_Mask;
 
-            if (next == m_ReadIndex)
+            if (next == m_ReadIndex.load(std::memory_order_acquire))
             {
                 // Buffer full
                 return false;
@@ -40,14 +40,15 @@ namespace tyr
         Optional<T> Dequeue()
         {
             const uint writeIndex = m_WriteIndex.load(std::memory_order_acquire);
+            const uint readIndex = m_ReadIndex.load(std::memory_order_relaxed);
 
-            if (m_ReadIndex == writeIndex)
+            if (readIndex == writeIndex)
             {
                 return std::nullopt;
             }
 
-            T value = m_Slots[m_ReadIndex];
-            m_ReadIndex = (m_ReadIndex + 1) & c_Mask;
+            T value = m_Slots[readIndex];
+            m_ReadIndex.store((readIndex + 1) & c_Mask, std::memory_order_release);
 
             return value;
         }
@@ -55,30 +56,32 @@ namespace tyr
         Optional<T> ReadOnly() const
         {
             const uint writeIndex = m_WriteIndex.load(std::memory_order_acquire);
+            const uint readIndex = m_ReadIndex.load(std::memory_order_relaxed);
 
-            if (m_ReadIndex == writeIndex)
+            if (readIndex == writeIndex)
             {
                 return std::nullopt;
             }
 
-            return m_Slots[m_ReadIndex];
+            return m_Slots[readIndex];
         }
 
         void Pop()
         {
-            TYR_ASSERT(m_ReadIndex != m_WriteIndex.load(std::memory_order_acquire));
-            m_ReadIndex = (m_ReadIndex + 1) & c_Mask;
+            const uint readIndex = m_ReadIndex.load(std::memory_order_relaxed);
+            TYR_ASSERT(readIndex != m_WriteIndex.load(std::memory_order_acquire));
+            m_ReadIndex.store((readIndex + 1) & c_Mask, std::memory_order_release);
         }
 
         bool IsEmpty() const
         {
-            return m_ReadIndex == m_WriteIndex.load(std::memory_order_acquire);
+            return m_ReadIndex.load(std::memory_order_acquire) == m_WriteIndex.load(std::memory_order_acquire);
         }
 
         bool IsFull() const
         {
             const uint writeIndex = m_WriteIndex.load(std::memory_order_acquire);
-            return ((writeIndex + 1) & c_Mask) == m_ReadIndex;
+            return ((writeIndex + 1) & c_Mask) == m_ReadIndex.load(std::memory_order_acquire);
         }
 
     private:
@@ -90,8 +93,12 @@ namespace tyr
         // Producer cache line
         alignas(64) Atomic<uint> m_WriteIndex;
 
-        // Consumer cache line
-        alignas(64) uint m_ReadIndex;
+        // Consumer cache line. Atomic (relaxed is enough for the consumer's own reads of it,
+        // since it's the only thread that ever writes it) so the producer's cross-thread
+        // reads of it in Enqueue/IsEmpty/IsFull are well-defined instead of a data race on a
+        // plain uint - costs nothing extra since a relaxed/acquire load or release store on a
+        // naturally-aligned uint compiles to the same plain instruction as a non-atomic one.
+        alignas(64) Atomic<uint> m_ReadIndex;
     };
 }
 

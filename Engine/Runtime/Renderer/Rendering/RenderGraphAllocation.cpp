@@ -10,6 +10,7 @@ namespace tyr
 	{
 		TYR_ASSERT(!s_Initialized);
 		s_ScratchAllocatorPool = new ScratchAllocatorPool<c_AllocatorCount>(blockSize);
+		s_Initialized = true;
 	}
 
 	uint8* RenderGraphAllocator::Alloc(size_t size)

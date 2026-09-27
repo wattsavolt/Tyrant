@@ -86,6 +86,15 @@ namespace tyr
 		TYR_VK_GET_INSTANCE_PROC_ADDR(vkDestroyDebugUtilsMessengerEXT);
 		TYR_VK_GET_INSTANCE_PROC_ADDR(vkSubmitDebugUtilsMessageEXT);
 		TYR_VK_GET_INSTANCE_PROC_ADDR(vkCmdDrawMeshTasksEXT);
+
+		TYR_VK_GET_INSTANCE_PROC_ADDR(vkGetAccelerationStructureBuildSizesKHR);
+		TYR_VK_GET_INSTANCE_PROC_ADDR(vkCreateAccelerationStructureKHR);
+		TYR_VK_GET_INSTANCE_PROC_ADDR(vkDestroyAccelerationStructureKHR);
+		TYR_VK_GET_INSTANCE_PROC_ADDR(vkGetAccelerationStructureDeviceAddressKHR);
+		TYR_VK_GET_INSTANCE_PROC_ADDR(vkCmdBuildAccelerationStructuresKHR);
+		TYR_VK_GET_INSTANCE_PROC_ADDR(vkCreateRayTracingPipelinesKHR);
+		TYR_VK_GET_INSTANCE_PROC_ADDR(vkGetRayTracingShaderGroupHandlesKHR);
+		TYR_VK_GET_INSTANCE_PROC_ADDR(vkCmdTraceRaysKHR);
 	}
 
 	VkResult VulkanHelper::CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* createInfo, VkDebugUtilsMessengerEXT* debugMessenger) 

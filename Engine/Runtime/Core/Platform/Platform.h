@@ -70,6 +70,12 @@ namespace tyr
 
 		static void ShowAlertMessage(const char* msg);
 
+		// Opens a native "open file" dialog. filter is pairs of "description\0*.ext\0",
+		// double-null-terminated (e.g. "glTF Files\0*.gltf;*.glb\0"). Writes the chosen path
+		// into outPath (must be preallocated to at least maxPathSize bytes) and returns true,
+		// or returns false if the user cancelled.
+		static bool ShowOpenFileDialog(char* outPath, size_t maxPathSize, const char* filter, const char* title);
+
 		static void CreateGuid(Guid& guid);
 
 		// @note: dir must be preallocated to a large enough size

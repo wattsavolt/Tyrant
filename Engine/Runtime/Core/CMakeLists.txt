@@ -55,7 +55,7 @@ else()
 endif()
 
 if(WIN32)
-	target_link_libraries(TyrantCore PRIVATE Rpcrt4)
+	target_link_libraries(TyrantCore PRIVATE Rpcrt4 comdlg32)
 endif()
 
 option(TYR_USE_SIMD "If true, SIMD instructions are used in math types." ON)

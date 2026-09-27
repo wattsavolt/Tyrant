@@ -14,6 +14,10 @@ struct VS_OUTPUT
 	float4 pos : SV_POSITION;
 	float4 worldPos : POSITION;
 	float3 normal : NORMAL;
+	// xyz = world-space tangent, w = bitangent sign (bitangent = cross(normal, tangent.xyz) * tangent.w)
+	float4 tangent : TANGENT0;
+	float2 uv : TEXCOORD0;
+	nointerpolation uint materialIndex : MATERIAL0;
 };
 
 struct MaterialData
@@ -44,6 +48,24 @@ float3 DecodeOct(float2 e)
     float2 t = saturate(-v.z).xx;
     v.xy += t * -sign(v.xy); // sign(0) returns 0 in HLSL, matching the >=0 branch's -t case closely enough in practice
     return normalize(v);
+}
+
+// Unpacks a uint holding two snorm16 values (low 16 bits = x, high 16 bits = y - see
+// MeshUtil::EncodeOct) before decoding as an octahedral-encoded unit vector.
+float3 DecodeOct(uint packed)
+{
+    int sx = (int)(packed << 16) >> 16;
+    int sy = (int)packed >> 16;
+    float2 e = max(float2(sx, sy) / 32767.0, -1.0);
+    return DecodeOct(e);
+}
+
+// Same packing as DecodeOct(uint), except the top bit is the bitangent sign, not part of
+// the oct encoding - see MeshUtil::VertexToShaderVertex, which packs it in after encoding.
+float3 DecodeOctTangent(uint packed, out float bitangentSign)
+{
+    bitangentSign = (packed & 0x80000000u) != 0 ? -1.0f : 1.0f;
+    return DecodeOct(packed & 0x7FFFFFFFu);
 }
 
 #endif

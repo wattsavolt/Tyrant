@@ -124,6 +124,7 @@ namespace tyr
 		VulkanUtility::SetDebugName(device.m_LogicalDevice, desc.debugName, VK_OBJECT_TYPE_DESCRIPTOR_SET, reinterpret_cast<uint64>(set.set));
 
 		set.pool = desc.pool;
+		set.layout = desc.layout;
 
 		return handle;
 	}
@@ -145,7 +146,7 @@ namespace tyr
 		uint imageUpdateCount, const AccelerationStructureBindingUpdate* accelerationStructureUpdates, uint accelerationStructureUpdateCount)
 	{
 		TYR_ASSERT((bufferUpdateCount > 0 && bufferUpdates) || (imageUpdateCount > 0 && imageUpdates)
-			|| (accelerationStructureUpdateCount > 0 && accelerationStructureUpdateCount));
+			|| (accelerationStructureUpdateCount > 0 && accelerationStructureUpdates));
 
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
 		DescriptorSet& set = device.GetDescriptorSet(handle);
@@ -194,14 +195,33 @@ namespace tyr
 			VkDescriptorImageInfo* const vkImageInfos = stack.Alloc<VkDescriptorImageInfo>(bindingInfoCount);
 			const DescriptorSetLayout& layout = device.GetDescriptorSetLayout(set.layout);
 
+			// A pure sampler binding (as opposed to a combined image+sampler, or a sampled/
+			// storage image) has no image view at all - per the Vulkan spec, VkDescriptorImageInfo::
+			// imageView must be left null for VK_DESCRIPTOR_TYPE_SAMPLER writes, and
+			// ImageBindingInfo::imageView isn't meaningful/set for this binding type (see
+			// Renderer::CreateSamplers' call site), so resolving it here would look up whatever
+			// default/invalid ImageViewHandle happens to be sitting in the struct.
+			const bool isSamplerOnly = layout.bindingDescriptorTypes[imageUpdate.bindingIndex] == VK_DESCRIPTOR_TYPE_SAMPLER;
+
 			for (uint j = 0; j < bindingInfoCount; ++j)
 			{
 				const ImageBindingInfo& bindingInfo = imageUpdate.imageBindingInfos[j];
-				const ImageView& imageView = device.GetImageView(bindingInfo.imageView);
-				const Image& image = device.GetImage(imageView.image);
 
-				vkImageInfos[j].imageView = imageView.imageView;
-				vkImageInfos[j].imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+				if (isSamplerOnly)
+				{
+					vkImageInfos[j].imageView = VK_NULL_HANDLE;
+				}
+				else
+				{
+					const ImageView& imageView = device.GetImageView(bindingInfo.imageView);
+					vkImageInfos[j].imageView = imageView.imageView;
+				}
+				// UNDEFINED here is invalid usage for a sampled/storage image descriptor per the
+				// Vulkan spec - this must be the layout the image will actually be in whenever
+				// the descriptor gets read in a shader (see ImageBindingInfo::layout's own
+				// comment). Meaningless for a pure sampler (no image view at all), so left as
+				// whatever VulkanUtility maps the struct's default to in that case.
+				vkImageInfos[j].imageLayout = VulkanUtility::ToVulkanImageLayout(bindingInfo.layout);
 				if (bindingInfo.hasSampler)
 				{
 					const Sampler& sampler = device.GetSampler(bindingInfo.sampler);
@@ -227,9 +247,36 @@ namespace tyr
 			wds.pTexelBufferView = nullptr;
 		}
 		
-		if (accelerationStructureUpdateCount > 0)
+		for (uint i = 0; i < accelerationStructureUpdateCount; ++i)
 		{
-			// TODO
+			const AccelerationStructureBindingUpdate& asUpdate = accelerationStructureUpdates[i];
+			const uint bindingInfoCount = asUpdate.infoCount;
+			VkAccelerationStructureKHR* const vkAccelerationStructures = stack.Alloc<VkAccelerationStructureKHR>(bindingInfoCount);
+			const DescriptorSetLayout& layout = device.GetDescriptorSetLayout(set.layout);
+
+			for (uint j = 0; j < bindingInfoCount; ++j)
+			{
+				const AccelerationStructure& as = device.GetAccelerationStructure(asUpdate.accelerationStructureBindingInfos[j].accelerationStructure);
+				vkAccelerationStructures[j] = as.accelerationStructure;
+			}
+
+			VkWriteDescriptorSetAccelerationStructureKHR* const asWriteInfo = stack.Alloc<VkWriteDescriptorSetAccelerationStructureKHR>(1);
+			asWriteInfo->sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+			asWriteInfo->pNext = nullptr;
+			asWriteInfo->accelerationStructureCount = bindingInfoCount;
+			asWriteInfo->pAccelerationStructures = vkAccelerationStructures;
+
+			VkWriteDescriptorSet& wds = writeDescSets[writeDescSetIndex++];
+			wds.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			wds.pNext = asWriteInfo;
+			wds.dstSet = set.set;
+			wds.dstBinding = asUpdate.bindingIndex;
+			wds.dstArrayElement = asUpdate.descriptorArrayIndex;
+			wds.descriptorCount = bindingInfoCount;
+			wds.descriptorType = layout.bindingDescriptorTypes[asUpdate.bindingIndex];
+			wds.pImageInfo = nullptr;
+			wds.pBufferInfo = nullptr;
+			wds.pTexelBufferView = nullptr;
 		}
 
 		vkUpdateDescriptorSets(device.m_LogicalDevice, writeDescSetCount, writeDescSets, 0, nullptr);

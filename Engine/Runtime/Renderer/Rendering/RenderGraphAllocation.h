@@ -12,7 +12,7 @@ namespace tyr
 	class RenderGraphAllocator
 	{
 	public:
-		static constexpr uint c_AllocatorCount = 2;
+		static constexpr uint c_AllocatorCount = 1;
 
 		static void Create(size_t blockSize = 1024 * 1024);
 

@@ -90,6 +90,8 @@ namespace tyr
         RenderGraphPassExecuteFn execute;
         // Phase for deterministic ordering
         RenderGraphPhase phase;
+        // Which queue's command list this pass records into and submits on.
+        CommandQueueType queueType;
         RenderGraphSpan bufferBarrierSpan;
         RenderGraphSpan textureBarrierSpan;
         RenderGraphSpan dependencySpan;

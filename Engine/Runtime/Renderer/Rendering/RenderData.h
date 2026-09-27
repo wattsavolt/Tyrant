@@ -9,9 +9,11 @@ namespace tyr
 	{
 		Array<BufferUploadRequest> assetBufferUploadRequests;
 		Array<TextureUploadRequest> textureUploadRequests;
-		uint activeSceneIndex = RenderFrame::c_InvalidSceneIndex;
-		uint sceneCount = 0;
-		Scene scenes[RenderConstants::c_MaxScenes];
+		SceneHandle activeScene;
+		// A pool rather than a plain array so removal can be deferred safely (RenderAsync might
+		// still be using a scene from up to c_BufferedFrameCount frames ago) the same way window
+		// removal is - see RendererAPI::RemoveScene and RenderFrame::scenesToDelete.
+		LocalObjectPool<Scene, RenderConstants::c_MaxScenes, ResetObjectPolicy> scenes;
 
 		RenderData()
 		{
@@ -23,9 +25,9 @@ namespace tyr
 		{
 			assetBufferUploadRequests.Clear();
 			textureUploadRequests.Clear();
-			if (activeSceneIndex != RenderFrame::c_InvalidSceneIndex)
+			if (activeScene)
 			{
-				Scene& scene = scenes[activeSceneIndex];
+				Scene& scene = scenes[activeScene.h];
 				scene.frameUploadRequests.Clear();
 				scene.views.Clear();
 			}

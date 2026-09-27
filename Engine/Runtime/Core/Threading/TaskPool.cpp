@@ -1,5 +1,3 @@
-#pragma once
-
 #include "TaskPool.h"
 
 namespace tyr
@@ -41,7 +39,7 @@ namespace tyr
 
         if (s_LocalFreeCount == c_LocalCacheSize)
         {
-            FlushLocalCache();
+            FlushCurrentThreadCache();
         }
 
         m_ObjectCount.fetch_sub(1, std::memory_order_relaxed);
@@ -80,7 +78,7 @@ namespace tyr
         return uint(h >> 32);
     }
 
-    void TaskPool::FlushLocalCache()
+    void TaskPool::FlushCurrentThreadCache()
     {
         for (uint i = 0; i < s_LocalFreeCount; ++i)
         {

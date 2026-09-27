@@ -61,8 +61,7 @@ namespace tyr
 	{
 		const char* name{};
 		RenderWindowHandle windowHandle{};
-		uint id;
-		bool inUse = false;
+		uint id{};
 		Array<BufferUploadRequest> frameUploadRequests;
 		LocalArray<SceneView, RenderConstants::c_MaxViewsPerScene> views;
 		SceneContent content;
@@ -77,6 +76,18 @@ namespace tyr
 			frameUploadRequests.Clear();
 			views.Clear();
 			content.Clear();
+		}
+
+		// Puts a recycled pool slot back to a blank state - see RenderData::scenes. Reuses
+		// Clear() for the containers (keeps their reserved capacity, unlike a plain `= {}`
+		// would) and additionally resets the identity fields Clear() intentionally leaves alone
+		// during normal per-frame use.
+		void Reset()
+		{
+			name = {};
+			windowHandle = {};
+			id = 0;
+			Clear();
 		}
 	};
 }

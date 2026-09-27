@@ -15,10 +15,13 @@ namespace tyr
     public:
         RenderGraph() = default;
 
-        uint AddPass(const char* name, RenderGraphPassSetupFn setup, RenderGraphPassExecuteFn&& execute, RenderGraphPhase phase = RenderGraphPhase::Output, bool enabled = true);
+        uint AddPass(const char* name, RenderGraphPassSetupFn setup, RenderGraphPassExecuteFn&& execute, RenderGraphPhase phase = RenderGraphPhase::Output, CommandQueueType queueType = CommandQueueType::CQ_GRAPHICS, bool enabled = true);
 
         void Compile();
-        void Execute(CommandList& cmdList);
+
+        // cmdLists must have one entry per CommandQueueType - only the ones actually used by
+        // a pass need to be non-null.
+        void Execute(CommandList* const cmdLists[CommandQueueType::CQ_COUNT]);
 
         void RegisterBuffer(RenderBuffer* buffer);
         void RegisterTexture(Texture* texture);

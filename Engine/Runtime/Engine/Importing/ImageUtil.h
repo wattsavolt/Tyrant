@@ -85,6 +85,22 @@ namespace tyr
         }
 
         template <typename T>
+        static void FillChannel(T* image, uint texelCount, uint8 channelCount, uint8 channelIdx, T value)
+        {
+            TYR_STATIC_ASSERT((std::is_trivial<T>::value), "T must be a trivial type for direct filling.");
+
+            TYR_ASSERT(image != nullptr);
+            TYR_ASSERT(texelCount > 0);
+            TYR_ASSERT(channelCount > 0 && channelCount <= c_MaxChannels);
+            TYR_ASSERT(channelIdx < channelCount);
+
+            for (uint i = 0; i < texelCount; ++i)
+            {
+                image[channelCount * i + channelIdx] = value;
+            }
+        }
+
+        template <typename T>
         static void CopyChannel(const T* srcImage, T* dstImage, uint texelCount, uint8 srcChannelCount, uint8 dstChannelCount, uint8 srcChannelIdx, uint8 dstChannelIdx)
         {
             TYR_STATIC_ASSERT((std::is_trivial<T>::value), "T must be a trivial type for direct copying.");

@@ -9,6 +9,7 @@ namespace tyr
 	const Cube Cube::c_UnitCube = Cube();
 
 	Cube::Cube()
+		: m_ShaderVertices(c_NumVertices)
 	{
 		MeshUtil::CreateShaderVertices(c_Vertices, m_ShaderVertices.Data(), c_NumVertices);
 	}

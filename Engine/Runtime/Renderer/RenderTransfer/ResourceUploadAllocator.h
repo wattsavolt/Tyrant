@@ -4,6 +4,8 @@
 #include "Core.h"
 #include "RenderAPI/GraphicsBase.h"
 #include "RenderAPI/Sync.h"
+#include "Memory/PoolHandle.h"
+#include "Memory/LocalObjectPool.h"
 
 namespace tyr
 {
@@ -13,50 +15,56 @@ namespace tyr
 		void* mappedBase;    // persistently mapped CPU pointer
 	};
 
+	// Allocates fixed-size chunks out of a shared upload buffer for resources that are
+	// loaded in the background and submitted whenever they're ready, not necessarily in
+	// the order they were allocated. Each allocation tracks its own completion separately,
+	// so one slow resource never blocks reclaiming a different, faster one.
 	class TYR_RENDERER_API ResourceUploadAllocator final
 	{
 	public:
-
 		struct Allocation
 		{
 			void* cpuPtr;
 			size_t offset;
 			size_t size;
+			Handle id;
 		};
+
+		static constexpr size_t c_ChunkSize = 2 * 1024 * 1024;
+		static constexpr uint c_MaxChunks = 512;
+		static constexpr uint c_MaxInFlightAllocations = 256;
 
 	public:
 		ResourceUploadAllocator(const ResourceUploadAllocatorDesc& desc);
 
-		// Returns false if not enough space
+		// Returns false if not enough contiguous free chunks
 		bool Allocate(size_t size, size_t alignment, Allocation& allocation);
 
-		// Call once per submission of resource transfers 
-		void Signal(uint64 signalValue);
+		// Marks an allocation as submitted, along with the timeline value the GPU will
+		// have reached once it's actually finished with it. Only ever called from the
+		// main thread.
+		void Signal(Handle id, uint64 signalValue);
 
-		// Should be called once per frame
+		// Frees every allocation that's been signalled and whose value has now completed.
+		// Only ever called from the main thread.
 		void Reclaim(uint64 completedValue);
 
-		uint64 GetSemaphoreValue() const { return m_SemaphoreValue; }
-
 	private:
-		struct SemaphorePoint
+		struct InFlightAllocation
 		{
-			size_t offset;
-			uint64 semaphoreValue;
+			uint startChunk = 0;
+			uint chunkCount = 0;
+			bool signalled = false;
+			uint64 fenceValue = 0;
 		};
 
 	private:
-		bool HasSpace(size_t head, size_t tail, size_t size) const;
-
-	private:
-
 		ResourceUploadAllocatorDesc m_Desc;
 
-		size_t m_Head = 0; // write cursor
-		size_t m_Tail = 0; // reclaim cursor
+		uint m_ChunkCount = 0;
+		bool m_ChunkFree[c_MaxChunks];
 
-		uint64 m_SemaphoreValue = 0;
-
-		Array<SemaphorePoint> m_SemaphorePoints;
+		LocalObjectPool<InFlightAllocation, c_MaxInFlightAllocations> m_InFlightPool;
+		LocalArray<Handle, c_MaxInFlightAllocations> m_LiveIds;
 	};
 }

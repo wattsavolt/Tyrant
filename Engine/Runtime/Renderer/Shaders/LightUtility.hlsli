@@ -6,7 +6,12 @@
 
 float3 ComputeDirectionalLightEffect(DirectionalLight light, MaterialData mat, float3 position, float3 normal, float3 viewDir)
 {
-    float3 radiance = PBR(mat, position, normal, viewDir, light.colour, light.intensity, light.direction);
+	// light.direction is the direction the light travels (light -> scene) - same convention
+	// ComputeSpotLightEffect's falloff below relies on (dot(-lightVec, light.direction) peaks
+	// when the light->surface ray matches the cone's aim axis). PBR()/ComputeReflectance()
+	// need the opposite: lightDir pointing surface -> light, same as lightVec is used for the
+	// other two light types - negate it.
+    float3 radiance = PBR(mat, position, normal, viewDir, light.colour, light.intensity, -light.direction);
 	return radiance;
 }
 

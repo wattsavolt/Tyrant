@@ -38,7 +38,8 @@ namespace tyr
 
         bool IsValid(Handle h) const
         {
-            return h.index < m_Pos && m_Generations[h.index] == h.generation;
+            // Not checking h.index < m_Pos as would require m_Pos to be atomic and not worth it as main purpose of this function is to check for a stale handle
+            return m_Generations[h.index] == h.generation;
         }
 
         Handle Create()

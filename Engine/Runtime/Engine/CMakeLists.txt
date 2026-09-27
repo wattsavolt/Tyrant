@@ -95,6 +95,19 @@ if (TYR_EDITOR_MODE)
 	target_link_libraries(TyrantEngine PRIVATE libzstd)
 endif()
 
+if (TYR_EDITOR_MODE)
+	# meshoptimizer - meshlet generation for mesh geometry import
+	target_link_libraries(TyrantEngine PRIVATE meshoptimizer)
+endif()
+
+if (NOT TYR_FINAL_MODE)
+	# Dear ImGui - editor-tool UI, driven by GUIModule
+	target_link_libraries(TyrantEngine PRIVATE imgui)
+endif()
+
+# Nuklear - always-on runtime GUI (in-game HUD/menu), driven by GUIModule
+target_link_libraries(TyrantEngine PRIVATE nuklear)
+
 if(LINUX)
 	## External lib: X11, LibUUID, LibICU
 	target_link_libraries(TyrantEngine PUBLIC ${X11_LIBRARIES} ${X11_Xcursor_LIB} ${X11_Xrandr_LIB} ${X11_Xi_LIB})

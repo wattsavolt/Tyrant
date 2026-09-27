@@ -35,7 +35,8 @@ namespace tyr
 		Platform::GetBinaryDirectoryPath(binaryDirectoryPath);
 		snprintf(byteCodeRootDirPath, sizeof(byteCodeRootDirPath), "%s/%s", binaryDirectoryPath, "Shaders");
 		rendererConfig.shaderConfig.byteCodeRootDirPath = byteCodeRootDirPath;
-		rendererConfig.shaderConfig.shaderModel = { 6, 2 };
+		// 6.5 minimum - needed for mesh/amplification shaders
+		rendererConfig.shaderConfig.shaderModel = { 6, 5 };
 
 		m_RenderAPI = GraphicsManager::CreateRenderAPI(rendererConfig.renderAPICreateConfig);
 		m_RenderAPI->Initialize(rendererConfig.renderAPIConfig);

@@ -45,7 +45,7 @@ namespace tyr
         Array<uint8>* m_Data = nullptr;
     };
 
-    // Important Note: Good enough for textures up to 16K × 16K megatextures but if bigger textures than this are needed, endImage should be changed to write the current data to a file
+    // Important Note: Good enough for textures up to 16K ï¿½ 16K megatextures but if bigger textures than this are needed, endImage should be changed to write the current data to a file
     // to save RAM and Array has capacity limit of UINT2_MAX
     class GpuReadyMemoryOutputHandler : public nvtt::OutputHandler
     {
@@ -260,6 +260,7 @@ namespace tyr
         textureInfo.width = desc.width;
         textureInfo.height = desc.height;
         textureInfo.depth = 1;
+        textureInfo.arrayLayerCount = 1;
         textureInfo.mipCount = desc.mipCount;
         textureInfo.type = ImageType::Image2D;
         textureInfo.format = ToOutputPixelFormat(desc.outputFormat, desc.isSRGB);
@@ -298,6 +299,9 @@ namespace tyr
         textureInfo.width = surface.width();
         textureInfo.height = surface.height();
         textureInfo.depth = 1;
+        // One cube's worth of faces - see RenderResourceUtil's own assert on this (isCubemap
+        // implies arrayLayerCount must be a multiple of 6).
+        textureInfo.arrayLayerCount = 6;
         textureInfo.mipCount = 1;
         textureInfo.type = ImageType::Cubemap;
         textureInfo.format = ToOutputPixelFormat(desc.outputFormat, desc.isSRGB);

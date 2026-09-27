@@ -80,6 +80,12 @@ namespace tyr
 			FileStream stream(filePath, Operation::Write, overwrite);
 			stream.Write(buffer, bufferSize);
 		}
+
+		static size_t GetFileSize(const char* filePath)
+		{
+			FileStream stream(filePath);
+			return stream.GeSize();
+		}
 	
 	private:
 		FileHandle m_Handle;

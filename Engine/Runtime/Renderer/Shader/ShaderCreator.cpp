@@ -25,10 +25,29 @@ namespace tyr
 			return L"ds";
 		case SHADER_STAGE_COMPUTE_BIT:
 			return L"cs";
+		case SHADER_STAGE_TASK_BIT:
+			return L"as";
+		case SHADER_STAGE_MESH_BIT:
+			return L"ms";
+		case SHADER_STAGE_RAYGEN_BIT:
+		case SHADER_STAGE_MISS_BIT:
+		case SHADER_STAGE_CLOSEST_HIT_BIT:
+		case SHADER_STAGE_ANY_HIT_BIT:
+		case SHADER_STAGE_INTERSECTION_BIT:
+		case SHADER_STAGE_CALLABLE_BIT:
+			// Ray tracing entry points can only be compiled as a DXC library target, not one of
+			// the usual single-entry stage profiles - see the -E handling below.
+			return L"lib";
 		default:
 			TYR_ASSERT(false);
 			return L"";
 		}
+	}
+
+	bool IsRayTracingStage(ShaderStage stage)
+	{
+		return stage & (SHADER_STAGE_RAYGEN_BIT | SHADER_STAGE_MISS_BIT | SHADER_STAGE_CLOSEST_HIT_BIT |
+			SHADER_STAGE_ANY_HIT_BIT | SHADER_STAGE_INTERSECTION_BIT | SHADER_STAGE_CALLABLE_BIT);
 	}
 
 	constexpr const char* GetShaderBinaryExtension(ShaderBinaryLanguage language)
@@ -134,8 +153,15 @@ namespace tyr
 				LocalArray<const wchar_t*, 32> args;
 				args.Add(L"-Fo");
 				args.Add(byteCodeFilePathW);
-				args.Add(L"-E");
-				args.Add(entryPoint);
+				// DXC rejects -E entirely for a library target ("cannot specify entry point for a
+				// library") - every [shader("...")]-attributed function in the file is exported
+				// under its own name instead, which is why ShaderDesc::entryPoint still has to be
+				// set to that function's real name for ray tracing shaders, just not passed here.
+				if (!IsRayTracingStage(shaderDesc.stage))
+				{
+					args.Add(L"-E");
+					args.Add(entryPoint);
+				}
 				args.Add(L"-T");
 				args.Add(shaderProfile);
 				// Include directory.

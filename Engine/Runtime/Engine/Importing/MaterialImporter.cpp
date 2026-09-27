@@ -37,11 +37,11 @@ namespace tyr
 	{
 		if (source.path)
 		{
-			ImageLoader::LoadImage8U(source.path, channelCount);
+			return ImageLoader::LoadImage8U(source.path, channelCount);
 		}
 		else if (source.data)
 		{
-			ImageLoader::LoadImage8UFromMem(source.data, source.dataSize, channelCount);
+			return ImageLoader::LoadImage8UFromMem(source.data, source.dataSize, channelCount);
 		}
 		return nullptr;
 	}
@@ -50,11 +50,11 @@ namespace tyr
 	{
 		if (source.path)
 		{
-			ImageLoader::LoadImage16U(source.path, channelCount);
+			return ImageLoader::LoadImage16U(source.path, channelCount);
 		}
 		else if (source.data)
 		{
-			ImageLoader::LoadImage16UFromMem(source.data, source.dataSize, channelCount);
+			return ImageLoader::LoadImage16UFromMem(source.data, source.dataSize, channelCount);
 		}
 		return nullptr;
 	}
@@ -63,11 +63,11 @@ namespace tyr
 	{
 		if (source.path)
 		{
-			ImageLoader::LoadImage32F(source.path, channelCount);
+			return ImageLoader::LoadImage32F(source.path, channelCount);
 		}
 		else if (source.data)
 		{
-			ImageLoader::LoadImage32FFromMem(source.data, source.dataSize, channelCount);
+			return ImageLoader::LoadImage32FFromMem(source.data, source.dataSize, channelCount);
 		}
 		return nullptr;
 	}
@@ -129,7 +129,8 @@ namespace tyr
 		compDesc.width = info.width;
 		compDesc.height = info.height;
 		compDesc.outputFormat = ImageCompressionOutputFormat::BC7;
-		compDesc.mipCount = RenderConstants::c_MaxMips;
+		// Capped to this texture's own size, not the engine-wide max mip count.
+		compDesc.mipCount = TextureUtil::CalculateMaxMips(compDesc.width, compDesc.height);
 		compDesc.outputFilePath = outputPath;
 		compDesc.isSRGB = isSRGB;
 
@@ -199,9 +200,12 @@ namespace tyr
 			}
 		}
 
-		// Use the highest bit depth of any of the textures
-		const ImageBitDepth bitDepth = static_cast<ImageBitDepth>(std::max(static_cast<uint8>(normalInfo.bitDepth),
-			static_cast<uint8>(heightInfo.bitDepth)));
+		// Use the highest bit depth of any of the textures - heightInfo is only ever
+		// populated (via LoadImageInfo above) when heightPresent is true, so it must not be
+		// read otherwise.
+		const ImageBitDepth bitDepth = heightPresent
+			? static_cast<ImageBitDepth>(std::max(static_cast<uint8>(normalInfo.bitDepth), static_cast<uint8>(heightInfo.bitDepth)))
+			: normalInfo.bitDepth;
 
 		Image2DCompressionDesc compDesc;
 
@@ -217,6 +221,13 @@ namespace tyr
 				ImageUtil::CopyChannel<uint8>(height, normal, texelCount, 1, 4, 0, 3);
 				ImageLoader::FreeImage(height);
 			}
+			else
+			{
+				// No real height data - 128 (~0.5) is neutral, not the loader's default
+				// opaque (255) alpha fill. MeshPS.hlsl centers height around 0.5, so this is
+				// what makes an absent height map cause zero parallax offset.
+				ImageUtil::FillChannel<uint8>(normal, texelCount, 4, 3, 128);
+			}
 			compDesc.image = normal;
 			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_8U;
 			break;
@@ -230,6 +241,11 @@ namespace tyr
 				ImageUtil::CopyChannel<float>(height, normal, texelCount, 1, 4, 0, 3);
 				ImageLoader::FreeImage(height);
 			}
+			else
+			{
+				// See EightBit's identical comment above.
+				ImageUtil::FillChannel<float>(normal, texelCount, 4, 3, 0.5f);
+			}
 			compDesc.image = normal;
 			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_16F;
 			break;
@@ -242,6 +258,11 @@ namespace tyr
 				float* height = LoadImage32F(desc.heightSource, 1);
 				ImageUtil::CopyChannel<float>(height, normal, texelCount, 1, 4, 0, 3);
 				ImageLoader::FreeImage(height);
+			}
+			else
+			{
+				// See EightBit's identical comment above.
+				ImageUtil::FillChannel<float>(normal, texelCount, 4, 3, 0.5f);
 			}
 			compDesc.image = normal;
 			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_32F;
@@ -257,9 +278,11 @@ namespace tyr
 		compDesc.width = normalInfo.width;
 		compDesc.height = normalInfo.height;
 		compDesc.outputFormat = ImageCompressionOutputFormat::BC7;
-		compDesc.mipCount = RenderConstants::c_MaxMips;
+		// Capped to this texture's own size, not the engine-wide max mip count.
+		compDesc.mipCount = TextureUtil::CalculateMaxMips(compDesc.width, compDesc.height);
 		compDesc.outputFilePath = outputPath;
-		compDesc.isSRGB = desc.isSRGB;
+		// Never sRGB - this is a normal + height, not colour data.
+		compDesc.isSRGB = false;
 
 		const bool compressResult = ImageCompressor::CompressImage2D(compDesc);
 
@@ -358,9 +381,11 @@ namespace tyr
 		compDesc.width = roughnessMetallicInfo.width;
 		compDesc.height = roughnessMetallicInfo.height;
 		compDesc.outputFormat = ImageCompressionOutputFormat::BC7;
-		compDesc.mipCount = RenderConstants::c_MaxMips;
+		// Capped to this texture's own size, not the engine-wide max mip count.
+		compDesc.mipCount = TextureUtil::CalculateMaxMips(compDesc.width, compDesc.height);
 		compDesc.outputFilePath = outputPath;
-		compDesc.isSRGB = desc.isSRGB;
+		// Never sRGB - AO/roughness/metallic are scalar parameters, not colour.
+		compDesc.isSRGB = false;
 
 		const bool compressResult = ImageCompressor::CompressImage2D(compDesc);
 
@@ -427,6 +452,15 @@ namespace tyr
 	{
 		MaterialAssetFile material;
 		material.type = MaterialType::PBR;
+		// CreateAlbedo/CreateNormalHeight/CreateAORoughnessMetallic below all write into
+		// material.textures by index (material.textures[c_PbrXIndex] = ...), which - unlike
+		// Add() - never grows LocalArray's own size tracking on its own. Without resizing
+		// first, material.textures.Size() stays 0 forever despite those three slots actually
+		// being written, which silently drops every texture reference: the material's own
+		// dependency registration below (AddAsset, keyed off this same Size()), and every
+		// downstream range-based-for over a loaded MaterialAssetFile's textures (see
+		// AssetManager::CreateMaterial), all see zero textures instead of three.
+		material.textures.Resize(MaterialConstants::c_PbrAoRoughnessMetallicIndex + 1);
 
 		char materialPath[PathConstants::c_MaxAssetPathTotalSize];
 		snprintf(materialPath, sizeof(materialPath), "%s/%s%s", desc.outputFolderPath, desc.materialName, AssetConstants::c_MaterialFileExtension);

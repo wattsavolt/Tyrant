@@ -13,6 +13,14 @@ namespace tyr
 	private:
 		void Copy(const char* data)
 		{
+			// operator=(const char*) is what "name = {};" actually resolves to (a standard
+			// conversion to nullptr beats the user-defined conversion operator=(const
+			// LocalString&) would need), so a null data here is a normal reset, not misuse.
+			if (!data)
+			{
+				Reset();
+				return;
+			}
 			m_TotalSize = strlen(data) + 1;
 			TYR_ASSERT(m_TotalSize <= c_Capacity);
 			strcpy_s(m_Data, m_TotalSize, data);
@@ -80,7 +88,10 @@ namespace tyr
 
 		LocalString& operator+=(const LocalString& other)
 		{
-			strcpy_s(&m_Data[m_TotalSize - 1], c_Capacity, other.m_Data);
+			const uint size = m_TotalSize + other.m_TotalSize - 1;
+			TYR_ASSERT(size <= c_Capacity);
+			strcpy_s(&m_Data[m_TotalSize - 1], c_Capacity - (m_TotalSize - 1), other.m_Data);
+			m_TotalSize = size;
 			return *this;
 		}
 
@@ -105,7 +116,7 @@ namespace tyr
 			TYR_ASSERT(size <= c_Capacity);
 			LocalString str;
 			strcpy_s(str.m_Data, str.c_Capacity, lhs.m_Data);
-			strcpy_s(&str.m_Data[lhs.m_TotalSize - 1], str.c_Capacity - lhs.c_Capacity, rhs.m_Data);
+			strcpy_s(&str.m_Data[lhs.m_TotalSize - 1], str.c_Capacity - (lhs.m_TotalSize - 1), rhs.m_Data);
 			str.m_TotalSize = size;
 			return str;
 		}

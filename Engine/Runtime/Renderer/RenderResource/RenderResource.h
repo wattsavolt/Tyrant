@@ -29,6 +29,7 @@ namespace tyr
 		{
 			id = GenerateID();
 			accessState = BARRIER_ACCESS_NONE;
+			queueTypeState = CommandQueueType::CQ_GRAPHICS;
 		}
 
 		RenderResource()
@@ -38,6 +39,10 @@ namespace tyr
 
 		ResourceID id;
 		BarrierAccess accessState;
+		// Which queue last accessed this resource - a same-queue pipeline barrier can't
+		// synchronize against a different queue's access, so this is what lets the render
+		// graph know to skip the barrier and rely on the cross-queue semaphore wait instead.
+		CommandQueueType queueTypeState;
 		uint renderGraphIndex;
 		RenderResourceType type;
 	};

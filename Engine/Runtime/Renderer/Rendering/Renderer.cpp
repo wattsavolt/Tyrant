@@ -1165,12 +1165,8 @@ namespace tyr
 		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
 
 		// m_Resources.blasScratchBuffer is only ever created lazily, the first time a BLAS
-		// actually needs building (see EnsureBLASScratchCapacity) - on any earlier frame it's
-		// still PoolHandle's default "invalid" sentinel (index == UINT_MAX, not 0), and
-		// RenderRegistry::GetBuffer on that crashes (LocalObjectPool::IsValid indexes
-		// m_Generations[UINT_MAX]). Only touch it once we know there's at least one build this
-		// frame - confirmed via a debugger-symbolized access violation in exactly this call,
-		// reached whenever RecordRayTracingBuildPass ran before any mesh's BLAS had ever built.
+		// actually needs building - on any earlier frame it's still an invalid handle. Only
+		// touch it once we know there's at least one build this frame.
 		for (const BLASBuildRecord& record : renderFrame.blasBuildsToRecord)
 		{
 			const BufferHandle blasScratchBuffer = m_Registry.GetBuffer(m_Resources.blasScratchBuffer).buffer;
@@ -1182,12 +1178,8 @@ namespace tyr
 			cmdList.BuildAccelerationStructures(&buildInfo, 1);
 
 			// Every build in this frame's batch reuses this same slot's scratch range
-			// sequentially, not concurrently (see RenderResources::blasScratchBuffer's own
-			// comment), and the TLAS build below may reference any BLAS built here - Vulkan
-			// requires a referenced bottom-level structure to have completed construction first.
-			// One barrier serves both needs. Not tracked by the render graph (no AS-aware
-			// resource type - see RenderGraphResourceType), so a manual global memory barrier,
-			// same as RecordLightingPass's manual image barriers.
+			// sequentially, and the TLAS build below may reference any BLAS built here, which
+			// Vulkan requires to have completed construction first - one barrier serves both needs.
 			PipelineBarrier barrier{};
 			barrier.srcAccess = BARRIER_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT;
 			barrier.dstAccess = static_cast<BarrierAccess>(BARRIER_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT | BARRIER_ACCESS_ACCELERATION_STRUCTURE_READ_BIT);
@@ -1223,11 +1215,8 @@ namespace tyr
 		const ImageHandle swapChainImage = window.swapChain->GetImages()[window.swapChainImageIndex];
 
 		// A newly acquired swap chain image's layout is undefined - transition it to whatever
-		// layout rendering needs before using it as a colour attachment below. This used to
-		// happen in RecordGeometryPass, back when it drew straight into the swap chain image -
-		// now that GeometryPass renders into its own offscreen viewport texture instead (see
-		// EditorViewport), this pass is the first (and only) one touching the swap chain image
-		// each frame.
+		// layout rendering needs before using it as a colour attachment below. This is the only
+		// pass touching the swap chain image each frame.
 		{
 			ImageBarrier barrier{};
 			window.swapChain->CreateRenderingImageBarrier(barrier, swapChainImage);
@@ -1241,9 +1230,8 @@ namespace tyr
 		renderingInfo.layerCount = 1;
 
 		RenderingAttachmentInfo colourAttachment;
-		// Clear, not Load - GeometryPass no longer draws into this image; the 3D scene now
-		// lives in its own offscreen texture, shown inside the Viewport panel via
-		// ImGui::Image() (EditorViewport).
+		// Clear, not Load - the 3D scene lives in its own offscreen texture, shown inside the
+		// Viewport panel separately.
 		colourAttachment.loadOp = AttachmentLoadOp::Clear;
 		colourAttachment.storeOp = AttachmentStoreOp::Store;
 		colourAttachment.resolveMode = RESOLVE_MODE_NONE;
@@ -1288,13 +1276,9 @@ namespace tyr
 		guiArgs.indexBuffer = m_Resources.guiIndexBuffer;
 		m_GUIPass->Recreate(guiArgs);
 
-		// Only valid (non-null) when hasActiveScene - RenderAsync never dispatches this function
-		// with hasActiveScene true unless m_Data.activeScene itself is (see its own guard), and
-		// never with hasValidSwapChainImage true unless hasActiveScene is also true (can't
-		// acquire an image without a window to acquire it from). Pointers rather than
-		// references so there's a legitimate "unset" state for the no-active-scene case, where
-		// there's no window to acquire/present to at all - not just "acquired but the image
-		// turned out invalid", which is what hasValidSwapChainImage alone already covered.
+		// Only valid (non-null) when hasActiveScene - never true without an active scene, and
+		// hasValidSwapChainImage is never true without hasActiveScene either. Pointers, not
+		// references, so there's a legitimate unset state for the no-active-scene case.
 		RenderWindow* window = nullptr;
 		RenderWindowFrame* windowFrame = nullptr;
 		RenderWindowHandle windowHandle{};
@@ -1325,10 +1309,9 @@ namespace tyr
 		RenderGraphAllocator::NextFrame();
 		RenderGraph graph;
 
-		// Every buffer TransferPass might write and GeometryPass reads - both passes run on
-		// the graphics queue for now (see TransferPass/GeometryPass), so BuildBarriers just
-		// inserts a same-queue pipeline barrier between them; no cross-queue semaphore wait
-		// is needed yet.
+		// Every buffer TransferPass might write and GeometryPass reads - both run on the
+		// graphics queue for now, so this just needs a same-queue pipeline barrier between them,
+		// no cross-queue semaphore wait.
 		const RenderBufferHandle graphBuffers[] = {
 			m_Resources.meshBuffer, m_Resources.meshLODBuffer, m_Resources.meshletBuffer,
 			m_Resources.vertexBuffer, m_Resources.indexBuffer, m_Resources.meshInstanceBuffer,
@@ -1360,17 +1343,13 @@ namespace tyr
 			[this, renderFrameIndex](CommandList& cl) { RecordTransferPass(cl, renderFrameIndex); },
 			RenderGraphPhase::Transfer, CommandQueueType::CQ_GRAPHICS);
 
-		// Nothing to draw into or present without a valid acquired image (see RenderAsync -
-		// this only happens when acquisition genuinely failed, VK_ERROR_OUT_OF_DATE_KHR). The
-		// Transfer pass above still runs - it's not tied to the window - so this frame's uploads
-		// aren't skipped, just its geometry/GUI/present.
+		// Nothing to draw into or present without a valid acquired image. The transfer pass
+		// above still runs regardless, since it's not tied to the window.
 		if (hasValidSwapChainImage)
 		{
-			// Same phase as "Geometry" below and added first - RenderGraph::AddPass appends each
-			// pass' index to its phase's own bucket in registration order (see m_PassOrder's own
-			// comment), so this always executes (and has its buffer usages recorded, which is
-			// what the automatic barrier-building in RenderGraph::Compile relies on) before
-			// GeometryPass's own indirect draw reads what this pass just wrote.
+			// Same phase as "Geometry" below and added first, so this always executes (and has
+			// its buffer usages recorded) before GeometryPass's own indirect draw reads what this
+			// pass wrote.
 			graph.AddPass("Culling",
 				[this](RenderGraphBuilder& builder) { SetupCullingPass(builder); },
 				[this, renderFrameIndex](CommandList& cl) { RecordCullingPass(cl, renderFrameIndex); },
@@ -1381,27 +1360,24 @@ namespace tyr
 				[this, renderFrameIndex](CommandList& cl) { RecordGeometryPass(cl, renderFrameIndex); },
 				RenderGraphPhase::Geometry, CommandQueueType::CQ_GRAPHICS);
 
-			// Builds at most one pending mesh's BLAS (see m_PendingBLASBuilds), then rebuilds the
-			// TLAS from this frame's active instances - see RecordRayTracingBuildPass. Nothing
-			// reads the TLAS yet (that's the upcoming shadow ray-query pass); this just keeps it
-			// current every frame so that pass can be added later without touching this one.
+			// Builds at most one pending mesh's BLAS, then rebuilds the TLAS from this frame's
+			// active instances. Nothing reads the TLAS yet - this just keeps it current for when
+			// a later pass does.
 			graph.AddPass("RayTracingBuild",
 				[this](RenderGraphBuilder& builder) { SetupRayTracingBuildPass(builder); },
 				[this, renderFrameIndex](CommandList& cl) { RecordRayTracingBuildPass(cl, renderFrameIndex); },
 				RenderGraphPhase::RayTracing, CommandQueueType::CQ_GRAPHICS);
 
-			// Reads the G-buffer/depth GeometryPass just wrote (via its own manual image
-			// barriers - see RecordLightingPass) and writes the shaded result into the viewport
-			// colour texture. Same scene-info/light buffers Geometry already reads - no new
-			// buffer barrier needed for a read-after-read, so nothing to register here.
+			// Reads the G-buffer/depth GeometryPass just wrote and writes the shaded result into
+			// the viewport colour texture. No new buffer barrier needed for the read-after-read
+			// on scene-info/lights.
 			graph.AddPass("Lighting",
 				[](RenderGraphBuilder&) {},
 				[this, renderFrameIndex](CommandList& cl) { RecordLightingPass(cl, renderFrameIndex); },
 				RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
 
 			// Always added, even on a frame with nothing to draw - it's what transitions the
-			// swap chain image to the present-source layout now (see RecordGUIPass), so it has
-			// to run whether or not any GUIDrawData was actually submitted this frame.
+			// swap chain image to the present-source layout.
 			graph.AddPass("GUI",
 				[this](RenderGraphBuilder& builder) { m_GUIPass->Setup(builder); },
 				[this, renderFrameIndex](CommandList& cl) { RecordGUIPass(cl, renderFrameIndex); },
@@ -1442,12 +1418,9 @@ namespace tyr
 		submissionRequest.frameNumber = frameNumber;
 		m_RenderSubmissionThread->EnqueueRenderSubmissionRequest(submissionRequest);
 
-		// Always enqueued, even with no active scene/window at all or a valid window but a
-		// failed acquire - RenderSubmissionThread still needs to record this frameNumber as
-		// "handled" (see RenderPresentRequest::present's comment) so Render()'s pacing wait
-		// doesn't stall waiting for a present that was never going to happen. It just skips the
-		// actual Present() call (and so never reads swapChain/imageIndex) when present is false,
-		// so leaving them default/invalid below when there's no window at all is safe.
+		// Always enqueued, even with no active scene/window at all or a failed acquire - the
+		// completion thread still needs to record this frameNumber as "handled" so the pacing
+		// wait doesn't stall. Present itself is skipped when present is false.
 		RenderPresentRequest presentRequest;
 		if (hasActiveScene)
 		{
@@ -1472,13 +1445,9 @@ namespace tyr
 			syncData.frameNumber = completion->frameNumber;
 			m_AllocManager.SignalFrameUpload(completion->frameNumber, completion->timelineValue);
 
-			// This slot's asset/texture upload requests are exactly what RenderAsync merged into
-			// m_Data and handed to TransferPass for the submission this completion reports on -
-			// PrepareForNextFrame won't clear (and so can't yet be reusing) this slot until it has
-			// drained this exact completion first (it spin-drains via this same function while
-			// waiting on frameNumber to match), so reading them here is safe. Each request whose
-			// data came from a resource upload allocation (see BufferUploadRequest::resourceId)
-			// gets signalled now so ResourceUploadAllocator can reclaim it once the GPU catches up.
+			// Safe to read - this slot can't be reused until this completion drains first.
+			// Resource-upload-backed requests get signalled so that memory can be reclaimed once
+			// the GPU catches up.
 			const RenderFrame& renderFrame = m_RenderFrames[completion->renderFrameIndex];
 			for (const BufferUploadRequest& request : renderFrame.assetBufferUploadRequests)
 			{
@@ -1502,12 +1471,9 @@ namespace tyr
 		m_RenderFrameIndex = (m_RenderFrameIndex + 1) % RenderConstants::c_BufferedFrameCount;
 		RenderFrame& renderFrame = GetRenderFrame();
 
-		// RenderAsync reads this slot's RenderFrame by reference on a worker thread. If the
-		// main thread has been producing frames faster than RenderAsync can consume them, that
-		// task might not even have started yet - wait for it here before this slot's data gets
-		// touched below/cleared at the end of this function. The GPU semaphore wait further
-		// down can't substitute for this: its completion value is still 0 (same as "nothing
-		// submitted yet") until the task has actually run and submitted something.
+		// RenderAsync reads this slot's RenderFrame by reference on a worker thread - wait for
+		// its task here before this slot's data gets touched/cleared below. A GPU semaphore wait
+		// can't substitute for this, since its value stays 0 until the task actually submits.
 		TaskID& slotTask = m_RenderAsyncTasks[m_RenderFrameIndex];
 		// Captured before the release logic below can clear slotTask back to c_InvalidTaskID -
 		// this is the one true way to know whether this slot was ever actually used, since a
@@ -1518,15 +1484,9 @@ namespace tyr
 		{
 			TaskScheduler::Instance().WaitOnTask(slotTask);
 
-			// Render() skips a tick (and so skips creating a task) whenever there's nothing
-			// ready to render yet - e.g. at startup, before RenderAsync has caught up on
-			// resolving the active scene's window. Skipped ticks still land here every time
-			// m_RenderFrameIndex cycles back around, though, so a long enough run of them can
-			// bring us back to this exact slot while its task is still the one m_PrevRenderAsyncTask
-			// points to (the next real Render() call needs to depend on it) - releasing it here
-			// regardless would leave that dependency pointing at a freed/reused TaskID. Only
-			// release once a newer task has taken over as m_PrevRenderAsyncTask; otherwise leave
-			// it recorded and try again next time this slot comes back around.
+			// A tick can be skipped without creating a task, so a run of skipped ticks can bring
+			// us back to this slot while its task is still the one the next real tick needs to
+			// depend on - only release it once a newer task has taken over that role.
 			if (slotTask != m_PrevRenderAsyncTask)
 			{
 				TaskScheduler::Instance().ReleaseTask(slotTask);
@@ -1536,14 +1496,9 @@ namespace tyr
 
 		const SemaphoreHandle graphicsTimelineSemaphore = m_Ctx.graphicsQueue->GetTimelineSemaphore();
 
-		// This slot was last used 3 frames ago - wait for that frame's GPU work to be done
-		// before touching anything tied to it below (its RenderAsync task's CPU-side work is
-		// already known finished, from the wait above). completionTimelineValue is reported
-		// asynchronously by RenderSubmissionThread, so the report for this slot's most recent
-		// use might not have arrived yet even though an older, stale report (from an earlier
-		// use of the same slot) is sitting there with a real, nonzero value - checking against
-		// m_RenderFrameNumbers (the frame this exact use was submitted under) is what tells
-		// a fresh report apart from a stale one, instead of just checking for nonzero.
+		// This slot was last used 3 frames ago - wait for that frame's GPU work to finish first.
+		// Completion reports arrive asynchronously, so check against the exact frame number this
+		// use was submitted under, not just a nonzero value, to avoid matching a stale report.
 		RenderSyncData* syncData = &m_SyncDatas[m_RenderFrameIndex];
 		if (slotWasUsed)
 		{
@@ -1556,10 +1511,9 @@ namespace tyr
 			m_Ctx.device->WaitForSemaphore(graphicsTimelineSemaphore, syncData->completionTimelineValue, UINT64_MAX);
 		}
 
-		// Resource uploads share the graphics queue for now too, in the absence of a
-		// transfer queue. Every resource upload allocation still live at this point was already
-		// signalled by DrainSubmissionCompletions (above) as soon as its submission's timeline
-		// value was known - nothing left to drain here.
+		// Resource uploads share the graphics queue for now too, in the absence of a transfer
+		// queue. Every upload allocation still live at this point was already signalled above,
+		// as soon as its timeline value was known.
 		const uint64 graphicsCompletedValue = m_Ctx.device->GetSemaphoreValue(graphicsTimelineSemaphore);
 		m_AllocManager.ReclaimResourceUploadMemory(graphicsCompletedValue);
 		m_AllocManager.ReclaimFrameUploadMemory(graphicsCompletedValue);
@@ -1582,14 +1536,9 @@ namespace tyr
 		{
 			const Mesh& mesh = m_Registry.GetMesh(handle);
 			m_AllocManager.FreeMeshLODs(mesh.lodOffset, mesh.lodCount);
-			// A mesh whose one-time BLAS build (see RendererAPI::RequestBLASBuild) already ran
-			// owns an acceleration structure that nothing else references, backed by a range of
-			// the shared blasStorageBuffer (see Mesh::blasStorageAllocation's own comment) -
-			// leaving the acceleration structure delete out is exactly what produced the
-			// VMA_ASSERT_LEAK in VmaDeviceMemoryBlock::Destroy and the "Mesh BLAS" VkBuffer-not-
-			// destroyed error from vkDestroyDevice at shutdown (back when each BLAS had its own
-			// dedicated backing buffer); leaving the storage free out instead would leak that
-			// range of blasStorageBuffer for the rest of the process' life.
+			// A mesh whose one-time BLAS build already ran owns an acceleration structure backed
+			// by a range of the shared storage buffer - both must be freed here, or the
+			// acceleration structure leaks and its storage range is never reclaimed.
 			if (mesh.blas)
 			{
 				m_Ctx.device->DeleteAccelerationStructure(mesh.blas);
@@ -1643,10 +1592,9 @@ namespace tyr
 
 	void Renderer::WaitForCompletion()
 	{
-		// The last RenderAsync task might still be running - wait for it to actually finish
-		// before waiting on the GPU/tearing anything down, since it still uses this Renderer.
-		// Every earlier task depended on the one before it, so this alone guarantees all of
-		// them (including every entry still sitting in m_RenderAsyncTasks below) are done too.
+		// The last RenderAsync task might still be running - wait for it before tearing anything
+		// down. Every earlier task depended on the one before it, so this alone guarantees all
+		// of them are done too.
 		if (m_PrevRenderAsyncTask != c_InvalidTaskID)
 		{
 			TaskScheduler::Instance().WaitOnTask(m_PrevRenderAsyncTask);
@@ -1665,11 +1613,9 @@ namespace tyr
 			}
 		}
 
-		// No WaitIdle() here: the last RenderAsync task having finished only means its work was
-		// enqueued to RenderSubmissionThread, not that the thread has actually issued it yet (or
-		// stopped). Calling vkDeviceWaitIdle() from this thread while that one might still be
-		// mid-vkQueueSubmit/vkQueuePresentKHR is a real Vulkan threading violation - the caller
-		// (the destructor) already waits properly, after that thread is torn down.
+		// No WaitIdle() here: the last task finishing only means its work was enqueued to the
+		// submission thread, not that it's actually been issued yet - calling it from this
+		// thread while that one might still be submitting is a Vulkan threading violation.
 	}
 
 	RenderWindowHandle Renderer::AddWindow(void* osHandle)
@@ -1683,23 +1629,18 @@ namespace tyr
 		// TODO: Enable later
 		swapChainDesc.createDepth = false;
 		swapChainDesc.vSyncEnabled = m_Config.vSyncEnabled;
-		// The swap chain must have as many images as the renderer keeps frames in flight, or
-		// it runs out of images to acquire before earlier ones are done with (see
-		// SwapChainDesc::minImageCount's comment).
+		// The swap chain must have as many images as the renderer keeps frames in flight, or it
+		// runs out of images to acquire before earlier ones are done with.
 		swapChainDesc.minImageCount = RenderConstants::c_BufferedFrameCount;
 
 		// Always a fresh swap chain - never reuses one from a just-removed window at the same
-		// pool slot. RemoveWindow only queues its old swap chain for deferred deletion (see its
-		// own comment), so one could still be pending here; recreating it in place instead of
-		// creating a new one would race against that deferred delete. Recreate() stays reserved
-		// for ResizeWindow, where the window was never removed in the first place.
+		// pool slot, since a deferred delete of the old one could still be pending.
 		SwapChain* swapChain = m_Ctx.device->CreateSwapChain(osHandle, swapChainDesc);
 		renderWindow.swapChain = swapChain;
 
 		// Binary semaphores used to sync swapchain image acquisition/presentation with command
-		// submission. RenderWindow is reset whenever its pool slot is freed in RemoveWindow, so
-		// these always need recreating here regardless of whether the swap chain itself was
-		// fresh or reused.
+		// submission - always need recreating here regardless of whether the swap chain itself
+		// was fresh or reused.
 		SemaphoreDesc semaphoreDesc;
 
 		// Indexed by frame-in-flight - needed before AcquireNextImage returns an image index.
@@ -1711,8 +1652,8 @@ namespace tyr
 			renderWindow.frames[i].aquireSwapChainImageSemaphore = m_Ctx.device->CreateSemaphoreResource(semaphoreDesc);
 		}
 
-		// Indexed by swap chain image index instead (see RenderWindow::executeCompleteSemaphores'
-		// comment for why frame-in-flight indexing isn't safe for this one).
+		// Indexed by swap chain image index instead - frame-in-flight indexing isn't safe for
+		// this one.
 		for (uint i = 0; i < SwapChain::c_MaxImages; ++i)
 		{
 #if !TYR_FINAL
@@ -1786,10 +1727,8 @@ namespace tyr
 
 	void Renderer::DeleteRenderViewport(RenderViewportHandle viewport)
 	{
-		// Deferred the same way RemoveWindow/RemoveScene are - a buffered slot's textures might
-		// still be read by a worker thread (or still in-flight on the GPU) from up to
-		// c_BufferedFrameCount frames ago. See DeleteRenderViewportResources, which does the actual
-		// teardown once this slot cycles back around and that's confirmed safe.
+		// Deferred the same way other resource removals are - a buffered slot's textures might
+		// still be read by a worker thread, or still in-flight on the GPU, from frames ago.
 		GetRenderFrame().renderViewportsToDelete.Add(viewport);
 	}
 
@@ -1811,7 +1750,7 @@ namespace tyr
 		const TextureHandle handle = m_Registry.CreateTexture(desc);
 		GetRenderFrame().texturesToAdd.Add(handle);
 
-		// Same bindless descriptor write RendererAPI::CreateTexture does - see its own comment.
+		// Same bindless descriptor write pattern other texture creation uses.
 		const Texture& texture = m_Registry.GetTexture(handle);
 		ImageBindingInfo imageInfo;
 		imageInfo.imageView = texture.imageView;
@@ -1840,25 +1779,21 @@ namespace tyr
 			DeleteViewportTargetTexture(targets.depthBuffer);
 		}
 
-		// Written by the deferred lighting pass (a storage image), read by GUIPass to display it
-		// via ImGui::Image() - GeometryPass no longer writes into this directly, see
-		// gbufferAlbedoAO/gbufferNormalRoughMetal below. UNORM, not SRGB - VK_FORMAT_R8G8B8A8_SRGB
-		// doesn't support VK_IMAGE_USAGE_STORAGE_BIT on this hardware (confirmed via
-		// VK_ERROR_FORMAT_NOT_SUPPORTED), so DeferredLightingCS.hlsl writes linear colour directly
-		// instead of sRGB-encoding it - GUIPS.hlsl's later sample+swap-chain-write still does the
-		// one real sRGB encode, same as any other UI element.
+		// Written by the deferred lighting pass (a storage image), read by the GUI pass to
+		// display it. UNORM, not SRGB - the storage-image format doesn't support SRGB on this
+		// hardware, so the shader writes linear colour and the final sample does the sRGB encode.
 		targets.colourTexture = CreateViewportTargetTexture(debugName, PixelFormat::PF_R8G8B8A8_UNORM,
 			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT), width, height);
 
-		// Must match geometryGraphicsPipeline's declared colour attachment formats (see
-		// CreatePipelines) - dynamic rendering requires the two to agree.
+		// Must match the geometry pipeline's declared colour attachment formats - dynamic
+		// rendering requires the two to agree.
 		targets.gbufferAlbedoAO = CreateViewportTargetTexture("GBuffer AlbedoAO", PixelFormat::PF_R8G8B8A8_SRGB,
 			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_COLOUR_ATTACHMENT_BIT), width, height);
 		targets.gbufferNormalRoughMetal = CreateViewportTargetTexture("GBuffer NormalRoughMetal", PixelFormat::PF_R16G16B16A16_SFLOAT,
 			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_COLOUR_ATTACHMENT_BIT), width, height);
 		targets.gbufferMotion = CreateViewportTargetTexture("GBuffer Motion", PixelFormat::PF_R16G16_SFLOAT,
 			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_COLOUR_ATTACHMENT_BIT), width, height);
-		// Reverse-Z (see Renderer::Render's projection setup) - cleared to 0, compared Greater.
+		// Reverse-Z - cleared to 0, compared Greater.
 		targets.depthBuffer = CreateViewportTargetTexture("Depth Buffer", PixelFormat::PF_D32_SFLOAT,
 			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT), width, height);
 
@@ -1874,13 +1809,9 @@ namespace tyr
 			return;
 		}
 
-		// The lighting compute pass writes colourTexture directly (not through the bindless sampled
-		// textures[] array CreateViewportTargetTexture already bound it into above) - needs its own
-		// storage-image descriptor write, at this slot's own index into the
-		// TYR_BINDING_LIGHTING_OUTPUT array (see DeferredLightingCS.hlsl's outputImages[]) - one
-		// entry per buffered RenderFrame slot. Checked every tick (not just right after a resize)
-		// since the active scene switching to a different RenderViewport also changes which colour
-		// texture this slot should actually point at, even when neither viewport's size changed.
+		// The lighting compute pass writes colourTexture directly, needing its own storage-image
+		// descriptor write at this slot's own index. Checked every tick since switching scenes
+		// can change which texture this slot should point at.
 		const Texture& texture = m_Registry.GetTexture(colourTexture);
 		ImageBindingInfo outputImageInfo;
 		outputImageInfo.imageView = texture.imageView;
@@ -1902,16 +1833,9 @@ namespace tyr
 				continue;
 			}
 
-			// Deleted immediately via the registry, not DeleteViewportTargetTexture/
-			// texturesToDelete - this function only ever runs from ProcessFrameDeleteLists
-			// (processing renderViewportsToDelete), by which point it's already established safe
-			// to delete right away (same reasoning as DeleteWindowResources' direct teardown).
-			// Queuing into texturesToDelete here would be too late: ProcessFrameDeleteLists has
-			// already finished iterating that same list earlier in this same call (see its own
-			// ordering), so a newly queued entry would just sit there and get silently discarded
-			// by the renderFrame.Clear() that follows - confirmed as a real leak (reproduced and
-			// fixed: LocalObjectPool<Texture> asserting on shutdown with exactly
-			// c_BufferedFrameCount * 5 = 15 left over).
+			// Deleted immediately via the registry rather than queued for deferred deletion - this
+			// only ever runs once it's already established safe to delete right away, and queuing
+			// here would be too late for this same tick's delete-list processing to pick it up.
 			m_Registry.DeleteTexture(targets.colourTexture);
 			m_Registry.DeleteTexture(targets.gbufferAlbedoAO);
 			m_Registry.DeleteTexture(targets.gbufferNormalRoughMetal);
@@ -2030,7 +1954,8 @@ namespace tyr
 			m_Ctx.device->DeleteSemaphoreResource(window.executeCompleteSemaphores[i]);
 		}
 		delete window.swapChain;
-		// Freed here rather than immediately in RemoveWindow - see its own comment.
+		// Freed here rather than immediately in RemoveWindow, once deferred deletion confirms
+		// it's safe.
 		m_WindowPool.Delete(pending.handle.h);
 	}
 
@@ -2132,7 +2057,7 @@ namespace tyr
 			}
 			{
 				// TYR_BINDING_LIGHTING_OUTPUT - the deferred lighting pass's storage image output,
-				// one per buffered RenderFrame slot (see RenderViewportTextureData).
+				// one per buffered RenderFrame slot.
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
 				poolSize.descriptorType = DescriptorType::StorageImage;
 				poolSize.descriptorCount = RenderConstants::c_BufferedFrameCount;
@@ -2162,11 +2087,8 @@ namespace tyr
 			};
 
 			// Scene-info/lights/textures/samplers also need to be readable from the deferred
-			// lighting compute pass (DeferredLightingCS.hlsl reads the G-buffer/depth via the
-			// bindless textures[] array and the same light buffers GBufferPS.hlsl's forward
-			// equivalent used to read directly), and mesh/meshLOD/mesh-instance from the
-			// instance culling compute pass too (CullInstancesCS.hlsl) - meshlet/vertex/index/
-			// material stay geometry-only, nothing else needs them.
+			// lighting compute pass, and mesh/meshLOD/mesh-instance from the instance culling
+			// compute pass too - meshlet/vertex/index/material stay geometry-only.
 			const ShaderStage meshAndComputeStages = static_cast<ShaderStage>(meshPipelineStages | SHADER_STAGE_COMPUTE_BIT);
 
 			AddBinding(TYR_BINDING_SCENE_INFO, DescriptorType::UniformBuffer, 1, meshAndComputeStages);
@@ -2184,43 +2106,20 @@ namespace tyr
 			const DescriptorBindingFlags bindlessFlags = static_cast<DescriptorBindingFlags>(DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
 			AddBinding(TYR_BINDING_TEXTURES, DescriptorType::SampledImage, RenderConstants::c_MaxTextures, meshAndComputeStages, bindlessFlags);
 			AddBinding(TYR_BINDING_SAMPLERS, DescriptorType::Sampler, Device::c_MaxSamplers, meshAndComputeStages, bindlessFlags);
-			// GUIVS.hlsl reads this directly (vertex-pulling via SV_VertexID) - a vertex stage,
-			// not one of the mesh pipeline's task/mesh/fragment stages. Declared in ascending
-			// binding-number order with no gaps after this, matching what
-			// VulkanDescriptorSet.cpp's bindingDescriptorTypes lookup assumes.
+			// Read directly by the vertex shader (vertex-pulling via SV_VertexID) - a vertex
+			// stage, not one of the mesh pipeline's task/mesh/fragment stages. Declared in
+			// ascending binding-number order with no gaps after this.
 			AddBinding(TYR_BINDING_GUI_VERTEX, DescriptorType::StorageBuffer, 1, SHADER_STAGE_VERTEX_BIT);
-			// Deferred lighting pass's output (the viewport colour texture, written as a storage
-			// image) - compute-only, not part of the bindless sampled textures[] array above.
-			// One entry per buffered RenderFrame slot (see RenderViewportTextureData and
-			// DeferredLightingCS.hlsl's outputImages[]) - each slot's compute dispatch only ever
-			// writes its own array index, so up to c_BufferedFrameCount dispatches can genuinely
-			// be in flight on the GPU at once without racing each other on the same image.
-			//
-			// Needs UPDATE_AFTER_BIND_BIT regardless: EditorViewport::Draw resizes a slot's texture
-			// (and rewrites that slot's array entry via Renderer::EnsureLightingOutputBound)
-			// whenever the panel size changes, and even though PrepareForNextFrame already guarantees that
-			// specific slot's own previous dispatch has finished by the time its turn comes back
-			// around, the descriptor SET as a whole is still normally "in use" by whichever OTHER
-			// slots' dispatches are currently in flight - without this flag, updating any entry
-			// while that's true is a real Vulkan spec violation (VUID-vkUpdateDescriptorSets-
-			// None-03047), not just a validation warning.
-			//
-			// Also needs PARTIALLY_BOUND_BIT, same reason the bindless TYR_BINDING_TEXTURES array
-			// does: g_PushConstants.renderFrameIndex is a dynamic (runtime, not shader-compile-time
-			// constant) index into this array, and EditorViewport::Draw only creates a given slot's
-			// texture - and so only writes that slot's array entry - on that slot's own first turn
-			// through the 0/1/2 cycle. Without this flag, a dispatch for an already-created slot
-			// (dynamically indexing this array) can require every entry to be validly bound, not
-			// just the one it actually reads - including slots that haven't had their first turn
-			// yet during the first couple of ticks.
+			// Compute-only storage image output, one entry per buffered RenderFrame slot. Needs
+			// UPDATE_AFTER_BIND_BIT (an entry can be rewritten while others are in flight) and
+			// PARTIALLY_BOUND_BIT (not every slot is bound yet).
 			const DescriptorBindingFlags lightingOutputFlags = static_cast<DescriptorBindingFlags>(
 				DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
 			AddBinding(TYR_BINDING_LIGHTING_OUTPUT, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 
-			// GPU-driven instance culling (CullInstancesCS.hlsl) - compute-only except
-			// TYR_BINDING_VISIBLE_INSTANCE_INDICES, which MeshAS.hlsl (task stage) also reads
-			// per draw via SV_DrawIndex. See RecordCullingPass/RenderResources.h.
+			// GPU-driven instance culling - compute-only except TYR_BINDING_VISIBLE_INSTANCE_INDICES,
+			// which the task stage also reads per draw via SV_DrawIndex.
 			AddBinding(TYR_BINDING_ACTIVE_INSTANCE_INDICES, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 			AddBinding(TYR_BINDING_VISIBLE_INSTANCE_INDICES, DescriptorType::StorageBuffer, 1,
 				static_cast<ShaderStage>(SHADER_STAGE_COMPUTE_BIT | SHADER_STAGE_TASK_BIT));
@@ -2267,9 +2166,8 @@ namespace tyr
 		desc.rasterizerStateDesc.depthClampEnabled = false;
 		desc.rasterizerStateDesc.depthBiasEnabled = false;
 
-		// Depth stencil description - reverse-Z (see Renderer::Render's projection setup, which
-		// swaps near/far), so a nearer fragment has a *larger* depth value than what's already
-		// there: compare Greater, cleared to 0 (see RecordGeometryPass).
+		// Depth stencil description - reverse-Z, so a nearer fragment has a larger depth value
+		// than what's already there: compare Greater, cleared to 0.
 		desc.depthStencilStateDesc.depthCompareOp = CompareOp::Greater;
 		desc.depthStencilStateDesc.minDepthBounds = 0.0f;
 		desc.depthStencilStateDesc.maxDepthBounds = 1.0f;
@@ -2293,8 +2191,8 @@ namespace tyr
 		desc.multiSampleDesc.alphaToCoverageEnable = false;
 		desc.multiSampleDesc.alphaToOneEnable = false;
 
-		// Must match Renderer::ResizeRenderViewportSlot's gbufferAlbedoAO/gbufferNormalRoughMetal/
-		// gbufferMotion/depthBuffer formats - dynamic rendering requires the two to agree.
+		// Must match the G-buffer render target formats - dynamic rendering requires the two to
+		// agree.
 		desc.dynamicRendering.colorAttachmentFormats.Add(PF_R8G8B8A8_SRGB);
 		desc.dynamicRendering.colorAttachmentFormats.Add(PF_R16G16B16A16_SFLOAT);
 		desc.dynamicRendering.colorAttachmentFormats.Add(PF_R16G16_SFLOAT);
@@ -2308,11 +2206,9 @@ namespace tyr
 
 		m_Resources.geometryGraphicsPipeline = m_Ctx.device->CreateGraphicsPipeline(desc);
 
-		// GUI pipeline - reuses the same bindless descriptor set layout (its font/UI textures
-		// are just more entries in the same textures[] array), but is otherwise a completely
-		// separate pipeline: a plain vertex+pixel shader pair (vertex-pulling via
-		// TYR_BINDING_GUI_VERTEX, not fixed-function vertex input) with alpha blending on and
-		// no depth testing, drawn over whatever GeometryPass already rendered.
+		// GUI pipeline - reuses the same bindless descriptor set layout, but is otherwise a
+		// completely separate pipeline: vertex-pulling, alpha blending on, no depth testing,
+		// drawn over whatever the geometry pass already rendered.
 		GraphicsPipelineDesc guiDesc;
 		guiDesc.topology = PrimitiveTopology::TriangeList;
 
@@ -2364,7 +2260,7 @@ namespace tyr
 		PushConstantRange& guiPushConstantRange = guiDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
 		guiPushConstantRange.stageFlags = guiPipelineStages;
 		guiPushConstantRange.offset = 0;
-		guiPushConstantRange.size = sizeof(float) * 4 + sizeof(uint); // scale, translate, textureIndex - see GUIPass.cpp's GUIPushConstants
+		guiPushConstantRange.size = sizeof(float) * 4 + sizeof(uint); // scale, translate, textureIndex
 
 		guiDesc.shaders.Add(m_Resources.guiVertexShader);
 		guiDesc.shaders.Add(m_Resources.guiPixelShader);
@@ -2390,16 +2286,15 @@ namespace tyr
 
 		m_Resources.lightingPipeline = m_Ctx.device->CreateComputePipeline(lightingDesc);
 
-		// GPU-driven instance frustum culling - runs just before GeometryPass, compacting
-		// visible instances into the indirect draw buffers it then draws from directly. See
-		// RecordCullingPass.
+		// GPU-driven instance frustum culling - runs just before the geometry pass, compacting
+		// visible instances into the indirect draw buffers it then draws from directly.
 		ComputePipelineDesc cullingDesc;
 		cullingDesc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
 
 		PushConstantRange& cullingPushConstantRange = cullingDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
 		cullingPushConstantRange.stageFlags = SHADER_STAGE_COMPUTE_BIT;
 		cullingPushConstantRange.offset = 0;
-		cullingPushConstantRange.size = sizeof(uint); // activeInstanceCount - see CullInstancesCS.hlsl
+		cullingPushConstantRange.size = sizeof(uint); // activeInstanceCount
 
 		cullingDesc.shader = m_Resources.cullingComputeShader;
 
@@ -2502,8 +2397,7 @@ namespace tyr
 		{
 			RenderBufferDesc desc;
 			desc.debugName = "GUI Vertex Buffer";
-			// One c_BufferedFrameCount-th per buffered RenderFrame slot - see
-			// RenderConstants::c_GUIVertexBufferSize's own comment on why.
+			// One c_BufferedFrameCount-th per buffered RenderFrame slot.
 			desc.size = RenderConstants::c_GUIVertexBufferSize * RenderConstants::c_BufferedFrameCount;
 			// Storage, not Vertex - GUIVS.hlsl pulls its own vertex via a StructuredBuffer
 			// binding (TYR_BINDING_GUI_VERTEX) instead of fixed-function vertex input.
@@ -2513,8 +2407,7 @@ namespace tyr
 		{
 			RenderBufferDesc desc;
 			desc.debugName = "GUI Index Buffer";
-			// One c_BufferedFrameCount-th per buffered RenderFrame slot - see
-			// RenderConstants::c_GUIIndexBufferSize's own comment on why.
+			// One c_BufferedFrameCount-th per buffered RenderFrame slot.
 			desc.size = RenderConstants::c_GUIIndexBufferSize * RenderConstants::c_BufferedFrameCount;
 			desc.usage = RenderBufferUsage::Index;
 			desc.stride = sizeof(uint16);
@@ -2551,16 +2444,14 @@ namespace tyr
 		{
 			RenderBufferDesc desc;
 			desc.debugName = "TLAS Instance Buffer";
-			// One c_BufferedFrameCount-th per buffered RenderFrame slot - see
-			// RenderResources::tlasInstanceBuffer's own comment on why.
+			// One c_BufferedFrameCount-th per buffered RenderFrame slot.
 			desc.size = RenderConstants::c_TLASInstanceBufferSize * RenderConstants::c_BufferedFrameCount;
 			desc.usage = RenderBufferUsage::RayTracing;
 			m_Resources.tlasInstanceBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
-			// See RenderResources::rtCullingStagingBuffer's own comment - RenderAsync writes
-			// directly into this at a fixed offset for its own renderFrameIndex slot, no
-			// allocator involved.
+			// Written directly at a fixed offset for its own renderFrameIndex slot, no allocator
+			// involved.
 			RenderBufferDesc desc;
 			desc.debugName = "RT/Culling Staging Buffer";
 			desc.size = c_RTCullingStagingSlotSize * RenderConstants::c_BufferedFrameCount;
@@ -2568,7 +2459,6 @@ namespace tyr
 			m_Resources.rtCullingStagingBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
-			// See RenderResources::blasStorageBuffer's own comment.
 			RenderBufferDesc desc;
 			desc.debugName = "BLAS Storage Buffer";
 			desc.size = RenderConstants::c_BLASStorageBufferSize;

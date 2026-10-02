@@ -21,9 +21,8 @@ namespace tyr
         static TaskScheduler& Instance();
 
         // Creates a task and sets its function but doesn't schedule it - call Enqueue() once
-        // ready. Called from inside a running task, the new task becomes that task's child.
-        // "lifetime" controls slot-freeing - leave at AutoDelete unless a dependency might be
-        // added later, after it could already be running or finished.
+        // ready. "lifetime" controls slot-freeing - leave at AutoDelete unless a dependency
+        // might be added later, after it could already be running or finished.
         TaskID CreateTask(TaskFunction&& fn, TaskLifetime lifetime = TaskLifetime::AutoDelete);
 
         // Makes "task" wait for "dependency" to finish before it can run - must be called

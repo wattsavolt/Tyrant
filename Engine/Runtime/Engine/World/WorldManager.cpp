@@ -138,15 +138,13 @@ namespace tyr
 		world.osWindowHandle = config.osWindowHandle;
 
 		world.sceneHandle = m_RendererAPI->AddScene(world.name.CStr());
-		// Unlike windowHandle/sceneHandle's own SetSceneWindow/SetActiveScene calls, a
-		// RenderViewport needs no OS window and nothing depends on this world being the active one
-		// yet - safe (and necessary, since EditorViewport needs a handle to resize against
-		// regardless of which world ends up active first) to create it for every world immediately.
+		// Unlike windowHandle/sceneHandle's own setup, a RenderViewport needs no OS window and
+		// nothing depends on this world being the active one yet - safe to create it for
+		// every world immediately.
 		world.renderViewportHandle = m_RendererAPI->CreateRenderViewport();
 
-		// Not calling SetSceneWindow/SetSceneRenderViewport here - both only ever apply to the
-		// active scene, and a freshly created world isn't automatically the active one (see
-		// SetActiveWorld).
+		// Not calling the active-scene-window/viewport setup here - that only applies to the
+		// active scene, and a freshly created world isn't automatically the active one.
 	}
 
 	void WorldManager::SetActiveWorld(Handle worldHandle)
@@ -222,14 +220,9 @@ namespace tyr
 
 	void WorldManager::ShutdownWorld(World& world)
 	{
-		// Mirrors UpdateWorld's CreateMeshInstance calls: delete the renderer-side instance
-		// and release this world's share of each material's refcount (both only ever actually
-		// requested once the instance resolved - see WorldMeshInstance's own comment), plus
-		// release this world's reference to the underlying mesh asset. LoadMesh (and so the
-		// mesh asset's own refcount) was incremented synchronously when CreateMeshInstance was
-		// first called, regardless of whether the instance itself has resolved yet, so
-		// DeleteMesh always needs calling here to balance it - not just when meshInstance is
-		// valid.
+		// Delete the renderer-side instance and release this world's share of each material's
+		// refcount once resolved, plus release the mesh asset reference itself regardless of
+		// whether the instance ever resolved.
 		for (const WorldMeshInstance& tracked : world.meshInstances)
 		{
 			if (tracked.meshInstance)

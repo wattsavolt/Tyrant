@@ -7,12 +7,9 @@ namespace tyr
 {
 	class RendererAPI;
 
-	// Unreal-style 3D viewport panel: displays GeometryPass's output (a dedicated offscreen
-	// texture - see RendererAPI::GetOrCreateRenderViewportTexture) inside a floating, resizable
-	// ImGui window, with a toggle to maximize it over the rest of the editor. Purely a reader of
-	// whichever RenderViewport it's given each Draw() call - the viewport itself is created/
-	// destroyed by World, not this class (see RenderViewport's own comment), so there's nothing
-	// for this class to release on shutdown any more.
+	// Unreal-style 3D viewport panel: displays the scene's offscreen render target inside a
+	// floating, resizable ImGui window, with a toggle to maximize it over the editor. Owns
+	// nothing itself - purely a reader of whichever viewport it's given each Draw() call.
 	class TYR_EDITOR_EXPORT EditorViewport final
 	{
 	public:

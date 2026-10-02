@@ -546,9 +546,8 @@ namespace tyr
 		AssetData& assetData = m_AssetMap[ld->assetID];
 		const MeshHandle meshHandle = m_RendererAPI->CreateMesh(desc);
 		assetData.resourceHandle = meshHandle.h;
-		// Marks the header available to other code - see AssetData::meshHeader's comment.
-		// Geometry loading below doesn't need to wait on anything else, but
-		// TryResolvePendingMeshInstances does wait on this being set.
+		// Marks the header available to other code. Geometry loading below doesn't need to
+		// wait on anything else, but resolving pending mesh instances does wait on this being set.
 		assetData.meshHeader = ld->header;
 		assetData.pendingLodCount = header.lods.Size();
 

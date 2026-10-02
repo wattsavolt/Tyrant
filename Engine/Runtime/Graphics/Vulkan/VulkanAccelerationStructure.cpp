@@ -10,89 +10,118 @@ namespace tyr
 		{
 			return type == IndexType::UInt16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
 		}
-	}
 
-	AccelerationStructureHandle Device::CreateAccelerationStructure(const AccelerationStructureDesc& desc)
-	{
-		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
-		const AccelerationStructureHandle handle(device.m_AccelerationStructurePool.Create());
-		AccelerationStructure& as = device.m_AccelerationStructurePool[handle.h];
-		as.desc = desc;
-
-		const bool isTopLevel = desc.type == AccelerationStructureType::TopLevel;
-		const VkAccelerationStructureTypeKHR vkType = isTopLevel
-			? VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR
-			: VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+		VkAccelerationStructureTypeKHR ToVulkanASType(AccelerationStructureType type)
+		{
+			return type == AccelerationStructureType::TopLevel
+				? VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR
+				: VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+		}
 
 		// Only counts/formats are needed to size the structure - real buffer addresses aren't
-		// known/needed until an actual build (see CommandList::BuildAccelerationStructures).
-		LocalArray<VkAccelerationStructureGeometryKHR, 1> vkGeometries;
-		LocalArray<uint32_t, 1> maxPrimitiveCounts;
+		// known/needed until an actual build. vkGeometries/maxPrimitiveCounts must outlive
+		// buildInfo, which just points at them.
+		void BuildVkGeometryInfo(const AccelerationStructureDesc& desc,
+			LocalArray<VkAccelerationStructureGeometryKHR, 1>& vkGeometries,
+			LocalArray<uint32_t, 1>& maxPrimitiveCounts,
+			VkAccelerationStructureBuildGeometryInfoKHR& buildInfo)
+		{
+			const bool isTopLevel = desc.type == AccelerationStructureType::TopLevel;
 
-		if (isTopLevel)
-		{
-			VkAccelerationStructureGeometryKHR& geom = vkGeometries.ExpandOne();
-			geom = {};
-			geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-			geom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-			geom.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-			geom.geometry.instances.arrayOfPointers = VK_FALSE;
-			maxPrimitiveCounts.Add(desc.maxInstanceCount);
-		}
-		else
-		{
-			for (const AccelerationStructureGeometryDesc& geomDesc : desc.geometries)
+			if (isTopLevel)
 			{
 				VkAccelerationStructureGeometryKHR& geom = vkGeometries.ExpandOne();
 				geom = {};
 				geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-				geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-				VkAccelerationStructureGeometryTrianglesDataKHR& tri = geom.geometry.triangles;
-				tri.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-				tri.vertexFormat = VulkanUtility::ToVulkanPixelFormat(geomDesc.vertexFormat);
-				tri.vertexStride = geomDesc.vertexStride;
-				tri.maxVertex = geomDesc.maxVertexCount > 0 ? geomDesc.maxVertexCount - 1 : 0;
-				tri.indexType = ToVulkanIndexType(geomDesc.indexType);
-				geom.flags = geomDesc.isOpaque ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0;
-				maxPrimitiveCounts.Add(geomDesc.maxPrimitiveCount);
+				geom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+				geom.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+				geom.geometry.instances.arrayOfPointers = VK_FALSE;
+				maxPrimitiveCounts.Add(desc.maxInstanceCount);
 			}
+			else
+			{
+				for (const AccelerationStructureGeometryDesc& geomDesc : desc.geometries)
+				{
+					VkAccelerationStructureGeometryKHR& geom = vkGeometries.ExpandOne();
+					geom = {};
+					geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+					geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+					VkAccelerationStructureGeometryTrianglesDataKHR& tri = geom.geometry.triangles;
+					tri.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+					tri.vertexFormat = VulkanUtility::ToVulkanPixelFormat(geomDesc.vertexFormat);
+					tri.vertexStride = geomDesc.vertexStride;
+					tri.maxVertex = geomDesc.maxVertexCount > 0 ? geomDesc.maxVertexCount - 1 : 0;
+					tri.indexType = ToVulkanIndexType(geomDesc.indexType);
+					geom.flags = geomDesc.isOpaque ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0;
+					maxPrimitiveCounts.Add(geomDesc.maxPrimitiveCount);
+				}
+			}
+
+			buildInfo = {};
+			buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+			buildInfo.type = ToVulkanASType(desc.type);
+			buildInfo.flags = static_cast<VkBuildAccelerationStructureFlagsKHR>(desc.buildFlags);
+			buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+			buildInfo.geometryCount = vkGeometries.Size();
+			buildInfo.pGeometries = vkGeometries.Data();
 		}
 
-		VkAccelerationStructureBuildGeometryInfoKHR buildInfo{};
-		buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-		buildInfo.type = vkType;
-		buildInfo.flags = static_cast<VkBuildAccelerationStructureFlagsKHR>(desc.buildFlags);
-		buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-		buildInfo.geometryCount = vkGeometries.Size();
-		buildInfo.pGeometries = vkGeometries.Data();
+		// Only ever needs the raw VkDevice handle (Device::GetLogicalDevice() is public), not
+		// DeviceInternal's other private state - kept a free function rather than a Device
+		// member for that reason.
+		VkAccelerationStructureBuildSizesInfoKHR QueryBuildSizes(VkDevice logicalDevice, const AccelerationStructureDesc& desc)
+		{
+			LocalArray<VkAccelerationStructureGeometryKHR, 1> vkGeometries;
+			LocalArray<uint32_t, 1> maxPrimitiveCounts;
+			VkAccelerationStructureBuildGeometryInfoKHR buildInfo{};
+			BuildVkGeometryInfo(desc, vkGeometries, maxPrimitiveCounts, buildInfo);
 
-		VkAccelerationStructureBuildSizesInfoKHR buildSizes{};
-		buildSizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-		vkGetAccelerationStructureBuildSizesKHR(device.m_LogicalDevice, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
-			&buildInfo, maxPrimitiveCounts.Data(), &buildSizes);
+			VkAccelerationStructureBuildSizesInfoKHR buildSizes{};
+			buildSizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+			vkGetAccelerationStructureBuildSizesKHR(logicalDevice, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+				&buildInfo, maxPrimitiveCounts.Data(), &buildSizes);
+			return buildSizes;
+		}
+	}
 
-		BufferDesc bufferDesc;
-		bufferDesc.debugName = desc.debugName;
-		bufferDesc.usage = static_cast<BufferUsage>(BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT | BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-		bufferDesc.memoryProperty = MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-		bufferDesc.size = static_cast<size_t>(buildSizes.accelerationStructureSize);
-		as.backingBuffer = CreateBuffer(bufferDesc);
-		const Buffer& backingBuffer = device.GetBuffer(as.backingBuffer);
+	void Device::GetAccelerationStructureSize(const AccelerationStructureDesc& desc, size_t& outASSize, size_t& outBuildScratchSize) const
+	{
+		const DeviceInternal& device = static_cast<const DeviceInternal&>(*this);
+		const VkAccelerationStructureBuildSizesInfoKHR buildSizes = QueryBuildSizes(device.GetLogicalDevice(), desc);
+		outASSize = static_cast<size_t>(buildSizes.accelerationStructureSize);
+		outBuildScratchSize = static_cast<size_t>(buildSizes.buildScratchSize);
+	}
+
+	// Shared tail end of both public creation entry points, once each has settled on a backing
+	// buffer/offset. Re-queries build sizes rather than taking them as a parameter, so this
+	// doesn't need a Vulkan-specific type in its own signature.
+	AccelerationStructureHandle Device::CreateAccelerationStructureIntoBuffer(const AccelerationStructureDesc& desc, BufferHandle backingBuffer, size_t backingOffset, bool externalBackingBuffer)
+	{
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		const VkAccelerationStructureBuildSizesInfoKHR buildSizes = QueryBuildSizes(device.GetLogicalDevice(), desc);
+
+		const AccelerationStructureHandle handle(device.m_AccelerationStructurePool.Create());
+		AccelerationStructure& as = device.m_AccelerationStructurePool[handle.h];
+		as.desc = desc;
+		as.backingBuffer = backingBuffer;
+		as.externalBackingBuffer = externalBackingBuffer;
+
+		const Buffer& buffer = device.GetBuffer(backingBuffer);
 
 		VkAccelerationStructureCreateInfoKHR createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-		createInfo.buffer = backingBuffer.buffer;
-		createInfo.offset = 0;
+		createInfo.buffer = buffer.buffer;
+		createInfo.offset = backingOffset;
 		createInfo.size = buildSizes.accelerationStructureSize;
-		createInfo.type = vkType;
-		TYR_GASSERT(vkCreateAccelerationStructureKHR(device.m_LogicalDevice, &createInfo, g_VulkanAllocationCallbacks, &as.accelerationStructure));
+		createInfo.type = ToVulkanASType(desc.type);
+		TYR_GASSERT(vkCreateAccelerationStructureKHR(device.GetLogicalDevice(), &createInfo, g_VulkanAllocationCallbacks, &as.accelerationStructure));
 
-		TYR_SET_GFX_DEBUG_NAME(device.m_LogicalDevice, desc.debugName, VK_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR, reinterpret_cast<uint64>(as.accelerationStructure));
+		TYR_SET_GFX_DEBUG_NAME(device.GetLogicalDevice(), desc.debugName, VK_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR, reinterpret_cast<uint64>(as.accelerationStructure));
 
 		VkAccelerationStructureDeviceAddressInfoKHR addressInfo{};
 		addressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
 		addressInfo.accelerationStructure = as.accelerationStructure;
-		as.deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(device.m_LogicalDevice, &addressInfo);
+		as.deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(device.GetLogicalDevice(), &addressInfo);
 
 		as.buildScratchSize = buildSizes.buildScratchSize;
 		as.updateScratchSize = buildSizes.updateScratchSize;
@@ -100,12 +129,35 @@ namespace tyr
 		return handle;
 	}
 
+	AccelerationStructureHandle Device::CreateAccelerationStructure(const AccelerationStructureDesc& desc)
+	{
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		const VkAccelerationStructureBuildSizesInfoKHR buildSizes = QueryBuildSizes(device.GetLogicalDevice(), desc);
+
+		BufferDesc bufferDesc;
+		bufferDesc.debugName = desc.debugName;
+		bufferDesc.usage = static_cast<BufferUsage>(BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT | BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+		bufferDesc.memoryProperty = MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+		bufferDesc.size = static_cast<size_t>(buildSizes.accelerationStructureSize);
+		const BufferHandle backingBuffer = CreateBuffer(bufferDesc);
+
+		return CreateAccelerationStructureIntoBuffer(desc, backingBuffer, 0, false);
+	}
+
+	AccelerationStructureHandle Device::CreateAccelerationStructureAt(const AccelerationStructureDesc& desc, BufferHandle backingBuffer, size_t backingOffset)
+	{
+		return CreateAccelerationStructureIntoBuffer(desc, backingBuffer, backingOffset, true);
+	}
+
 	void Device::DeleteAccelerationStructure(AccelerationStructureHandle handle)
 	{
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
 		AccelerationStructure& as = device.GetAccelerationStructure(handle);
 		vkDestroyAccelerationStructureKHR(device.m_LogicalDevice, as.accelerationStructure, g_VulkanAllocationCallbacks);
-		DeleteBuffer(as.backingBuffer);
+		if (!as.externalBackingBuffer)
+		{
+			DeleteBuffer(as.backingBuffer);
+		}
 		device.m_AccelerationStructurePool.Delete(handle.h);
 	}
 

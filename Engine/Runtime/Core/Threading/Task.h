@@ -21,56 +21,32 @@ namespace tyr
 
     // Controls when a finished task's pool slot is actually freed.
     //
-    //  - AutoDelete (the default): freed the instant the task (and any subtasks it spawned)
-    //    finish. Zero extra cost, but every dependent must be registered via AddDependency
-    //    *before* this task is enqueued - once it's running it may finish and be deleted at
-    //    any moment, so adding a dependency on it after that point isn't safe. This covers
-    //    the common case where a dependency graph is built up front, all at once, before any
-    //    of its nodes start running (e.g. render graph passes wiring up their dependencies
-    //    on each other before any of them are kicked off).
-    //
-    //  - ManualRelease: stays valid - safe to AddDependency against, even after it's started
-    //    or already finished running - until TaskScheduler::ReleaseTask() is explicitly
-    //    called on it. Use this when a task might need to gain a new dependent sometime
-    //    after it could already be running or done, which AutoDelete can't safely support
-    //    (e.g. next frame's render-submission task depending on this frame's, set up from
-    //    the main thread on a later tick, well after this frame's task may have finished).
-    //    The creator must call ReleaseTask exactly once, whenever it knows no more
-    //    dependencies will ever be added - that can happen before or after the task itself
-    //    finishes running; the slot is only freed once both have happened. Once released,
-    //    treat the ID as gone, exactly like an AutoDelete task - don't add further
-    //    dependencies to it after that point.
+    //  - AutoDelete (the default): freed immediately once the task and any subtasks finish.
+    //    Every dependent must be registered before this task is enqueued, since it can
+    //    vanish at any moment once running.
+    //  - ManualRelease: stays valid - safe to add dependents even after it starts or
+    //    finishes - until explicitly released. The creator must release it exactly once,
+    //    any time after it knows no more dependents will be added.
     enum class TaskLifetime : uint8
     {
         AutoDelete,
         ManualRelease
     };
 
-    // Plain data - see TaskUtil for everything that operates on a Task. Reset() is kept here
-    // since it's the struct's own "clear back to a blank state" operation, same shape as
-    // Reset() on other plain data structs elsewhere (MeshHeader, ModelImportMesh, etc.) -
-    // TaskUtil::InitTask is what actually prepares a task for a new job (calls Reset, then
-    // sets it up with a function/lifetime).
+    // Plain data - the operations that act on it are kept separate.
     struct Task
     {
         TaskFunction function;
 
-        // Starts at 1, for "this task hasn't been Enqueue()'d yet". +1 per real dependency
-        // added via AddDependency(); Enqueue() itself releases the initial ref, same as every
-        // dependency finishing releases its own. Whichever of those - the last dependency
-        // finishing, or Enqueue() being called - brings it to 0 is what actually makes the
-        // task runnable. This mirrors pendingCount's own bias below, and for the same reason:
-        // without it, Enqueue() and a dependency's completion could each independently decide
-        // (from GetDependencyCount()==0 and a separate state check) that they're the one that
-        // should push the task, racing to push it twice.
+        // Starts at 1 ("not yet enqueued"); +1 per dependency added, -1 per dependency
+        // finished and -1 on enqueue. Whichever decrement reaches 0 marks the task runnable,
+        // so two completions can't each think they're the one to start it.
         Atomic<uint> dependencyCount;
         Atomic<TaskState> state;
 
-        // Grows to whatever a task's largest-ever dependent count has been, then never
-        // reallocates again, since this same Task object is reset and reused for every
-        // task that ever occupies this pool slot (see TaskPool) rather than being freed.
-        // Only safe to read directly once this task is Finished - see
-        // TaskUtil::TryAddDependent/ReleasePendingRef.
+        // Grows to this task's largest-ever dependent count, then never reallocates - the
+        // same Task object is reset and reused for every task occupying this pool slot.
+        // Only safe to read once this task is Finished.
         Array<TaskID> dependents;
 
         // Starts at 1, for "the task's own function hasn't returned yet". +1 per subtask
@@ -82,24 +58,24 @@ namespace tyr
 
         TaskLifetime lifetime = TaskLifetime::AutoDelete;
 
-        // Starts at 1 for AutoDelete, 2 for ManualRelease - see TaskLifetime above and
-        // TaskUtil::ReleaseDeletionGate. Reaching 0 is what actually deletes the task's pool
-        // slot.
+        // Starts at 1 for AutoDelete, 2 for ManualRelease. Reaching 0 is what actually
+        // deletes the task's pool slot.
         Atomic<int> deletionGate;
 
         // Guards dependents together with the Finished state transition, so a dependent
-        // registering itself and this task finishing can never race each other silently -
-        // see TaskUtil::TryAddDependent/ReleasePendingRef. Setup-time only, never touched on
-        // the per-task steal/run hot path, so a plain mutex here doesn't cost anything there.
+        // registering itself and this task finishing can never race silently. Setup-time
+        // only, never touched on the hot run/steal path, so a plain mutex costs nothing there.
         Mutex mutex;
+
+        // Count of tasks that haven't finished running yet, independent of pool-slot
+        // lifetime - a ManualRelease task's slot can stay allocated long after it finishes,
+        // so tracking completion separately avoids waiting on a release that may never come.
+        static Atomic<uint> s_LiveCount;
 
         Task();
 
-        // Puts a task slot pulled back out of the pool into a clean, blank state - the
-        // struct's own default values, function included. Must be called every time a slot
-        // is reused (see TaskPool) - the Task object itself isn't reconstructed on reuse.
-        // Doesn't take a function/lifetime itself - see TaskUtil::InitTask for actually
-        // preparing a reset task for a new job.
+        // Clears a reused task slot back to default values, function included - the object
+        // itself is never reconstructed, just reset in place each time a slot is reused.
         void Reset();
     };
 }

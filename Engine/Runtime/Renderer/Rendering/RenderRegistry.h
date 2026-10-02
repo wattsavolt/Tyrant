@@ -18,14 +18,11 @@ namespace tyr
 
 	// TODO: Add skeleton buffer and bone buffer
 	
-	// Class that manages long-lived render resources
+	// Class that manages long-lived render resources.
 	//
-	// Deleting a resource here is only safe once we know nothing still reads it. Deletions
-	// are deferred - a resource marked for deletion is only actually removed once we've
-	// waited for the GPU work from 3 frames ago (the frame that last used it) to finish, at
-	// which point the RenderAsync task for that frame is guaranteed done too. Never delete a
-	// resource straight away - keep it alive and let PrepareForNextFrame's deferred deletion
-	// lists do it.
+	// Deleting a resource here is only safe once nothing still reads it - deletions are
+	// deferred until the GPU work that last used it is confirmed finished, not performed
+	// immediately.
 	class RenderRegistry final : INonCopyable
 	{
 	public:
@@ -71,6 +68,10 @@ namespace tyr
 
 		MeshHandle CreateMesh(const MeshDesc& desc, uint lodOffset);
 		void DeleteMesh(MeshHandle handle);
+		Mesh& GetMesh(MeshHandle handle)
+		{
+			return m_MeshPool[handle.h];
+		}
 		const Mesh& GetMesh(MeshHandle handle) const
 		{
 			return m_MeshPool[handle.h];

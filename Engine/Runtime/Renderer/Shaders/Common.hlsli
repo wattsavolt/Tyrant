@@ -50,8 +50,8 @@ float3 DecodeOct(float2 e)
     return normalize(v);
 }
 
-// Unpacks a uint holding two snorm16 values (low 16 bits = x, high 16 bits = y - see
-// MeshUtil::EncodeOct) before decoding as an octahedral-encoded unit vector.
+// Unpacks a uint holding two snorm16 values (low 16 bits = x, high 16 bits = y) before
+// decoding as an octahedral-encoded unit vector.
 float3 DecodeOct(uint packed)
 {
     int sx = (int)(packed << 16) >> 16;
@@ -61,11 +61,20 @@ float3 DecodeOct(uint packed)
 }
 
 // Same packing as DecodeOct(uint), except the top bit is the bitangent sign, not part of
-// the oct encoding - see MeshUtil::VertexToShaderVertex, which packs it in after encoding.
+// the oct encoding.
 float3 DecodeOctTangent(uint packed, out float bitangentSign)
 {
     bitangentSign = (packed & 0x80000000u) != 0 ? -1.0f : 1.0f;
     return DecodeOct(packed & 0x7FFFFFFFu);
+}
+
+// Inverse of DecodeOct(float2) - packs a unit vector into two [-1,1] components for the
+// G-buffer's normal target.
+float2 EncodeOct(float3 n)
+{
+    n /= (abs(n.x) + abs(n.y) + abs(n.z));
+    float2 e = n.z >= 0.0 ? n.xy : (1.0 - abs(n.yx)) * (step(0.0, n.xy) * 2.0 - 1.0);
+    return e;
 }
 
 #endif

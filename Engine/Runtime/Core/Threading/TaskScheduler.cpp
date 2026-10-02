@@ -59,7 +59,7 @@ namespace tyr
 
         // Only safe to reference 'dependency' here if it can't have been deleted already:
         // either it hasn't been enqueued yet, or it was created as ManualRelease (safe at
-        // any time until its creator releases it). See AddDependency's header comment.
+        // any time until its creator releases it).
         TYR_ASSERT(TaskUtil::GetState(d) == TaskState::Inactive || d.lifetime == TaskLifetime::ManualRelease);
 
         // Only counted as a real dependency if we won the race to register before
@@ -76,18 +76,14 @@ namespace tyr
 
         TaskUtil::SetState(t, TaskState::Pending);
 
-        // Releases the initial "not enqueued yet" ref (see Task::dependencyCount) - only
-        // pushes if this happens to be the last outstanding ref, i.e. every dependency added
-        // via AddDependency() had already finished before this call. Using the same
-        // fetch_sub-to-zero release as a dependency finishing (below) - rather than a
-        // separate GetDependencyCount()==0 check - is what stops the two racing to both
-        // decide they're the one that should push it.
+        // Releases the initial "not enqueued yet" ref - only pushes if this is the last
+        // outstanding ref, i.e. every dependency had already finished before this call. A
+        // single atomic decrement-to-zero is what stops two completions racing to push it twice.
         if (TaskUtil::ReleaseDependencyRef(t))
         {
             PushRunnable(task);
         }
-        // Otherwise it stays Pending, unqueued, until its last outstanding dependency
-        // finishes - see OnTaskFinished, which queues it at that point.
+        // Otherwise it stays Pending, unqueued, until its last outstanding dependency finishes.
     }
 
     TaskID TaskScheduler::CreateAndEnqueueTask(TaskFunction&& fn, TaskLifetime lifetime)
@@ -125,6 +121,14 @@ namespace tyr
     void TaskScheduler::FlushCurrentThreadCache()
     {
         m_TaskPool->FlushCurrentThreadCache();
+    }
+
+    void TaskScheduler::WaitForAllTasks() const
+    {
+        while (Task::s_LiveCount.load(std::memory_order_acquire) != 0)
+        {
+            TYR_THREAD_SLEEP_MS(0);
+        }
     }
 
     void TaskScheduler::PushRunnable(TaskID task)
@@ -181,9 +185,8 @@ namespace tyr
         }
 
         // Last, since it may free t's slot: for an AutoDelete task this is the only thing
-        // guarding deletion, so it fires immediately; for ManualRelease it only actually
-        // deletes once ReleaseTask has also been called (whichever of the two happens last
-        // is the one that does it - see TaskUtil::ReleaseDeletionGate).
+        // guarding deletion, so it fires immediately; for ManualRelease it only deletes once
+        // ReleaseTask has also been called, whichever of the two happens last.
         if (TaskUtil::ReleaseDeletionGate(t))
         {
             m_TaskPool->Delete(task);

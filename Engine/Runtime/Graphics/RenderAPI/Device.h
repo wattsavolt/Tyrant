@@ -29,7 +29,10 @@ namespace tyr
 	class TYR_GRAPHICS_API Device
 	{
 	public:
-		static constexpr uint16 c_MaxBuffers = 20;
+		// Every raw Vulkan buffer the whole engine ever creates shares this one pool, including
+		// one acceleration-structure backing buffer per mesh - sized well above the handful of
+		// long-lived buffers a renderer typically needs on its own.
+		static constexpr uint16 c_MaxBuffers = 2048;
 		static constexpr uint16 c_MaxBufferViews = c_MaxBuffers * 3;
 		static constexpr uint16 c_MaxImages = 3000;
 		static constexpr uint16 c_MaxImageViews = c_MaxImages * 3;
@@ -75,7 +78,18 @@ namespace tyr
 		void DeleteComputePipeline(ComputePipelineHandle handle);
 		RayTracingPipelineHandle CreateRayTracingPipeline(const RayTracingPipelineDesc& desc);
 		void DeleteRayTracingPipeline(RayTracingPipelineHandle handle);
+		// Creates its own dedicated backing buffer, sized exactly to this structure - fine for a
+		// handful of long-lived structures, but wasteful for thousands of small ones, since each
+		// is a separate allocation and most Vulkan implementations cap the total allocation count.
 		AccelerationStructureHandle CreateAccelerationStructure(const AccelerationStructureDesc& desc);
+		// Creates into caller-owned storage instead of a dedicated buffer - backingBuffer must
+		// stay alive and that byte range must not be reused for as long as the returned handle
+		// lives; deleting the structure won't free backingBuffer itself.
+		AccelerationStructureHandle CreateAccelerationStructureAt(const AccelerationStructureDesc& desc, BufferHandle backingBuffer, size_t backingOffset);
+		// Sizes this structure would need without creating anything - outASSize already includes
+		// required build-size alignment, though a caller-chosen backing offset still needs its
+		// own acceleration-structure alignment on top.
+		void GetAccelerationStructureSize(const AccelerationStructureDesc& desc, size_t& outASSize, size_t& outBuildScratchSize) const;
 		void DeleteAccelerationStructure(AccelerationStructureHandle handle);
 		uint64 GetAccelerationStructureDeviceAddress(AccelerationStructureHandle handle) const;
 		// How large a scratch buffer BuildAccelerationStructures needs for this acceleration
@@ -144,6 +158,12 @@ namespace tyr
 
 		// Checks if the device has a specific memory property
 		bool HasMemoryType(MemoryProperty requestedFlags) const;
+
+	private:
+		// Shared tail end of CreateAccelerationStructure/CreateAccelerationStructureAt, once each
+		// has settled on a backing buffer/offset - implemented in the active graphics backend,
+		// same as every other method here.
+		AccelerationStructureHandle CreateAccelerationStructureIntoBuffer(const AccelerationStructureDesc& desc, BufferHandle backingBuffer, size_t backingOffset, bool externalBackingBuffer);
 
 	protected:
 		// Physical device properties

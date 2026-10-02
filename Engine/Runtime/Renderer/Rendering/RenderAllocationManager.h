@@ -30,15 +30,23 @@ namespace tyr
 
 		bool RequestResourceUploadAllocation(size_t size, UploadBufferAllocation& allocation);
 
-		// Only ever called from the main thread - see Renderer::DrainSubmissionCompletions,
-		// once a submission's timeline value is known.
+		// Only ever called from the main thread, once a submission's timeline value is known.
 		void SignalResourceUpload(Handle resourceId, uint64 timelineValue);
 
 		void ReclaimResourceUploadMemory(uint64 timelineValue);
 
+		// Only safe once the caller has confirmed the GPU is fully idle.
+		void ReclaimAllResourceUploadMemory();
+
 		bool RequestFrameUploadAllocation(size_t size, UploadBufferAllocation& allocation);
 
-		void SignalFrameUpload(uint64 timelineValue);
+		// Call once per Render() tick, right after that tick's own RequestFrameUploadAllocation
+		// calls are done (regardless of whether it actually made any).
+		void RecordFrameUploadCheckpoint(uint64 frameNumber);
+
+		// Only ever called from the main thread, once a completion (not just any submission)
+		// reports frameNumber/timelineValue together.
+		void SignalFrameUpload(uint64 frameNumber, uint64 timelineValue);
 
 		void ReclaimFrameUploadMemory(uint64 timelineValue);
 
@@ -68,6 +76,12 @@ namespace tyr
 
 		void FreeMeshletBufferAllocation(const BufferAllocation& allocation);
 
+		// Suballocates from one shared buffer instead of each BLAS getting its own dedicated
+		// buffer.
+		bool RequestBLASStorageAllocation(size_t size, BufferAllocation& allocation);
+
+		void FreeBLASStorageAllocation(const BufferAllocation& allocation);
+
 	private:
 		RenderRegistry& m_Registry;
 
@@ -82,6 +96,7 @@ namespace tyr
 		GpuBufferAllocator* m_VertexBufferAllocator;
 		GpuBufferAllocator* m_IndexBufferAllocator;
 		GpuBufferAllocator* m_MeshletBufferAllocator;
+		GpuBufferAllocator* m_BLASStorageAllocator;
 	};
 	
 }

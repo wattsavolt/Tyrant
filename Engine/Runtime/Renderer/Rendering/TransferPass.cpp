@@ -1,9 +1,9 @@
 #include "TransferPass.h"
-#include "Rendering/RenderData.h"
 #include "Rendering/RenderRegistry.h"
 #include "Rendering/RenderGraphBuilder.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderFrame.h"
+#include "Rendering/RenderData.h"
 #include "RenderTransfer/GpuTransferUtil.h"
 
 namespace tyr
@@ -21,10 +21,8 @@ namespace tyr
 	void TransferPass::Recreate(const TransferPassArgs& args)
 	{
 		m_Device = args.device;
-		m_Data = args.data;
 		m_Registry = args.registry;
 		m_Resources = args.resources;
-		m_RenderFrame = args.renderFrame;
 	}
 
 	void TransferPass::Setup(RenderGraphBuilder& builder)
@@ -34,7 +32,13 @@ namespace tyr
 			m_Resources->vertexBuffer, m_Resources->indexBuffer, m_Resources->meshInstanceBuffer,
 			m_Resources->materialBuffer, m_Resources->directionalLightBuffer, m_Resources->pointLightBuffer,
 			m_Resources->spotLightBuffer, m_Resources->sceneInfoBuffer,
-			m_Resources->guiVertexBuffer, m_Resources->guiIndexBuffer
+			m_Resources->guiVertexBuffer, m_Resources->guiIndexBuffer,
+			// GPU-driven instance culling - this frame's active instance list and the atomic
+			// draw counter's reset-to-zero, both uploaded from RenderAsync's merge step. See
+			// RecordCullingPass/RenderResources.h.
+			m_Resources->activeMeshInstanceIndexBuffer, m_Resources->drawCountBuffer,
+			// Same merge step, for the TLAS build's instance data - see SetupRayTracingBuildPass.
+			m_Resources->tlasInstanceBuffer
 		};
 
 		for (RenderBufferHandle buffer : buffers)
@@ -43,39 +47,32 @@ namespace tyr
 		}
 	}
 
-	void TransferPass::Execute(CommandList& cmdList)
+	void TransferPass::Execute(CommandList& cmdList, RenderFrame& renderFrame, RenderData& data)
 	{
-		if (!m_Data->assetBufferUploadRequests.IsEmpty())
+		// Read straight off RenderFrame, not a RenderData-owned copy: RenderAsync's own wait (see
+		// its own comment - PrepareForNextFrame already waits for this slot's previous task before
+		// it's reused) already guarantees nothing else touches this slot's RenderFrame while this
+		// runs, so a plain read here is just as safe as reading a copy would be, without the
+		// pointless per-frame duplication a copy would add.
+		if (!renderFrame.assetBufferUploadRequests.IsEmpty())
 		{
-			GpuTransferUtil::UploadToBuffers(cmdList, m_Data->assetBufferUploadRequests.Data(), m_Data->assetBufferUploadRequests.Size());
+			GpuTransferUtil::UploadToBuffers(cmdList, renderFrame.assetBufferUploadRequests.Data(), renderFrame.assetBufferUploadRequests.Size());
 		}
 
-		if (m_Data->activeScene)
+		if (!renderFrame.frameBufferUploadRequests.IsEmpty())
 		{
-			Scene& scene = m_Data->scenes[m_Data->activeScene.h];
-			if (!scene.frameUploadRequests.IsEmpty())
-			{
-				GpuTransferUtil::UploadToBuffers(cmdList, scene.frameUploadRequests.Data(), scene.frameUploadRequests.Size());
-			}
+			GpuTransferUtil::UploadToBuffers(cmdList, renderFrame.frameBufferUploadRequests.Data(), renderFrame.frameBufferUploadRequests.Size());
 		}
 
-		if (!m_Data->textureUploadRequests.IsEmpty())
+		if (!renderFrame.textureUploadRequests.IsEmpty())
 		{
-			GpuTransferUtil::UploadToTextures(cmdList, m_Data->textureUploadRequests.Data(), m_Data->textureUploadRequests.Size());
+			GpuTransferUtil::UploadToTextures(cmdList, renderFrame.textureUploadRequests.Data(), renderFrame.textureUploadRequests.Size());
 		}
 
-		// Per-buffered-frame requests (RendererAPI::SubmitGUIDrawData / AddTextureUploadRequest) -
-		// separate from RenderData's asset-level lists above since these come from things
-		// re-submitted every frame (GUI vertex/index data, its font atlas) rather than once per
-		// asset load.
-		if (!m_RenderFrame->frameBufferUploadRequests.IsEmpty())
+		// Worker-owned, not RenderFrame - see RenderData::workerUploadRequests' own comment.
+		if (!data.workerUploadRequests.IsEmpty())
 		{
-			GpuTransferUtil::UploadToBuffers(cmdList, m_RenderFrame->frameBufferUploadRequests.Data(), m_RenderFrame->frameBufferUploadRequests.Size());
-		}
-
-		if (!m_RenderFrame->textureUploadRequests.IsEmpty())
-		{
-			GpuTransferUtil::UploadToTextures(cmdList, m_RenderFrame->textureUploadRequests.Data(), m_RenderFrame->textureUploadRequests.Size());
+			GpuTransferUtil::UploadToBuffers(cmdList, data.workerUploadRequests.Data(), data.workerUploadRequests.Size());
 		}
 	}
 }

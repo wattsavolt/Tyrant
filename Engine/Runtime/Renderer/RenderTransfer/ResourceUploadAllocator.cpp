@@ -101,4 +101,22 @@ namespace tyr
 			}
 		}
 	}
+
+	void ResourceUploadAllocator::ReclaimAll()
+	{
+		for (uint i = 0; i < m_LiveIds.Size(); ++i)
+		{
+			const Handle id = m_LiveIds[i];
+			const InFlightAllocation& record = m_InFlightPool[id];
+
+			for (uint c = record.startChunk; c < record.startChunk + record.chunkCount; ++c)
+			{
+				m_ChunkFree[c] = true;
+			}
+
+			m_InFlightPool.Delete(id);
+		}
+
+		m_LiveIds.Clear();
+	}
 }

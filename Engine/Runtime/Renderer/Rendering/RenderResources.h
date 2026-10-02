@@ -4,7 +4,9 @@
 #include "RenderAPI/DescriptorSet.h"
 #include "RenderAPI/Pipeline.h"
 #include "RenderAPI/ShaderModule.h"
+#include "RenderAPI/AccelerationStructure.h"
 #include "RenderBase/RenderHandles.h"
+#include "RenderConstants.h"
 
 namespace tyr
 {
@@ -48,25 +50,58 @@ namespace tyr
 		ShaderModuleHandle geometryMeshShader;
 		ShaderModuleHandle geometryPixelShader;
 
-		// Shared vertex/index buffers every GUIDrawData submission (editor chrome, in-game HUD/
-		// menu) is uploaded into for the frame - see RendererAPI::SubmitGUIDrawData.
+		// Shared vertex/index buffers every GUI draw submission (editor chrome, in-game HUD/menu)
+		// is uploaded into for the frame.
 		RenderBufferHandle guiVertexBuffer;
 		RenderBufferHandle guiIndexBuffer;
 		GraphicsPipelineHandle guiPipeline;
 		ShaderModuleHandle guiVertexShader;
 		ShaderModuleHandle guiPixelShader;
 
-		// Offscreen colour target the editor's 3D viewport panel renders into and displays via
-		// ImGui::Image() - see EditorViewport and RendererAPI::GetOrCreateViewportTexture.
-		// {}/0 until the panel has requested a size for the first time.
-		TextureHandle viewportColourTexture;
-		uint viewportWidth = 0;
-		uint viewportHeight = 0;
-		// Set whenever viewportColourTexture is (re)created, consumed by RecordGeometryPass -
-		// unlike the swap chain, this image isn't cycled every frame, so the "undefined -> its
-		// real layout" transition a fresh image needs before its first use as a colour
-		// attachment must only run once per (re)creation, not every frame.
-		bool viewportTextureIsNew = false;
+		// Full-screen compute pass that reads the G-buffer + depth and writes the shaded result
+		// into viewportColourTexture.
+		ComputePipelineHandle lightingPipeline;
+		ShaderModuleHandle lightingComputeShader;
+
+		// GPU-driven instance frustum culling. This frame's active mesh instances, uploaded as
+		// plain pool indices - read-only input to the culling pass.
+		RenderBufferHandle activeMeshInstanceIndexBuffer;
+		// Compacted pool indices of instances that passed culling, one entry per visible
+		// instance, written by the culling pass and read by MeshAS.hlsl via SV_DrawIndex.
+		RenderBufferHandle visibleInstanceIndexBuffer;
+		// One VkDrawMeshTasksIndirectCommandEXT-equivalent entry per visible instance, written
+		// by the culling pass and consumed directly by GeometryPass's indirect draw call.
+		RenderBufferHandle indirectDrawCommandBuffer;
+		// Single atomic counter - how many of the two buffers above are actually populated this
+		// frame. Reset to 0 every frame before the culling pass increments it.
+		RenderBufferHandle drawCountBuffer;
+		ComputePipelineHandle cullingPipeline;
+		ShaderModuleHandle cullingComputeShader;
+
+		// Ray-traced shadows - one top-level acceleration structure per buffered RenderFrame
+		// slot, rebuilt every frame from the active scene's mesh instances. Per-mesh bottom-level
+		// structures live on Mesh::blas instead.
+		AccelerationStructureHandle tlas[RenderConstants::c_BufferedFrameCount];
+		// This frame's AccelerationStructureInstance entries, uploaded from CPU then read
+		// directly by the TLAS build (not bound in the bindless descriptor set). One physical
+		// buffer, each buffered slot confined to its own byte range.
+		RenderBufferHandle tlasInstanceBuffer;
+		// Sized once at startup from the TLAS build's scratch-size requirement (every slot needs
+		// the same amount) - one physical buffer, each slot confined to its own byte range.
+		RenderBufferHandle tlasScratchBuffer;
+		// Grown on demand to fit the largest single BLAS build seen so far, reused across every
+		// mesh's build in a slot's batch rather than sized per-mesh or per-build. Builds within
+		// one frame's batch reuse this range sequentially, not concurrently.
+		RenderBufferHandle blasScratchBuffer;
+		// One shared buffer every mesh's BLAS is suballocated into, instead of each mesh getting
+		// its own dedicated allocation. Not a per-slot/per-frame resource - a BLAS is built once
+		// and persists, the same lifetime as vertex/index/meshlet mesh data.
+		RenderBufferHandle blasStorageBuffer;
+
+		// Fixed-size, per-renderFrame-slot staging region for data a worker thread uploads
+		// itself after that frame's scene merge finishes - gives that one caller its own upload
+		// memory with nothing else touching it, so no allocator/cursor/locking is needed.
+		RenderBufferHandle rtCullingStagingBuffer;
 	};
 
 }

@@ -199,17 +199,28 @@ namespace tyr
 
 	void GUIModule::Update(float deltaTime)
 	{
-	}
-
-	void GUIModule::EndFrame()
-	{
+		// Must run after every module whose Update() makes ImGui::/Nuklear calls - currently just
+		// AppModule (Editor/EditorViewport) - which is guaranteed by module registration order
+		// (see EngineLoop.cpp: GUIModule is registered before RendererModule, and ModuleManager
+		// runs Update() in reverse registration order, so GUIModule::Update() itself already runs
+		// after AppModule's). Also must run before RendererModule::Update() (Renderer::Render),
+		// which is exactly what that same ordering guarantees - see Render()'s own comment on why
+		// it can safely dispatch RenderAsync directly, at its own end, rather than deferring to
+		// EndFrame. If a future module needs to draw ImGui/Nuklear content from its own EndFrame()
+		// instead of Update() (or registration order ever changes), this placement would need
+		// revisiting - talk to me before moving this again.
+		//
 		// The CPU update loop can tick more than once before the renderer actually consumes and
 		// clears this render frame slot (RenderAsync decouples the two) - without this, an older
-		// tick's now-stale submission would sit alongside this tick's, and GUIPass would draw
-		// both overlaid on top of each other, showing as flicker/jitter frame to frame.
+		// tick's now-stale submission would sit alongside this tick's, and GUIPass would draw both
+		// overlaid on top of each other, showing as flicker/jitter frame to frame.
 		m_RendererAPI->ResetGUIDrawData();
 
-		SubmitNuklearDrawData();
+		// Nuklear is for the in-game HUD, not used anywhere yet (the editor draws through ImGui
+		// below) - not calling this keeps it from converting/submitting/drawing anything, without
+		// touching SubmitNuklearDrawData's own implementation, which stays ready for when the
+		// in-game HUD actually starts using it.
+		// SubmitNuklearDrawData();
 
 #if !TYR_FINAL
 		ImGui::SetCurrentContext(m_ImGuiContext);
@@ -246,15 +257,24 @@ namespace tyr
 
 		if (vertexCount > 0 && indexCount > 0)
 		{
-			GUIDrawData drawData;
-			// TODO: real window size once input feeding exists - Nuklear doesn't need this for
-			// conversion, only GUIPass's shader does (see its scale/translate push constants).
-			drawData.displaySize = Vector2(0.0f, 0.0f);
+			// Reused every frame rather than a fresh local GUIDrawData - see its own declaration's
+			// comment on why.
+			m_NuklearDrawData.Clear();
+			// Must be the real window size, same as SubmitImGuiDrawData's below - GUIPass::Execute
+			// divides by this to build its scale/translate push constants, so a (0,0) placeholder
+			// here (as this used to be) produces +-INF scale and NaN clip positions for any vertex
+			// whose local position is exactly 0 on that axis, which silently discards the entire
+			// submission's geometry at the rasterizer - confirmed via RenderDoc as a real cause of
+			// a whole-window-black flicker (GUIPass shares one set of push constants per
+			// submission, so this corrupted every draw command in it, not just Nuklear's own).
+			m_NuklearDrawData.displaySize = m_WindowModule
+				? Vector2((float)m_WindowModule->GetWindowWidth(m_Window), (float)m_WindowModule->GetWindowHeight(m_Window))
+				: Vector2(1920.0f, 1080.0f);
 
-			drawData.vertices.Resize(vertexCount);
-			memcpy(drawData.vertices.Data(), nk_buffer_memory_const(&vertices), vertexCount * sizeof(GUIVertex));
-			drawData.indices.Resize(indexCount);
-			memcpy(drawData.indices.Data(), nk_buffer_memory_const(&indices), indexCount * sizeof(nk_draw_index));
+			m_NuklearDrawData.vertices.Resize(vertexCount);
+			memcpy(m_NuklearDrawData.vertices.Data(), nk_buffer_memory_const(&vertices), vertexCount * sizeof(GUIVertex));
+			m_NuklearDrawData.indices.Resize(indexCount);
+			memcpy(m_NuklearDrawData.indices.Data(), nk_buffer_memory_const(&indices), indexCount * sizeof(nk_draw_index));
 
 			const nk_draw_command* cmd = nullptr;
 			uint indexOffset = 0;
@@ -265,7 +285,7 @@ namespace tyr
 					continue;
 				}
 
-				GUIDrawCommand& drawCommand = drawData.commands.ExpandOne();
+				GUIDrawCommand& drawCommand = m_NuklearDrawData.commands.ExpandOne();
 				drawCommand.clipMinX = (uint)cmd->clip_rect.x;
 				drawCommand.clipMinY = (uint)cmd->clip_rect.y;
 				drawCommand.clipMaxX = (uint)(cmd->clip_rect.x + cmd->clip_rect.w);
@@ -277,7 +297,7 @@ namespace tyr
 				indexOffset += cmd->elem_count;
 			}
 
-			m_RendererAPI->SubmitGUIDrawData(drawData);
+			m_RendererAPI->SubmitGUIDrawData(m_NuklearDrawData);
 		}
 
 		nk_clear(m_NuklearContext);
@@ -437,8 +457,8 @@ namespace tyr
 			return;
 		}
 
-		GUIDrawData drawData;
-		drawData.displaySize = Vector2(imDrawData->DisplaySize.x, imDrawData->DisplaySize.y);
+		m_ImGuiDrawData.Clear();
+		m_ImGuiDrawData.displaySize = Vector2(imDrawData->DisplaySize.x, imDrawData->DisplaySize.y);
 
 		uint totalVertices = 0;
 		uint totalIndices = 0;
@@ -453,8 +473,8 @@ namespace tyr
 			return;
 		}
 
-		drawData.vertices.Reserve(totalVertices);
-		drawData.indices.Reserve(totalIndices);
+		m_ImGuiDrawData.vertices.Reserve(totalVertices);
+		m_ImGuiDrawData.indices.Reserve(totalIndices);
 
 		uint vertexBase = 0;
 		uint indexBase = 0;
@@ -465,7 +485,7 @@ namespace tyr
 			for (int v = 0; v < cmdList->VtxBuffer.Size; ++v)
 			{
 				const ImDrawVert& src = cmdList->VtxBuffer[v];
-				GUIVertex& dst = drawData.vertices.ExpandOne();
+				GUIVertex& dst = m_ImGuiDrawData.vertices.ExpandOne();
 				dst.pos = Vector2(src.pos.x, src.pos.y);
 				dst.uv = Vector2(src.uv.x, src.uv.y);
 				dst.colour = src.col;
@@ -476,7 +496,7 @@ namespace tyr
 			// one flattened vertex array per submission with no per-command vertex offset.
 			for (int idx = 0; idx < cmdList->IdxBuffer.Size; ++idx)
 			{
-				drawData.indices.Add((uint16)(cmdList->IdxBuffer[idx] + vertexBase));
+				m_ImGuiDrawData.indices.Add((uint16)(cmdList->IdxBuffer[idx] + vertexBase));
 			}
 
 			for (int c = 0; c < cmdList->CmdBuffer.Size; ++c)
@@ -487,7 +507,7 @@ namespace tyr
 					continue;
 				}
 
-				GUIDrawCommand& drawCommand = drawData.commands.ExpandOne();
+				GUIDrawCommand& drawCommand = m_ImGuiDrawData.commands.ExpandOne();
 				drawCommand.clipMinX = (uint)src.ClipRect.x;
 				drawCommand.clipMinY = (uint)src.ClipRect.y;
 				drawCommand.clipMaxX = (uint)src.ClipRect.z;
@@ -504,7 +524,7 @@ namespace tyr
 			indexBase += (uint)cmdList->IdxBuffer.Size;
 		}
 
-		m_RendererAPI->SubmitGUIDrawData(drawData);
+		m_RendererAPI->SubmitGUIDrawData(m_ImGuiDrawData);
 	}
 #endif
 }

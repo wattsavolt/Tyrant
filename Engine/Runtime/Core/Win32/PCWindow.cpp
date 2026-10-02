@@ -147,9 +147,17 @@ namespace tyr
         {
         case WM_SIZE:
         {
-            window.width = LOWORD(lParam);
-            window.height = HIWORD(lParam);
-            window.resizePending = true;
+            // SIZE_MINIMIZED (and some transient states during a maximize/restore/DPI-change
+            // animation) reports a 0x0 client area - keep the last known real size instead of
+            // treating that as the window's actual new size.
+            const uint newWidth = LOWORD(lParam);
+            const uint newHeight = HIWORD(lParam);
+            if (newWidth > 0 && newHeight > 0)
+            {
+                window.width = newWidth;
+                window.height = newHeight;
+                window.resizePending = true;
+            }
             break;
         }
         case WM_COMMAND:
@@ -195,8 +203,8 @@ namespace tyr
             }
             break;
 
-        // ANSI window (see PCWindow::RegisterWindowClass's CreateWindow, not CreateWindowW) -
-        // wParam is a single-byte ANSI character, not UTF-16, so a plain char is enough here.
+        // This is an ANSI window, not Unicode - wParam is a single-byte ANSI character, not
+        // UTF-16, so a plain char is enough here.
         case WM_CHAR:
             if (window.input.typedCharCount < c_MaxTypedCharsPerFrame)
             {
@@ -233,10 +241,9 @@ namespace tyr
             break;
 
         case WM_DESTROY:
-            // The HWND (and anything tied to it, e.g. a Vulkan surface) is no longer valid from
-            // this point on - mark it dead immediately rather than waiting for WM_QUIT, which is
-            // a thread-level message (not specific to this window) that isn't even guaranteed to
-            // be the next one retrieved, let alone processed in this same tick.
+            // The HWND (and anything tied to it) is no longer valid from this point on - mark
+            // it dead immediately rather than waiting for WM_QUIT, which isn't guaranteed to be
+            // the next message retrieved, let alone processed this same tick.
             window.handle = nullptr;
             PostQuitMessage(0);
             break;
@@ -250,9 +257,8 @@ namespace tyr
 
     void PCWindow::PollEvents(Window& window)
     {
-        // Drains everything queued this tick, not just one message - a single PeekMessage
-        // call here previously left extra input/resize messages sitting until later ticks,
-        // which reads as dropped/laggy input under any real message volume.
+        // Drains everything queued this tick, not just one message, so a tick with several
+        // input/resize messages doesn't leave any sitting until later ticks.
         MSG msg;
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
         {

@@ -40,6 +40,7 @@ namespace tyr
 		m_VertexBufferAllocator = new GpuBufferAllocator({ RenderConstants::c_VertexBufferSize });
 		m_IndexBufferAllocator = new GpuBufferAllocator({ RenderConstants::c_IndexBufferSize });
 		m_MeshletBufferAllocator = new GpuBufferAllocator({ RenderConstants::c_MeshletBufferSize });
+		m_BLASStorageAllocator = new GpuBufferAllocator({ RenderConstants::c_BLASStorageBufferSize });
 	}
 
 	RenderAllocationManager::~RenderAllocationManager()
@@ -53,6 +54,7 @@ namespace tyr
 		delete m_VertexBufferAllocator;
 		delete m_IndexBufferAllocator;
 		delete m_MeshletBufferAllocator;
+		delete m_BLASStorageAllocator;
 	}
 
 	bool RenderAllocationManager::RequestResourceUploadAllocation(size_t size, UploadBufferAllocation& allocation)
@@ -84,6 +86,11 @@ namespace tyr
 		m_ResourceUploadAllocator->Reclaim(timelineValue);
 	}
 
+	void RenderAllocationManager::ReclaimAllResourceUploadMemory()
+	{
+		m_ResourceUploadAllocator->ReclaimAll();
+	}
+
 	bool RenderAllocationManager::RequestFrameUploadAllocation(size_t size, UploadBufferAllocation& allocation)
 	{
 		RenderBuffer& buffer = m_Registry.GetBuffer(m_FrameUploadBuffer);
@@ -102,9 +109,14 @@ namespace tyr
 		return success;
 	}
 
-	void RenderAllocationManager::SignalFrameUpload(uint64 timelineValue)
+	void RenderAllocationManager::RecordFrameUploadCheckpoint(uint64 frameNumber)
 	{
-		m_FrameUploadAllocator->Signal(timelineValue);
+		m_FrameUploadAllocator->RecordAllocationCheckpoint(frameNumber);
+	}
+
+	void RenderAllocationManager::SignalFrameUpload(uint64 frameNumber, uint64 timelineValue)
+	{
+		m_FrameUploadAllocator->Signal(frameNumber, timelineValue);
 	}
 
 	void RenderAllocationManager::ReclaimFrameUploadMemory(uint64 timelineValue)
@@ -161,5 +173,15 @@ namespace tyr
 	void RenderAllocationManager::FreeMeshletBufferAllocation(const BufferAllocation& allocation)
 	{
 		m_MeshletBufferAllocator->Free(allocation);
+	}
+
+	bool RenderAllocationManager::RequestBLASStorageAllocation(size_t size, BufferAllocation& allocation)
+	{
+		return m_BLASStorageAllocator->Allocate(size, RenderConstants::c_AccelerationStructureAlignment, allocation);
+	}
+
+	void RenderAllocationManager::FreeBLASStorageAllocation(const BufferAllocation& allocation)
+	{
+		m_BLASStorageAllocator->Free(allocation);
 	}
 }

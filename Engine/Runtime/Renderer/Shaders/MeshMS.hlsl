@@ -15,6 +15,9 @@ struct MeshTaskPayload
 cbuffer SceneInfoCBuffer : register(b0)
 {
 	float4x4 ViewProj;
+	// Unused here - declared so camPos/ambient below land at the same offset as the real
+	// struct this buffer is actually filled from.
+	float4x4 InvViewProj;
 	float3 camPos;
 	float ambient;
 };

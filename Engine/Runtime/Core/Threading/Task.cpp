@@ -2,6 +2,8 @@
 
 namespace tyr
 {
+    Atomic<uint> Task::s_LiveCount{ 0 };
+
     Task::Task()
         : dependencyCount(1)
         , state(TaskState::Inactive)

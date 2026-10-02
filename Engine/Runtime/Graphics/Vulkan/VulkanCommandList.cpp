@@ -74,12 +74,6 @@ namespace tyr
 		}
 		VkClearColorValue* vkClearValue = (VkClearColorValue*)&clearValue;
 		Image imageData = commandList.m_Device.GetImage(image);
-		// A raw static_cast only happens to be correct for ImageLayout's first 9 values (they
-		// match core Vulkan 1.0's VkImageLayout by coincidence of declaration order) - anything
-		// from IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL onward is a KHR/1.2-
-		// promoted enum with a large, non-sequential real Vulkan value (see
-		// VulkanUtility::ToVulkanImageLayout, the real mapping every other call site already
-		// goes through).
 		vkCmdClearColorImage(commandList.m_CommandBuffer, imageData.image, VulkanUtility::ToVulkanImageLayout(layout), vkClearValue, rangeCount, vkSubresourceRanges);
 		StackFreeLast();
 	}
@@ -98,8 +92,6 @@ namespace tyr
 		}
 		VkClearDepthStencilValue* vkClearValue = (VkClearDepthStencilValue*)&clearValue;
 		Image imageData = commandList.m_Device.GetImage(image);
-		// Same reasoning as ClearColorImage's own comment just above - use the real mapping,
-		// not a raw cast.
 		vkCmdClearDepthStencilImage(commandList.m_CommandBuffer, imageData.image, VulkanUtility::ToVulkanImageLayout(layout), vkClearValue, rangeCount, vkSubresourceRanges);
 		StackFreeLast();
 	}
@@ -147,7 +139,7 @@ namespace tyr
 		}
 
 		VkRenderingAttachmentInfo* vkStencilAttachment = nullptr;
-		if (renderingInfo.hasDepthAttachment)
+		if (renderingInfo.hasStencilAttachment)
 		{
 			vkStencilAttachment = stack.Alloc<VkRenderingAttachmentInfo>();
 			CreateVulkankRenderingAttachmentInfo(renderingInfo.stencilAttachment, *vkStencilAttachment);
@@ -557,6 +549,17 @@ namespace tyr
 		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
 		// TODO: Add the extension
 		vkCmdDrawMeshTasksEXT(commandList.m_CommandBuffer, groupCountX, groupCountY, groupCountZ);
+	}
+
+	void CommandList::DrawMeshTasksIndirectCount(BufferHandle indirectBuffer, size_t indirectBufferOffset,
+		BufferHandle countBuffer, size_t countBufferOffset, uint maxDrawCount, uint stride)
+	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		Buffer& indirect = commandList.m_Device.GetBuffer(indirectBuffer);
+		Buffer& count = commandList.m_Device.GetBuffer(countBuffer);
+		vkCmdDrawMeshTasksIndirectCountEXT(commandList.m_CommandBuffer, indirect.buffer,
+			static_cast<VkDeviceSize>(indirectBufferOffset), count.buffer,
+			static_cast<VkDeviceSize>(countBufferOffset), maxDrawCount, stride);
 	}
 
 	void CommandList::Dispatch(uint groupCountX, uint groupCountY, uint groupCountZ)

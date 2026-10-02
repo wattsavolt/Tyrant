@@ -1,4 +1,5 @@
 #include "RenderSubmissionThread.h"
+#include "RenderDebug.h"
 #include "RenderAPI/Device.h"
 #include "RenderAPI/SwapChain.h"
 #include "RenderAPI/CommandQueue.h"
@@ -178,6 +179,12 @@ namespace tyr
 				bool resizeNeeded = false;
 				request->swapChain->Present(request->queue, request->waitSemaphore, request->imageIndex, resizeNeeded);
 
+#if TYR_RENDER_DEBUG
+				// Logs the presented image index per frame, for cross-checking against the
+				// acquired index logged elsewhere.
+				TYR_LOG_WARNING("[DBG] Present: frameNumber=%llu imageIndex=%u", (unsigned long long)request->frameNumber, request->imageIndex);
+#endif
+
 				if (resizeNeeded)
 				{
 					const bool notified = m_NotificationQueue.Enqueue({ request->window, true });
@@ -186,11 +193,9 @@ namespace tyr
 				}
 			}
 
-			// Presents are enqueued (by Renderer) in strictly increasing frame order and this
-			// queue is FIFO, so a plain monotonic store is enough - no read-modify-write needed.
-			// Stored even when present is false above (nothing to actually issue) - this frame
-			// number still needs to be recorded as "handled", or Render()'s pacing wait would
-			// stall forever waiting for a present that was never going to happen.
+			// Presents are enqueued in strictly increasing frame order and this queue is FIFO, so
+			// a plain monotonic store is enough. Stored even when present is false, so a frame
+			// that never actually presented still counts as handled.
 			m_LastPresentedFrame.store(request->frameNumber, std::memory_order_release);
 
 			processedAny = true;

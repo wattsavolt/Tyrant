@@ -133,12 +133,11 @@ namespace tyr
 	void Editor::Update(float deltaTime)
 	{
 		m_EditorUI.Draw();
-		m_EditorViewport->Draw();
+		m_EditorViewport->Draw(m_WorldManager->GetWorld(m_LevelEditorWorld).renderViewportHandle);
 	}
 
 	void Editor::Shutdown()
 	{
-		m_EditorViewport->Shutdown();
 		m_WorldManager->RemoveWorld(m_LevelEditorWorld);
 		m_LevelEditorWorld = {};
 		m_WorldManager = nullptr;

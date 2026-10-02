@@ -11,12 +11,9 @@ namespace tyr
 		RenderBufferHandle dstBuffer;
 		size_t dstOffset = 0;
 		size_t size = 0;
-		// Set only when srcBuffer's data came from a resource upload allocation (see
-		// RenderAllocationManager::RequestResourceUploadAllocation) - default-invalid otherwise
-		// (e.g. frame upload requests, which reclaim in bulk and don't need this). Once this
-		// request's copy is actually submitted, Renderer::DrainSubmissionCompletions signals this
-		// id with the submission's timeline value so ResourceUploadAllocator can reclaim it once
-		// the GPU catches up - see RenderAllocationManager::SignalResourceUpload.
+		// Set only when srcBuffer's data came from a resource upload allocation - default-invalid
+		// otherwise (e.g. frame upload requests, which reclaim in bulk and don't need this). Lets
+		// that allocation be reclaimed once the GPU catches up to this request's submission.
 		Handle resourceId;
 
 		bool SameResources(const BufferUploadRequest& other) const noexcept
@@ -26,12 +23,19 @@ namespace tyr
 				dstBuffer == other.dstBuffer;
 		}
 
-		// For sorting
+		// For sorting - groups every request touching the same (srcBuffer, dstBuffer) pair
+		// adjacently, so they can be batched into a single vkCmdCopyBuffer call. Compares full
+		// handles (index and generation) on both buffers for a valid strict weak ordering even
+		// across pool-slot reuse.
 		bool operator<(const BufferUploadRequest& other) const noexcept
 		{
-			if (srcBuffer != other.srcBuffer)
+			if (srcBuffer.h.index != other.srcBuffer.h.index)
 				return srcBuffer.h.index < other.srcBuffer.h.index;
-			return dstBuffer.h.index < other.dstBuffer.h.index;
+			if (srcBuffer.h.generation != other.srcBuffer.h.generation)
+				return srcBuffer.h.generation < other.srcBuffer.h.generation;
+			if (dstBuffer.h.index != other.dstBuffer.h.index)
+				return dstBuffer.h.index < other.dstBuffer.h.index;
+			return dstBuffer.h.generation < other.dstBuffer.h.generation;
 		}
 	};
 
@@ -42,7 +46,8 @@ namespace tyr
 		TextureHandle dstTexture;
 		uint highestMip;
 		uint mipCount;
-		// Same purpose as BufferUploadRequest::resourceId - see its comment.
+		// Set only when srcBuffer's data came from a resource upload allocation, so it can be
+		// reclaimed once the GPU catches up to this request's submission.
 		Handle resourceId;
 
 		bool SameResources(const TextureUploadRequest& other) const noexcept

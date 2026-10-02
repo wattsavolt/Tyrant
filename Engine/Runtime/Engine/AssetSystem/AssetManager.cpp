@@ -109,6 +109,49 @@ namespace tyr
 		ProcessPendingMeshDeletes();
 	}
 
+	void AssetManager::FreePendingAssets()
+	{
+		// Frees each load-data struct's own allocation without running its normal processing,
+		// which would create real renderer/GPU resources for assets about to be torn down
+		// anyway. Any resource-upload allocation already reserved is reclaimed separately during shutdown.
+		while (Optional<TextureHeaderLoadData*> ld = m_TextureHeadersLoadedQueue.Dequeue())
+		{
+			TempDelete<TextureHeaderLoadData>(ld.value());
+		}
+
+		while (Optional<TexturePixelLoadData*> ld = m_TexturesLoadedQueue.Dequeue())
+		{
+			TempDelete<TexturePixelLoadData>(ld.value());
+		}
+
+		while (Optional<MaterialLoadData*> ld = m_MaterialFilesLoadedQueue.Dequeue())
+		{
+			TempDelete<MaterialLoadData>(ld.value());
+		}
+
+		while (Optional<MeshHeaderLoadData*> ld = m_MeshHeadersLoadedQueue.Dequeue())
+		{
+			TempDelete<MeshHeaderLoadData>(ld.value());
+		}
+
+		while (Optional<MeshGeometryLoadData*> ld = m_MeshesLoadedQueue.Dequeue())
+		{
+			TempDelete<MeshGeometryLoadData>(ld.value());
+		}
+
+		for (MaterialLoadData* ld : m_MaterialsAwaitingTextures)
+		{
+			TempDelete<MaterialLoadData>(ld);
+		}
+		m_MaterialsAwaitingTextures.Clear();
+
+		for (MeshInstanceCreateData* instData : m_PendingMeshInstances)
+		{
+			TempDelete<MeshInstanceCreateData>(instData);
+		}
+		m_PendingMeshInstances.Clear();
+	}
+
 	void AssetManager::LoadTexture(AssetID assetID)
 	{
 		if (AssetData* assetData = m_AssetMap.Find(assetID))
@@ -129,9 +172,8 @@ namespace tyr
 			ld->filePath = AssetRegistry::Instance().GetAssetData(assetID).filePath;
 
 			// TempNew above (and every other allocation in this pipeline) must stay on the
-			// main thread - TempAllocator is thread-local, so a task's worker thread would
-			// allocate/free through a *different* instance than this one. The task below
-			// only ever reads/writes into already-allocated memory, never allocates itself.
+			// main thread - TempAllocator is thread-local, so a worker thread would
+			// allocate/free through a different instance than this one.
 			TaskScheduler::Instance().CreateAndEnqueueTask([this, ld]()
 			{
 				AssetUtil::LoadAsset<TextureHeader>(ld->filePath.CStr(), ld->header);
@@ -153,10 +195,9 @@ namespace tyr
 			}
 			else
 			{
-				// Still loading (pixel data not read in yet) - UploadTexture (main thread,
-				// once that finishes) reads this same AssetData and the renderer's texture
-				// pool slot, so freeing either now could race with it. Deferred until
-				// ProcessPendingTextureDeletes sees this asset reach Loaded.
+				// Still loading (pixel data not read in yet) - the main-thread follow-up reads
+				// this same AssetData and the renderer's pool slot, so freeing either now
+				// could race with it.
 				m_PendingTextureDeletes.Add(assetID);
 			}
 		}
@@ -310,14 +351,9 @@ namespace tyr
 			}
 			else
 			{
-				// Still loading (file parse/texture-dependency resolution in flight) -
-				// CreateMaterial (main thread, once that finishes) reads each texture
-				// dependency's AssetData and this material's own renderer resource doesn't
-				// exist yet (resourceHandle is only set once CreateMaterial actually runs), so
-				// tearing down now - including the texture-dependency deletes below, which
-				// DeleteMaterialResources runs only once this is confirmed safe - could race
-				// with or outright corrupt that. Deferred until ProcessPendingMaterialDeletes
-				// sees this asset reach Loaded.
+				// Still loading (file parse/texture-dependency resolution in flight) - the
+				// renderer resource doesn't exist yet, and tearing down now could race with
+				// the main-thread follow-up still reading each texture dependency's AssetData.
 				m_PendingMaterialDeletes.Add(assetID);
 			}
 		}
@@ -454,11 +490,9 @@ namespace tyr
 			}
 			else
 			{
-				// Still loading (header and/or LOD geometry not finished yet - meshHeader isn't
-				// even set until CreateMesh runs) - UploadMeshGeometry/CreateMesh (main thread,
-				// as each stage finishes) read/write this same AssetData, and freeing the header
-				// pool slot now would leave them working with a deleted (or since-reused) slot.
-				// Deferred until ProcessPendingMeshDeletes sees this asset reach Loaded.
+				// Still loading (header and/or LOD geometry not finished yet) - the main-thread
+				// follow-up still reads/writes this same AssetData, and freeing the header pool
+				// slot now would leave it working with a deleted (or since-reused) slot.
 				m_PendingMeshDeletes.Add(assetID);
 			}
 		}
@@ -600,10 +634,8 @@ namespace tyr
 
 			fileOffset += chunkHeader.compressedBlobSize;
 
-			// Reads this chunk's compressed bytes, decompresses them (all CPU work, off the
-			// main thread), and copies each region straight into its already-reserved upload
-			// allocation - meshlets included, since MeshChunkMeshlet is byte-identical to
-			// ShaderMeshlet (see its own comment), needing no further transform before upload.
+			// Reads this chunk's compressed bytes, decompresses them off the main thread, and
+			// copies each region straight into its already-reserved upload allocation.
 			TaskScheduler::Instance().CreateAndEnqueueTask([this, geoLD]()
 			{
 				char absFilePath[TYR_MAX_PATH_TOTAL_SIZE];
@@ -635,10 +667,8 @@ namespace tyr
 
 	void AssetManager::UploadMeshGeometry(MeshGeometryLoadData* ld)
 	{
-		// No CPU-side transform needed - MeshChunkMeshlet is byte-identical to ShaderMeshlet
-		// (materialSlot baked in at import time, see MeshChunkMeshlet's own comment), so the
-		// task already decompressed straight into ld->meshletsUpload in its final, GPU-ready
-		// form, same as vertices/indices.
+		// No CPU-side transform needed - the task already decompressed straight into
+		// ld->meshletsUpload in its final, GPU-ready form, same as vertices/indices.
 		const uint meshletCount = ld->decompressedMeshletsSize / (uint)sizeof(ShaderMeshlet);
 
 		m_RendererAPI->FlushBufferUploadAllocation(ld->verticesUpload);
@@ -671,6 +701,14 @@ namespace tyr
 		meshletsRequest.size = meshletCount * (uint)sizeof(ShaderMeshlet);
 		meshletsRequest.resourceId = ld->meshletsUpload.resourceId;
 		m_RendererAPI->AddBufferUploadRequest(meshletsRequest);
+
+		// Ray-traced shadows only ever use LOD0 - queue its one-time BLAS build as soon as its
+		// vertex/index upload above is queued, since the build's ordering against that upload
+		// relies on both being requested in the same or an earlier frame.
+		if (ld->lodIndex == 0)
+		{
+			m_RendererAPI->RequestBLASBuild(ld->mesh);
+		}
 
 		// All LODs currently start loading together (see CreateMesh), so this just needs to
 		// count down as each one finishes - the mesh is Loaded once every LOD is in.

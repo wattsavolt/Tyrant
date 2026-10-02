@@ -3,9 +3,9 @@
 #include "RenderAPI/CommandList.h"
 #include "Rendering/Scene.h"
 #include "Rendering/RenderRegistry.h"
-#include "Rendering/RenderAllocationManager.h"
 #include "Rendering/RenderGraphBuilder.h"
 #include "Rendering/RenderResources.h"
+#include "Rendering/RenderConstants.h"
 #include "Shaders/ShaderTypes.h"
 
 namespace tyr
@@ -24,7 +24,6 @@ namespace tyr
 	{
 		m_Device = args.device;
 		m_Registry = args.registry;
-		m_AllocManager = args.allocManager;
 		m_Resources = args.resources;
 		m_Scene = args.scene;
 		m_Pipeline = args.pipeline;
@@ -48,6 +47,12 @@ namespace tyr
 		{
 			builder.ReadBuffer(m_Registry->GetBuffer(buffer), meshPipelineStages, BARRIER_ACCESS_SHADER_READ_BIT);
 		}
+
+		// GPU-driven instance culling (run just before this pass in the same render graph
+		// phase) writes these three.
+		builder.ReadBuffer(m_Registry->GetBuffer(m_Resources->visibleInstanceIndexBuffer), meshPipelineStages, BARRIER_ACCESS_SHADER_READ_BIT);
+		builder.ReadBuffer(m_Registry->GetBuffer(m_Resources->indirectDrawCommandBuffer), PIPELINE_STAGE_DRAW_INDIRECT_BIT, BARRIER_ACCESS_INDIRECT_COMBAND_READ_BIT);
+		builder.ReadBuffer(m_Registry->GetBuffer(m_Resources->drawCountBuffer), PIPELINE_STAGE_DRAW_INDIRECT_BIT, BARRIER_ACCESS_INDIRECT_COMBAND_READ_BIT);
 	}
 
 	void GeometryPass::Execute(CommandList& cmdList)
@@ -60,28 +65,13 @@ namespace tyr
 			return;
 		}
 
-		const ShaderStage meshPipelineStages = static_cast<ShaderStage>(SHADER_STAGE_TASK_BIT | SHADER_STAGE_MESH_BIT | SHADER_STAGE_FRAGMENT_BIT);
-
-		for (MeshInstanceHandle handle : m_Scene->content.meshInstances)
-		{
-			const MeshInstance& instance = m_Registry->GetMeshInstance(handle);
-			const Mesh& mesh = m_Registry->GetMesh(instance.info.mesh);
-			if (mesh.lodCount == 0)
-			{
-				continue;
-			}
-
-			// LOD selection isn't implemented yet - always use LOD 0.
-			const MeshLODAllocInfo& lodAlloc = m_AllocManager->GetMeshLODAllocInfo(mesh.lodOffset);
-			const uint meshletCount = (uint)(lodAlloc.meshletBufferAllocation.size / sizeof(ShaderMeshlet));
-			if (meshletCount == 0)
-			{
-				continue;
-			}
-
-			const uint meshInstanceIndex = handle.h.index;
-			cmdList.PushConstants(m_Pipeline, meshPipelineStages, 0, sizeof(uint), &meshInstanceIndex);
-			cmdList.DrawMeshTasks(meshletCount, 1, 1);
-		}
+		// GPU-driven instance culling has already compacted every visible instance into
+		// indirectDrawCommandBuffer/visibleInstanceIndexBuffer and written how many into
+		// drawCountBuffer, so one indirect multi-draw call covers every instance.
+		const BufferHandle indirectBuffer = m_Registry->GetBuffer(m_Resources->indirectDrawCommandBuffer).buffer;
+		const BufferHandle countBuffer = m_Registry->GetBuffer(m_Resources->drawCountBuffer).buffer;
+		// Matches VkDrawMeshTasksIndirectCommandEXT (3x uint32).
+		constexpr uint stride = sizeof(uint) * 3;
+		cmdList.DrawMeshTasksIndirectCount(indirectBuffer, 0, countBuffer, 0, RenderConstants::c_MaxMeshInstances, stride);
 	}
 }

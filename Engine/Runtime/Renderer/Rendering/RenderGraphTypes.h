@@ -16,12 +16,6 @@ namespace tyr
 
     static constexpr uint c_RenderGraphInvalidIndex = ~0u;
 
-    struct RenderGraphSpan
-    {
-        uint start = 0;
-        uint count = 0;
-    };
-
     // Resource usage types
     enum class RenderGraphResourceType : uint8
     {
@@ -35,10 +29,10 @@ namespace tyr
         Write
     };
 
-    // Resource usage record
+    // Resource usage record - no identity field, since each one is appended directly into its
+    // owning resource node's own usages array, so the node it sits in already identifies it.
     struct RenderGraphResourceUsage
     {
-        uint resourceIndex;
         uint passIndex;
         PipelineStage stage;
         BarrierAccess access;
@@ -46,31 +40,18 @@ namespace tyr
         ImageLayout layout; // images only
     };
 
-    // Resource nodes
+    // Resource nodes - usages is appended to directly at setup time, already in per-resource
+    // order with no separate grouping/sort step needed.
     struct RenderGraphBufferNode
     {
         RenderBuffer* buffer;
-        RenderGraphSpan usageSpan;
+        RGArray<RenderGraphResourceUsage> usages;
     };
 
     struct RenderGraphTextureNode
     {
         Texture* texture;
-        RenderGraphSpan usageSpan;
-    };
-
-    struct BufferRenderGraphBarrier
-    {
-        uint passIndex;
-        uint bufferIndex;
-        BufferBarrier barrier;
-    };
-
-    struct TextureRenderGraphBarrier
-    {
-        uint passIndex;
-        uint textureIndex;
-        ImageBarrier barrier;
+        RGArray<RenderGraphResourceUsage> usages;
     };
 
     // Pipeline phases for deterministic ordering
@@ -92,9 +73,10 @@ namespace tyr
         RenderGraphPhase phase;
         // Which queue's command list this pass records into and submits on.
         CommandQueueType queueType;
-        RenderGraphSpan bufferBarrierSpan;
-        RenderGraphSpan textureBarrierSpan;
-        RenderGraphSpan dependencySpan;
+        // Already exactly this pass' own barriers, in decision order, ready to issue with no
+        // further copying or grouping.
+        RGArray<BufferBarrier> bufferBarriers;
+        RGArray<ImageBarrier> textureBarriers;
     };
 
 }

@@ -34,12 +34,22 @@ namespace tyr
 		Array<GUIVertex> vertices;
 		Array<uint16> indices;
 		Array<GUIDrawCommand> commands;
+
+		// Clears the arrays without releasing their capacity, so a caller can keep one of these
+		// as a persistent member and reuse it every frame instead of reallocating a fresh one
+		// each call.
+		void Clear()
+		{
+			displaySize = {};
+			vertices.Clear();
+			indices.Clear();
+			commands.Clear();
+		}
 	};
 
-	// What actually gets kept in RenderFrame once SubmitGUIDrawData has uploaded the vertex/
-	// index bytes - just the draw commands and where this submission's data landed in the
-	// shared GUI vertex/index buffers, since GUIPass never needs the raw bytes back on the CPU
-	// side.
+	// Just the draw commands and where this submission's data landed in the shared GUI
+	// vertex/index buffers - the raw vertex/index bytes never need to come back to the CPU
+	// once uploaded.
 	struct GUIDrawSubmission
 	{
 		Vector2 displaySize;

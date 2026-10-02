@@ -16,3 +16,7 @@ CMakeLists.txt text eol=lf
 *.dll -text
 *.lib -text
 *.ico -text
+
+## Vendored third-party source - never authored/diffed here, so leave whatever line endings
+## it shipped with alone instead of normalizing (and warning about) them.
+ThirdParty/** -text

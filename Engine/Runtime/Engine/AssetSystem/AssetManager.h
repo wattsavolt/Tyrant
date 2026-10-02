@@ -25,6 +25,10 @@ namespace tyr
 
 		void Update(float deltaTime);
 
+		// Frees every load-data struct still sitting in a pending queue/list instead of
+		// letting it leak. Only safe once nothing can still be pushing into these queues.
+		void FreePendingAssets();
+
 		void LoadTexture(AssetID assetID);
 
 		void DeleteTexture(AssetID assetID);
@@ -38,15 +42,8 @@ namespace tyr
 		void DeleteMesh(AssetID assetID);
 
 		// Creates a mesh instance - loads the mesh itself plus whatever materials it'll
-		// actually need (each override's material, and the mesh's own default for any
-		// submesh slot not covered by one) before actually creating it on the renderer.
-		// Intended to be called once per MeshComponent (transform + its own overrides,
-		// straight from the component - see MaterialOverride's comment). onCreated is invoked
-		// with the real MeshInstanceHandle, and the resolved material AssetID used for each
-		// submesh slot, once creation actually happens (asynchronous - the mesh/materials
-		// might still be loading) - the caller needs both to ever delete the instance later
-		// (renderer-side instance plus each material's refcount), since nothing else hands
-		// either back.
+		// actually need before creating it on the renderer. onCreated is invoked
+		// asynchronously with the real instance handle and each submesh's resolved material.
 		void CreateMeshInstance(AssetID meshAssetID, const Matrix4& transform, const LocalArray<MaterialOverride, MeshConstants::c_MaxSubmeshes>& overrides, Function<void(MeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated);
 
 		void LoadLocation(AssetID assetID);
@@ -59,50 +56,43 @@ namespace tyr
 		Handle GetDefaultMaterial() const { return m_AssetMap.Find(c_DefaultMaterialAssetID)->resourceHandle; }
 
 	private:
-		// Called once per frame from the main thread. This is also what calls
-		// RendererAPI::Create*/Delete* - those must never be called from anywhere else, since
-		// RenderRegistry isn't safe for concurrent creation/deletion against RenderAsync's own
-		// reads of it on a worker thread.
+		// Called once per frame from the main thread - also the only place allowed to
+		// create/delete renderer resources, since doing so isn't safe against a worker
+		// thread's own concurrent reads.
 		void ProcessPendingAssets();
 
-		// Texture: header load task -> CreateTexture (main thread: GPU texture + upload
-		// allocation, kicks off the pixel-load task) -> UploadTexture (main thread: submit
-		// the upload request - the pixel-load task already decompressed/read straight into
-		// the upload allocation, so there's nothing left to copy here).
+		// Texture loading pipeline: load the header, create the GPU texture and request an
+		// upload allocation, then submit the upload once the pixel data is ready.
 		void CreateTexture(TextureHeaderLoadData* ld);
 		void UploadTexture(TexturePixelLoadData* ld);
-		// Actually frees a texture's renderer resource and AssetData entry - split out of
-		// DeleteTexture so ProcessPendingTextureDeletes can call it once a delete that arrived
-		// mid-load is finally safe to act on (see DeleteTexture's own comment).
+		// Frees a texture's renderer resource and AssetData entry, deferred until any
+		// in-flight load for it has finished.
 		void DeleteTextureResources(AssetID assetID, AssetData& assetData);
-		// Rechecks every AssetID in m_PendingTextureDeletes each frame, actually freeing it once
-		// its load has reached Loaded (or dropping it if something re-Loaded it since).
+		// Rechecks every pending delete each frame, actually freeing it once its load has
+		// reached Loaded (or dropping it if something re-loaded it since).
 		void ProcessPendingTextureDeletes();
 
-		// Material: file load task -> ResolveMaterialTextures (main thread: kicks off
-		// LoadTexture for each dependency, either straight to CreateMaterial if there are
-		// none or via m_MaterialsAwaitingTextures otherwise, same as today).
+		// Material loading pipeline: load the file, then resolve each texture dependency
+		// before creating the material.
 		void ResolveMaterialTextures(MaterialLoadData* ld);
 		void CreateMaterial(MaterialLoadData* ld);
-		// Same idea as DeleteTextureResources/ProcessPendingTextureDeletes above, for materials.
+		// Frees a material's renderer resource and AssetData entry, deferred until any
+		// in-flight load for it has finished.
 		void DeleteMaterialResources(AssetID assetID, AssetData& assetData);
 		void ProcessPendingMaterialDeletes();
 
-		// Mesh: header load task -> CreateMesh (main thread: creates the render mesh, then
-		// GPU vertex/index/meshlet/LOD buffer + upload allocations per LOD, sized straight
-		// from the header's chunk data, plus the LOD descriptor upload - which needs no
-		// async step, just the allocation offsets already known here - then kicks off one
-		// geometry-load task per LOD) -> UploadMeshGeometry (main thread: submits the upload
-		// requests - meshlets need no further per-instance work, see MeshChunkMeshlet's comment).
+		// Mesh loading pipeline: load the header, create GPU geometry/LOD buffers and
+		// upload allocations sized from it, then submit the geometry upload once each
+		// LOD's data is ready.
 		void CreateMesh(MeshHeaderLoadData* ld);
 		void UploadMeshGeometry(MeshGeometryLoadData* ld);
-		// Same idea as DeleteTextureResources/ProcessPendingTextureDeletes above, for meshes.
+		// Frees a mesh's renderer resource and AssetData entry, deferred until any
+		// in-flight load for it has finished.
 		void DeleteMeshResources(AssetID assetID, AssetData& assetData);
 		void ProcessPendingMeshDeletes();
 
-		// Mesh instances: CreateMeshInstance above kicks these off into
-		// m_PendingMeshInstances; this resolves them once ready (see the struct's comment
-		// in AssetDataTypes.h), called from ProcessPendingAssets each frame.
+		// Resolves pending mesh instances once their mesh and every needed material are
+		// ready, called once per frame.
 		void TryResolvePendingMeshInstances();
 		AssetID GetEffectiveMaterialForSlot(const MeshHeader& header, const MeshInstanceCreateData& instData, uint slot) const;
 		void CreateResolvedMeshInstance(MeshInstanceCreateData* instData);
@@ -113,7 +103,7 @@ namespace tyr
 		// Loaded batches ready to be processed
 		MPSCRingBuffer<AssetLoadBatch*, 32> m_BatchesLoadedQueue;
 		// Headers/files loaded and ready for their main-thread follow-up (GPU/upload
-		// allocation requests, dependency resolution) - see the method comments above.
+		// allocation requests, dependency resolution).
 		MPSCRingBuffer<TextureHeaderLoadData*, 32> m_TextureHeadersLoadedQueue;
 		MPSCRingBuffer<MaterialLoadData*, 32> m_MaterialFilesLoadedQueue;
 		MPSCRingBuffer<MeshHeaderLoadData*, 32> m_MeshHeadersLoadedQueue;
@@ -123,16 +113,11 @@ namespace tyr
 		// Materials that have had the file loaded but waiting on their textures to load
 		Array<MaterialLoadData*> m_MaterialsAwaitingTextures;
 		// Mesh instances requested but not yet created - waiting on their mesh's header and
-		// every material they'll need (see MeshInstanceCreateData's comment).
+		// every material they'll need.
 		Array<MeshInstanceCreateData*> m_PendingMeshInstances;
-		// AssetIDs whose Delete* call arrived while still Loading - tearing down a texture/
-		// material/mesh's renderer resources or pool slots before its own load has actually
-		// finished can race with the in-flight load task/queue entry still writing to that
-		// same AssetData or pool slot (see each Delete*'s own comment). refCount is dropped to
-		// 0 immediately (so a fresh Load* call naturally resurrects the entry instead of these
-		// lists needing to track that themselves) and the actual teardown deferred until
-		// ProcessPendingAssets sees loadState reach Loaded. Expected to stay small - a handful
-		// of entries at most in ordinary operation, not one of these per asset.
+		// AssetIDs whose delete call arrived while still loading - tearing down renderer
+		// resources mid-load would race the in-flight load. refCount drops to 0 immediately
+		// (so a fresh load naturally resurrects the entry) and teardown is deferred until loading finishes.
 		Array<AssetID> m_PendingTextureDeletes;
 		Array<AssetID> m_PendingMaterialDeletes;
 		Array<AssetID> m_PendingMeshDeletes;

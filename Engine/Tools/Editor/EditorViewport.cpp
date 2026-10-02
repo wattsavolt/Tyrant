@@ -9,7 +9,7 @@ namespace tyr
 	{
 	}
 
-	void EditorViewport::Draw()
+	void EditorViewport::Draw(RenderViewportHandle viewport)
 	{
 		ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoCollapse;
 
@@ -42,7 +42,7 @@ namespace tyr
 
 		if (width != m_Width || height != m_Height || !m_Texture)
 		{
-			m_Texture = m_RendererAPI.GetOrCreateViewportTexture("Viewport", width, height);
+			m_Texture = m_RendererAPI.GetOrCreateRenderViewportTexture(viewport, "Viewport", width, height);
 			m_Width = width;
 			m_Height = height;
 		}
@@ -53,14 +53,5 @@ namespace tyr
 		ImGui::Image(texID, ImVec2((float)m_Width, (float)m_Height));
 
 		ImGui::End();
-	}
-
-	void EditorViewport::Shutdown()
-	{
-		if (m_Texture)
-		{
-			m_RendererAPI.DeleteTexture(m_Texture);
-			m_Texture = {};
-		}
 	}
 }

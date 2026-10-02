@@ -39,15 +39,6 @@ namespace tyr
 #endif
 			imageDesc.width = imageData.width;
 			imageDesc.height = imageData.height;
-			// depth/mipCount/arrayLayerCount/sampleCount/memoryProperty below are all real,
-			// meaningful values for a swap chain image even though Device::CreateImage's real
-			// vkCreateImage call is skipped for it (externalImage is set - the swap chain
-			// already owns the actual VkImage) - everything computed from an ImageDesc field
-			// still gets computed unconditionally before that branch check, so an unset field
-			// here is read as uninitialized garbage regardless of it going unused afterward.
-			// sampleCount specifically also feeds an assert inside
-			// VulkanUtility::ToVulkanSampleCount, so leaving it unset crashes outright rather
-			// than just wastefully computing garbage.
 			imageDesc.depth = 1;
 			imageDesc.mipCount = 1;
 			imageDesc.arrayLayerCount = 1; // Use 2 for stereoscopic (VR) - see the view's own comment below.
@@ -117,7 +108,9 @@ namespace tyr
 		barrier.subresourceRange.mipCount = 1;
 		barrier.subresourceRange.baseArrayLayer = 0;
 		barrier.subresourceRange.arrayLayerCount = 1;
-		barrier.srcStage = PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		// TOP_OF_PIPE_BIT doesn't form a real dependency under sync2 (spec keeps it only for
+		// source compat) - ALL_COMMANDS_BIT is what actually synchronizes against the acquire.
+		barrier.srcStage = PIPELINE_STAGE_ALL_COMMANDS_BIT;
 		barrier.dstStage = PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 		barrier.srcQueueFamilyIndex = srcQueueFamilyIndex;
 	}

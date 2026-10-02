@@ -6,20 +6,18 @@
 namespace tyr
 {
 	class Device;
-	class RenderData;
 	class CommandList;
 	class RenderRegistry;
 	class RenderGraphBuilder;
 	struct RenderResources;
 	struct RenderFrame;
+	struct RenderData;
 
 	struct TransferPassArgs
 	{
 		Device* device;
-		RenderData* data;
 		RenderRegistry* registry;
 		RenderResources* resources;
-		RenderFrame* renderFrame;
 	};
 
 	// A pass that executes the transfer of data from the cpu to gpu
@@ -33,14 +31,19 @@ namespace tyr
 		void Recreate(const TransferPassArgs& args);
 
 		void Setup(RenderGraphBuilder& builder);
-		void Execute(CommandList& cmdList);
+		// renderFrame/data are taken here as parameters, not stored on this object - see
+		// GUIPass::Execute's own comment on why a single long-lived instance reused every tick
+		// must not cache per-tick state like this across a Recreate()/Execute() pair: nothing
+		// guarantees a later tick's Recreate() can't run before this tick's own Execute() does,
+		// and unlike GUIPass's symptom (a wrong vertex/index base), the equivalent bug here would
+		// have this pass upload a completely different (and possibly not-yet-populated) tick's
+		// data into this tick's destination buffers, or skip this tick's own uploads entirely.
+		void Execute(CommandList& cmdList, RenderFrame& renderFrame, RenderData& data);
 
 	private:
 		Device* m_Device;
-		RenderData* m_Data;
 		RenderRegistry* m_Registry;
 		RenderResources* m_Resources;
-		RenderFrame* m_RenderFrame;
 		bool m_Initialized;
 
 	};

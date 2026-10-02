@@ -1,4 +1,5 @@
 #include "RendererAPI.h"
+#include "RenderDebug.h"
 #include "Renderer.h"
 #include "RenderResource/RenderResourceUtil.h"
 #include "RenderAPI/Device.h"
@@ -43,10 +44,12 @@ namespace tyr
 		// would only be modifying the active scene which won't be touched here
 		RenderData& data = m_Renderer.GetRenderData();
 		static uint nextID = 0;
-		const SceneHandle handle(data.scenes.Create());
-		Scene& scene = data.scenes[handle.h];
+		const SceneHandle handle(data.scenePool.Create());
+		Scene& scene = data.scenePool[handle.h];
 		scene.name = name;
 		scene.id = nextID++;
+		// Covers pool-slot reuse - see ImmediateSceneData's own comment.
+		m_Renderer.GetImmediateSceneData(handle).Reset();
 		return handle;
 	}
 
@@ -72,7 +75,24 @@ namespace tyr
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		renderFrame.activeScene = handle;
-		renderFrame.sceneFrame.visible = visible;
+		m_Renderer.GetImmediateSceneData(handle).visible = visible;
+	}
+
+	RenderViewportHandle RendererAPI::CreateRenderViewport()
+	{
+		return m_Renderer.CreateRenderViewport();
+	}
+
+	void RendererAPI::DeleteRenderViewport(RenderViewportHandle viewport)
+	{
+		m_Renderer.DeleteRenderViewport(viewport);
+	}
+
+	void RendererAPI::SetSceneRenderViewport(SceneHandle scene, RenderViewportHandle viewport)
+	{
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		renderFrame.sceneFrame.newRenderViewport = viewport;
+		m_Renderer.GetImmediateSceneData(scene).renderViewport = viewport;
 	}
 
 	void RendererAPI::AddBufferUploadRequest(const BufferUploadRequest& request)
@@ -105,13 +125,8 @@ namespace tyr
 		// the underlying image data is.
 		imageInfo.layout = texture.imageLayout;
 
-		ImageBindingUpdate imageUpdate;
-		imageUpdate.bindingIndex = TYR_BINDING_TEXTURES;
-		imageUpdate.descriptorArrayIndex = handle.h.index;
-		imageUpdate.imageBindingInfos = &imageInfo;
-		imageUpdate.infoCount = 1;
-
-		m_Device.UpdateDescriptorSet(m_Renderer.GetRenderResources().descriptorSet, nullptr, 0, &imageUpdate, 1);
+		// Queued rather than written immediately - see PendingDescriptorUpdates' own comment.
+		m_Renderer.QueueImageBindingUpdate(TYR_BINDING_TEXTURES, handle.h.index, imageInfo);
 
 		return handle;
 	}
@@ -127,41 +142,34 @@ namespace tyr
 		return m_Registry.GetTexture(handle).info;
 	}
 
-	TextureHandle RendererAPI::GetOrCreateViewportTexture(const char* name, uint width, uint height)
+	TextureHandle RendererAPI::GetOrCreateRenderViewportTexture(RenderViewportHandle viewport, const char* name, uint width, uint height)
 	{
-		RenderResources& resources = m_Renderer.GetRenderResources();
+		LocalObjectPool<RenderViewport, RenderConstants::c_MaxScenes>& pool = m_Renderer.GetRenderViewportPool();
+		RenderViewport& rv = pool[viewport.h];
 
-		if (resources.viewportColourTexture && resources.viewportWidth == width && resources.viewportHeight == height)
+		// Only ever (re)creates this tick's own slot's targets - the other c_BufferedFrameCount-1
+		// slots keep whatever they already have until their own turn comes back around (stable for
+		// the whole tick - see GetRenderFrameIndex's own comment). Main thread only, like every
+		// RendererAPI Create*/Delete* call - RecordGeometryPass/RecordLightingPass (a worker thread)
+		// only ever read their own tick's slot, so nothing else touches it concurrently here.
+		const uint renderFrameIndex = m_Renderer.GetRenderFrameIndex();
+		const RenderViewportTextureData& current = rv.textureData[renderFrameIndex];
+		if (!current.colourTexture || current.width != width || current.height != height)
 		{
-			return resources.viewportColourTexture;
+			m_Renderer.ResizeRenderViewportSlot(rv, renderFrameIndex, name, width, height);
 		}
 
-		if (resources.viewportColourTexture)
+		// Record the latest requested size and flag the other two buffered slots to pick it up on
+		// their own next turn - see RenderViewport's own comment on resize propagation.
+		rv.requestedWidth = width;
+		rv.requestedHeight = height;
+		for (uint i = 1; i < RenderConstants::c_BufferedFrameCount; ++i)
 		{
-			DeleteTexture(resources.viewportColourTexture);
+			const uint otherSlot = (renderFrameIndex + i) % RenderConstants::c_BufferedFrameCount;
+			rv.pendingResize[otherSlot] = true;
 		}
 
-		TextureDesc desc;
-		desc.debugName = name;
-		desc.info.width = width;
-		desc.info.height = height;
-		desc.info.depth = 1;
-		desc.info.arrayLayerCount = 1;
-		desc.info.mipCount = 1;
-		// Must match geometryGraphicsPipeline's declared colour attachment format (see
-		// CreatePipelines) - dynamic rendering requires the two to agree.
-		desc.info.format = PixelFormat::PF_R8G8B8A8_SRGB;
-		desc.info.type = ImageType::Image2D;
-		desc.sampleCount = SampleCount::OneBit;
-		desc.usage = static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_COLOUR_ATTACHMENT_BIT);
-		desc.layout = ImageLayout::IMAGE_LAYOUT_GENERAL;
-
-		resources.viewportColourTexture = CreateTexture(desc);
-		resources.viewportWidth = width;
-		resources.viewportHeight = height;
-		resources.viewportTextureIsNew = true;
-
-		return resources.viewportColourTexture;
+		return rv.textureData[renderFrameIndex].colourTexture;
 	}
 
 	MaterialHandle RendererAPI::CreateMaterial(const MaterialDesc& desc)
@@ -329,6 +337,12 @@ namespace tyr
 		renderFrame.meshesToDelete.Add(handle);
 	}
 
+	void RendererAPI::RequestBLASBuild(MeshHandle handle)
+	{
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		renderFrame.meshesToBuildBLAS.Add(handle);
+	}
+
 	MeshInstanceHandle RendererAPI::CreateMeshInstance(const MeshInstanceDesc& desc)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
@@ -383,10 +397,11 @@ namespace tyr
 		}
 	}
 
-	void RendererAPI::SetSceneWindow(RenderWindowHandle window)
+	void RendererAPI::SetSceneWindow(SceneHandle scene, RenderWindowHandle window)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		renderFrame.sceneFrame.newWindow = window;
+		m_Renderer.GetImmediateSceneData(scene).windowHandle = window;
 	}
 
 	void RendererAPI::AddView(const SceneView& view)
@@ -395,18 +410,18 @@ namespace tyr
 		renderFrame.sceneFrame.views.Add(view);
 	}
 
-	void RendererAPI::SetAmbient(float ambient)
+	void RendererAPI::SetSceneAmbient(SceneHandle scene, float ambient)
 	{
-		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
-		renderFrame.sceneFrame.ambient = ambient;
+		m_Renderer.GetImmediateSceneData(scene).ambient = ambient;
 	}
 
-	DirLightHandle RendererAPI::CreateDirectionalLight(const DirectionalLightDesc& desc)
+	DirLightHandle RendererAPI::CreateDirectionalLight(SceneHandle scene, const DirectionalLightDesc& desc)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		const DirLightHandle handle = m_Registry.CreateDirectionalLight(desc);
 		UploadDirectionalLight(desc.info, handle.h.index);
 		renderFrame.sceneFrame.dirLightsToAdd.Add(handle);
+		m_Renderer.GetImmediateSceneData(scene).dirLightCount++;
 		return handle;
 	}
 
@@ -417,19 +432,21 @@ namespace tyr
 		renderFrame.sceneFrame.dirLightsToUpdate.Add({ handle, desc });
 	}
 
-	void RendererAPI::DeleteDirectionalLight(DirLightHandle handle)
+	void RendererAPI::DeleteDirectionalLight(SceneHandle scene, DirLightHandle handle)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		renderFrame.sceneFrame.dirLightsToRemove.Add(handle);
 		renderFrame.dirLightsToDelete.Add(handle);
+		m_Renderer.GetImmediateSceneData(scene).dirLightCount--;
 	}
 
-	PointLightHandle RendererAPI::CreatePointLight(const PointLightDesc& desc)
+	PointLightHandle RendererAPI::CreatePointLight(SceneHandle scene, const PointLightDesc& desc)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		const PointLightHandle handle = m_Registry.CreatePointLight(desc);
 		UploadPointLight(desc.info, handle.h.index);
 		renderFrame.sceneFrame.pointLightsToAdd.Add(handle);
+		m_Renderer.GetImmediateSceneData(scene).pointLightCount++;
 		return handle;
 	}
 
@@ -440,19 +457,21 @@ namespace tyr
 		renderFrame.sceneFrame.pointLightsToUpdate.Add({ handle, desc });
 	}
 
-	void RendererAPI::DeletePointLight(PointLightHandle handle)
+	void RendererAPI::DeletePointLight(SceneHandle scene, PointLightHandle handle)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		renderFrame.sceneFrame.pointLightsToRemove.Add(handle);
 		renderFrame.pointLightsToDelete.Add(handle);
+		m_Renderer.GetImmediateSceneData(scene).pointLightCount--;
 	}
 
-	SpotLightHandle RendererAPI::CreateSpotLight(const SpotLightDesc& desc)
+	SpotLightHandle RendererAPI::CreateSpotLight(SceneHandle scene, const SpotLightDesc& desc)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		const SpotLightHandle handle = m_Registry.CreateSpotLight(desc);
 		UploadSpotLight(desc.info, handle.h.index);
 		renderFrame.sceneFrame.spotLightsToAdd.Add(handle);
+		m_Renderer.GetImmediateSceneData(scene).spotLightCount++;
 		return handle;
 	}
 
@@ -463,11 +482,12 @@ namespace tyr
 		renderFrame.sceneFrame.spotLightsToUpdate.Add({ handle, desc });
 	}
 
-	void RendererAPI::DeleteSpotLight(SpotLightHandle handle)
+	void RendererAPI::DeleteSpotLight(SceneHandle scene, SpotLightHandle handle)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		renderFrame.sceneFrame.spotLightsToRemove.Add(handle);
 		renderFrame.spotLightsToDelete.Add(handle);
+		m_Renderer.GetImmediateSceneData(scene).spotLightCount--;
 	}
 
 	void RendererAPI::UploadDirectionalLight(const DirectionalLightInfo& info, uint index)
@@ -576,8 +596,30 @@ namespace tyr
 			return;
 		}
 
+#if TYR_RENDER_DEBUG
+		// TEMP DEBUG - flicker investigation. Checks the final CPU-side vertex array - common to
+		// both the ImGui and Nuklear submission paths - immediately before anything in the
+		// upload/GPU pipeline touches it. If this ever fires, the NaN is already present on the
+		// CPU before WriteUploadBuffer/FrameUploadAllocator/TransferPass get involved at all,
+		// ruling all of that out in one shot. Revert after.
+		for (uint v = 0; v < data.vertices.Size(); ++v)
+		{
+			const GUIVertex& vertex = data.vertices[v];
+			TYR_ASSERT(vertex.pos.x == vertex.pos.x && vertex.pos.y == vertex.pos.y
+				&& vertex.uv.x == vertex.uv.x && vertex.uv.y == vertex.uv.y);
+		}
+#endif
+
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		RenderResources& resources = m_Renderer.GetRenderResources();
+		// guiVertexBuffer/guiIndexBuffer are each one physical buffer, c_BufferedFrameCount slots
+		// big - this slot's own writes/reads are confined to its own c_BufferedFrameCount-th of it
+		// (see RenderConstants::c_GUIVertexBufferSize's own comment on why), at this fixed byte
+		// base. GUIPass::Execute applies the matching base on the read side (BindIndexBuffer's
+		// offset, DrawIndexed's vertexOffset).
+		const uint renderFrameIndex = m_Renderer.GetRenderFrameIndex();
+		const size_t vertexBase = renderFrameIndex * RenderConstants::c_GUIVertexBufferSize;
+		const size_t indexBase = renderFrameIndex * RenderConstants::c_GUIIndexBufferSize;
 
 		const size_t vertexBytes = sizeof(GUIVertex) * data.vertices.Size();
 		const size_t indexBytes = sizeof(uint16) * data.indices.Size();
@@ -596,7 +638,7 @@ namespace tyr
 			request.srcBuffer = vertexAlloc.buffer;
 			request.srcOffset = vertexAlloc.offset;
 			request.dstBuffer = resources.guiVertexBuffer;
-			request.dstOffset = renderFrame.guiVertexCursor * sizeof(GUIVertex);
+			request.dstOffset = vertexBase + renderFrame.guiVertexCursor * sizeof(GUIVertex);
 			request.size = vertexBytes;
 		}
 
@@ -611,7 +653,7 @@ namespace tyr
 			request.srcBuffer = indexAlloc.buffer;
 			request.srcOffset = indexAlloc.offset;
 			request.dstBuffer = resources.guiIndexBuffer;
-			request.dstOffset = renderFrame.guiIndexCursor * sizeof(uint16);
+			request.dstOffset = indexBase + renderFrame.guiIndexCursor * sizeof(uint16);
 			request.size = indexBytes;
 		}
 

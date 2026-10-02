@@ -8,6 +8,8 @@ namespace tyr
 		, m_SemaphoreValue(0)
 	{
 		m_SemaphorePoints.Reserve(32);
+		// A handful of in-flight ticks' worth is plenty - grows on its own if ever needed.
+		m_Checkpoints.Reserve(8);
 	}
 
 	bool FrameUploadAllocator::Allocate(size_t size, size_t alignment, Allocation& allocation)
@@ -43,9 +45,22 @@ namespace tyr
 		return true;
 	}
 
-	void FrameUploadAllocator::Signal(uint64 signalValue)
+	void FrameUploadAllocator::RecordAllocationCheckpoint(uint64 frameNumber)
 	{
-		m_SemaphorePoints.Add({ m_Head, signalValue });
+		m_Checkpoints.Add({ m_Head, frameNumber });
+	}
+
+	void FrameUploadAllocator::Signal(uint64 frameNumber, uint64 signalValue)
+	{
+		// Checkpoints are consumed strictly front-to-back, in the same order they were recorded.
+		// Asserting rather than silently using a mismatched head avoids reintroducing a
+		// cross-frame staging-reuse race.
+		TYR_ASSERT(!m_Checkpoints.IsEmpty() && m_Checkpoints[0].frameNumber == frameNumber);
+
+		const size_t head = m_Checkpoints[0].head;
+		m_Checkpoints.EraseFromFront(1);
+
+		m_SemaphorePoints.Add({ head, signalValue });
 	}
 
 	void FrameUploadAllocator::Reclaim(uint64 completedValue)

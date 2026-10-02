@@ -49,6 +49,11 @@ namespace tyr
 		// Only ever called from the main thread.
 		void Reclaim(uint64 completedValue);
 
+		// Unconditionally frees every still-live allocation, signalled or not. Only safe once the
+		// caller has independently confirmed the GPU is fully idle - every allocation this pool
+		// still knows about has necessarily already been consumed by then. Main thread only, at shutdown.
+		void ReclaimAll();
+
 	private:
 		struct InFlightAllocation
 		{

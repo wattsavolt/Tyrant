@@ -61,9 +61,11 @@ namespace tyr
 	{
 		extensions.Add(VK_KHR_SURFACE_EXTENSION_NAME);
 
-		if (validationLayersEnabled) 
+		if (validationLayersEnabled)
 		{
 			extensions.Add(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+			// Needed to chain extra validation features into the instance's own creation info.
+			extensions.Add(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
 		}
 
 #ifdef VULKAN_OS_SURFACE_EXTENSION_NAME
@@ -86,6 +88,7 @@ namespace tyr
 		TYR_VK_GET_INSTANCE_PROC_ADDR(vkDestroyDebugUtilsMessengerEXT);
 		TYR_VK_GET_INSTANCE_PROC_ADDR(vkSubmitDebugUtilsMessageEXT);
 		TYR_VK_GET_INSTANCE_PROC_ADDR(vkCmdDrawMeshTasksEXT);
+		TYR_VK_GET_INSTANCE_PROC_ADDR(vkCmdDrawMeshTasksIndirectCountEXT);
 
 		TYR_VK_GET_INSTANCE_PROC_ADDR(vkGetAccelerationStructureBuildSizesKHR);
 		TYR_VK_GET_INSTANCE_PROC_ADDR(vkCreateAccelerationStructureKHR);

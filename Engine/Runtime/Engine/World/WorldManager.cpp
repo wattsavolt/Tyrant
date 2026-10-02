@@ -89,7 +89,7 @@ namespace tyr
 				lightDesc.info.colour = lightComponent.colour;
 				lightDesc.info.intensity = lightComponent.intensity;
 				lightDesc.info.castsShadow = lightComponent.castsShadow;
-				world.dirLights.Add(m_RendererAPI->CreateDirectionalLight(lightDesc));
+				world.dirLights.Add(m_RendererAPI->CreateDirectionalLight(world.sceneHandle, lightDesc));
 			});
 		}
 
@@ -112,10 +112,11 @@ namespace tyr
 		// this world's data up once the buffered slot it was last written to gets reused.
 		m_RendererAPI->SetActiveScene(world.sceneHandle, world.visible);
 
-		// TODO: Shoehorned flat ambient term until a proper scene/lighting-settings system
-		// exists to make this configurable per world. Same per-frame resupply requirement as
-		// SetActiveScene/AddView above - see their comments.
-		m_RendererAPI->SetAmbient(0.15f);
+		// TODO: Shoehorned flat ambient term until a proper scene/lighting-settings system exists
+		// to make this configurable per world. Unlike SetActiveScene/AddView above, this doesn't
+		// strictly need resupplying every tick (see SetSceneAmbient's own comment) - called here
+		// anyway since nothing else makes this value change yet.
+		m_RendererAPI->SetSceneAmbient(world.sceneHandle, 0.15f);
 
 		SceneView view;
 		view.viewArea = world.viewArea;
@@ -147,9 +148,15 @@ namespace tyr
 		world.osWindowHandle = config.osWindowHandle;
 
 		world.sceneHandle = m_RendererAPI->AddScene(world.name.CStr());
+		// Unlike windowHandle/sceneHandle's own SetSceneWindow/SetActiveScene calls, a
+		// RenderViewport needs no OS window and nothing depends on this world being the active one
+		// yet - safe (and necessary, since EditorViewport needs a handle to resize against
+		// regardless of which world ends up active first) to create it for every world immediately.
+		world.renderViewportHandle = m_RendererAPI->CreateRenderViewport();
 
-		// Not calling SetSceneWindow here - it only ever applies to the active scene, and a
-		// freshly created world isn't automatically the active one (see SetActiveWorld).
+		// Not calling SetSceneWindow/SetSceneRenderViewport here - both only ever apply to the
+		// active scene, and a freshly created world isn't automatically the active one (see
+		// SetActiveWorld).
 	}
 
 	void WorldManager::SetActiveWorld(Handle worldHandle)
@@ -164,7 +171,8 @@ namespace tyr
 		if (worldHandle)
 		{
 			const World& world = m_WorldPool[worldHandle];
-			m_RendererAPI->SetSceneWindow(world.windowHandle);
+			m_RendererAPI->SetSceneWindow(world.sceneHandle, world.windowHandle);
+			m_RendererAPI->SetSceneRenderViewport(world.sceneHandle, world.renderViewportHandle);
 		}
 	}
 
@@ -175,7 +183,7 @@ namespace tyr
 
 		if (worldHandle == m_ActiveWorld)
 		{
-			m_RendererAPI->SetSceneWindow(windowHandle);
+			m_RendererAPI->SetSceneWindow(world.sceneHandle, windowHandle);
 		}
 	}
 
@@ -248,11 +256,12 @@ namespace tyr
 
 		for (DirLightHandle handle : world.dirLights)
 		{
-			m_RendererAPI->DeleteDirectionalLight(handle);
+			m_RendererAPI->DeleteDirectionalLight(world.sceneHandle, handle);
 		}
 		world.dirLights.Clear();
 
 		m_RendererAPI->RemoveScene(world.sceneHandle);
+		m_RendererAPI->DeleteRenderViewport(world.renderViewportHandle);
 		m_RendererAPI->RemoveWindow(world.windowHandle);
 	}
 }

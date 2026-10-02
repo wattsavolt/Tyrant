@@ -84,6 +84,11 @@ namespace tyr
 		void DrawIndexed(uint indexCount, uint instanceCount, uint firstIndex, int vertexOffset, uint firstInstance);
 		void Draw(uint vertexCount, uint instanceCount, uint firstVertex, uint firstInstance);
 		void DrawMeshTasks(uint groupCountX, uint groupCountY, uint groupCountZ);
+		// GPU-driven instance culling - draws one mesh task group count per compacted entry in
+		// countBuffer[countBufferOffset], reading each entry's group counts from indirectBuffer
+		// (VkDrawMeshTasksIndirectCommandEXT-equivalent, tightly packed from indirectBufferOffset).
+		void DrawMeshTasksIndirectCount(BufferHandle indirectBuffer, size_t indirectBufferOffset,
+			BufferHandle countBuffer, size_t countBufferOffset, uint maxDrawCount, uint stride);
 		void Dispatch(uint groupCountX, uint groupCountY, uint groupCountZ);
 		// Builds (or, with AccelerationStructureBuildInfo::update, fast-refits) one or more
 		// acceleration structures. Bottom-level builds reuse their own stored geometry

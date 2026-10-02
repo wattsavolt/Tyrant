@@ -35,6 +35,9 @@ namespace tyr
 		case PF_D32_FLOAT_S8_UINT:
 			return 5;
 
+		case PF_R16G16_SFLOAT:
+			return 4;
+
 		case PF_R16G16B16A16_UNORM:
 		case PF_R16G16B16A16_SNORM:
 		case PF_R16G16B16A16_SSCALED:

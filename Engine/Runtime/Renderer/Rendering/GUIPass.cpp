@@ -1,9 +1,12 @@
 #include "GUIPass.h"
+#include "RenderDebug.h"
 #include "RenderAPI/CommandList.h"
 #include "Rendering/RenderFrame.h"
 #include "Rendering/RenderRegistry.h"
 #include "Rendering/RenderGraphBuilder.h"
+#include "Rendering/RenderConstants.h"
 #include "RenderResource/RenderBuffer.h"
+#include <chrono>
 
 namespace tyr
 {
@@ -31,19 +34,38 @@ namespace tyr
 		m_DescriptorSet = args.descriptorSet;
 		m_VertexBuffer = args.vertexBuffer;
 		m_IndexBuffer = args.indexBuffer;
-		m_RenderFrame = args.renderFrame;
 	}
 
 	void GUIPass::Setup(RenderGraphBuilder& builder)
 	{
+		// The vertex shader pulls its own vertex out of this via a StructuredBuffer binding - a
+		// real shader read, at the shader stages.
 		const PipelineStage guiPipelineStages = static_cast<PipelineStage>(PIPELINE_STAGE_VERTEX_SHADER_BIT | PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
 		builder.ReadBuffer(m_Registry->GetBuffer(m_VertexBuffer), guiPipelineStages, BARRIER_ACCESS_SHADER_READ_BIT);
-		builder.ReadBuffer(m_Registry->GetBuffer(m_IndexBuffer), guiPipelineStages, BARRIER_ACCESS_SHADER_READ_BIT);
+
+		// Unlike the vertex buffer above, this one is consumed through fixed-function index
+		// fetch, so it needs INDEX_READ at the index-input stage instead.
+		builder.ReadBuffer(m_Registry->GetBuffer(m_IndexBuffer), PIPELINE_STAGE_INDEX_INPUT_BIT, BARRIER_ACCESS_INDEX_READ_BIT);
 	}
 
-	void GUIPass::Execute(CommandList& cmdList)
+	void GUIPass::Execute(CommandList& cmdList, const RenderFrame& renderFrame, uint renderFrameIndex)
 	{
-		if (m_RenderFrame->guiDrawData.Size() == 0)
+#if TYR_RENDER_DEBUG
+		// A wall-clock timestamp lets a screenshot's capture time be matched back to an exact
+		// renderFrameIndex/submission count.
+		{
+			uint totalCommands = 0;
+			for (const GUIDrawSubmission& submission : renderFrame.guiDrawData)
+			{
+				totalCommands += submission.commands.Size();
+			}
+			const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+			TYR_LOG_WARNING("[DBG] GUIPass::Execute: ms=%lld slot=%u submissions=%u totalCommands=%u",
+				(long long)nowMs, renderFrameIndex, renderFrame.guiDrawData.Size(), totalCommands);
+		}
+#endif
+
+		if (renderFrame.guiDrawData.Size() == 0)
 		{
 			return;
 		}
@@ -53,21 +75,34 @@ namespace tyr
 		// needs to be bound into the descriptor set (already done once, at creation).
 		const BufferHandle indexBuffer = m_Registry->GetBuffer(m_IndexBuffer).buffer;
 
+		// Both buffers are one physical buffer, c_BufferedFrameCount slots big. The vertex
+		// buffer has no bound range of its own (read via a whole-buffer StructuredBuffer
+		// descriptor), so its slot base folds into vertexOffset instead.
+		const size_t indexBase = renderFrameIndex * RenderConstants::c_GUIIndexBufferSize;
+		const int vertexBase = (int)(renderFrameIndex * (RenderConstants::c_GUIVertexBufferSize / sizeof(GUIVertex)));
+
 		cmdList.BindGraphicsPipeline(m_Pipeline);
 		cmdList.BindDescriptorSet(m_DescriptorSet, m_Pipeline);
-		cmdList.BindIndexBuffer(indexBuffer, 0);
+		cmdList.BindIndexBuffer(indexBuffer, indexBase);
 
 		const ShaderStage guiPipelineStages = static_cast<ShaderStage>(SHADER_STAGE_VERTEX_BIT | SHADER_STAGE_FRAGMENT_BIT);
 
-		for (const GUIDrawSubmission& submission : m_RenderFrame->guiDrawData)
+		for (const GUIDrawSubmission& submission : renderFrame.guiDrawData)
 		{
+			// A zero (or garbage) display size would make scale = +-INF below, and any vertex
+			// whose local position happens to be exactly 0 on that axis would compute a NaN
+			// clip-space coordinate - which makes the rasterizer discard the whole submission.
+			if (submission.displaySize.x <= 0.0f || submission.displaySize.y <= 0.0f)
+			{
+				continue;
+			}
+
 			GUIPushConstants pushConstants;
 			pushConstants.scale[0] = 2.0f / submission.displaySize.x;
 			pushConstants.translate[0] = -1.0f;
-			// Y is flipped relative to the usual Vulkan ImGui backend maths (scale=+2/h,
-			// translate=-1) - CommandList::SetViewport flips the viewport for every pipeline to
-			// match this engine's DirectX-style Y-up 3D conventions, so ImGui's top-left-origin,
-			// Y-down screen coordinates need the opposite sign here to land the right way up.
+			// Y is flipped relative to the usual Vulkan ImGui maths - the viewport is flipped for
+			// every pipeline to match this engine's DirectX-style Y-up 3D conventions, so ImGui's
+			// Y-down coordinates need the opposite sign here.
 			pushConstants.scale[1] = -2.0f / submission.displaySize.y;
 			pushConstants.translate[1] = 1.0f;
 
@@ -83,7 +118,7 @@ namespace tyr
 				pushConstants.textureIndex = command.textureIndex;
 				cmdList.PushConstants(m_Pipeline, guiPipelineStages, 0, sizeof(GUIPushConstants), &pushConstants);
 
-				cmdList.DrawIndexed(command.indexCount, 1, submission.indexOffset + command.indexOffset, (int)submission.vertexOffset, 0);
+				cmdList.DrawIndexed(command.indexCount, 1, submission.indexOffset + command.indexOffset, vertexBase + (int)submission.vertexOffset, 0);
 			}
 		}
 	}

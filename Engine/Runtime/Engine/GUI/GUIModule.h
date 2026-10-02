@@ -6,6 +6,7 @@
 #include "Containers/Array.h"
 #include "Time/Timer.h"
 #include "Window/WindowHandle.h"
+#include "Rendering/GUIDrawData.h"
 
 struct nk_context;
 
@@ -33,7 +34,6 @@ namespace tyr
 		void Shutdown() override;
 		void BeginFrame() override;
 		void Update(float deltaTime) override;
-		void EndFrame() override;
 
 		nk_context* GetNuklearContext() const { return m_NuklearContext; }
 #if !TYR_FINAL
@@ -71,9 +71,18 @@ namespace tyr
 		Array<uint8> m_NuklearCmdMemory;
 		Array<uint8> m_NuklearVertexMemory;
 		Array<uint8> m_NuklearIndexMemory;
+		// Persistent, reused-every-frame scratch for the GUIDrawData SubmitNuklearDrawData builds
+		// and hands to RendererAPI::SubmitGUIDrawData - same reasoning as the fixed Nuklear memory
+		// above (its own comment), just for the converted output instead of Nuklear's own working
+		// memory: a fresh GUIDrawData (and so fresh heap allocations for its three Arrays) every
+		// single call would otherwise be built and torn down every frame for no reason, since
+		// SubmitGUIDrawData only ever reads from it and never keeps a reference past that call.
+		GUIDrawData m_NuklearDrawData;
 
 #if !TYR_FINAL
 		ImGuiContext* m_ImGuiContext = nullptr;
+		// See m_NuklearDrawData's own comment - same reasoning, for SubmitImGuiDrawData.
+		GUIDrawData m_ImGuiDrawData;
 #endif
 	};
 }

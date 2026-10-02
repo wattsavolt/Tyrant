@@ -9,8 +9,8 @@ namespace tyr
 {
 	struct RenderBuffer : public RenderResource
 	{
-		BufferHandle buffer;
-		BufferViewHandle bufferView;
+		BufferHandle buffer{};
+		BufferViewHandle bufferView{};
 		// Only non-null for upload buffers
 		void* mappedMemory = nullptr;
 	};

@@ -15,7 +15,15 @@ namespace tyr
 		Index,
 		Vertex,
 		IndexAndVertex,
-		RayTracing
+		RayTracing,
+		// GPU-written and GPU-read only: indirect draw/dispatch commands, an atomic draw counter,
+		// or anything else an indirect draw/dispatch call consumes directly - needs Storage,
+		// Indirect, and TransferDst (so vkCmdFillBuffer can reset a counter each frame) together.
+		Indirect,
+		// Backing storage an acceleration structure object is bound to at creation, never written
+		// via a copy/upload - just ACCELERATION_STRUCTURE_STORAGE + device address (a build
+		// addresses it directly, not through a descriptor).
+		AccelerationStructureStorage
 	};
 
 	struct RenderBufferDesc

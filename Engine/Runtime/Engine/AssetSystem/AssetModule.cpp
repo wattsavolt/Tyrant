@@ -28,6 +28,10 @@ namespace tyr
 
 	void AssetModule::Shutdown()
 	{
+		// Safe here specifically because EngineLoop::Shutdown already called
+		// TaskScheduler::WaitForAllTasks() before any module's Shutdown() ran - nothing can
+		// still be pushing into AssetManager's pending queues by this point.
+		m_AssetManager->FreePendingAssets();
 		delete m_AssetManager;
 	}
 }

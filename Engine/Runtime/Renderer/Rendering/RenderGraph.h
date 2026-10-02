@@ -30,20 +30,15 @@ namespace tyr
         friend class RenderGraphBuilder;
 
         void BuildBarriers();
-        void BuildPassDependencies();
-        void SortPassesDeterministically();
 
     private:
         RGArray<RenderGraphPassNode> m_PassNodes;
         RGArray<RenderGraphBufferNode> m_BufferNodes;
         RGArray<RenderGraphTextureNode> m_TextureNodes;
 
-        RGArray<RenderGraphResourceUsage> m_BufferUsages;
-        RGArray<RenderGraphResourceUsage> m_TextureUsages;
-
-        RGArray<BufferRenderGraphBarrier> m_BufferBarriers;
-        RGArray<TextureRenderGraphBarrier> m_TextureBarriers;
-
-        RGArray<uint> m_PassDependencies;
+        // Pass indices bucketed by phase, in registration order - gives Execute() deterministic
+        // phase ordering without ever physically reordering m_PassNodes, which must stay
+        // append-only and index-stable for resource usages to keep indexing into it correctly.
+        RGArray<uint> m_PassOrder[(uint)RenderGraphPhase::Count];
     };
 }

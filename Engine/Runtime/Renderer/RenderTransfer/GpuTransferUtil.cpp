@@ -62,13 +62,6 @@ namespace tyr
 
             for (uint layer = 0; layer < textureInfo.arrayLayerCount; ++layer)
             {
-                // ExpandOne(), not a raw-pointer/index write - this is what actually grows
-                // copyInfos' own tracked Size(), which UploadToTextures then passes to
-                // vkCmdCopyBufferToImage as regionCount. Writing through a raw pointer here
-                // (the previous form of this function) left Size() at 0 forever regardless of
-                // how many entries were actually written - passing regionCount=0 means no
-                // texture upload has ever actually issued a real copy command, no matter how
-                // correct everything else in the pipeline was.
                 BufferImageCopyInfo& info = copyInfos.ExpandOne();
 
                 info.bufferOffset = static_cast<uint64>(MemoryUtil::Align(currentOffset, static_cast<size_t>(RenderConstants::c_UploadAlignment)));

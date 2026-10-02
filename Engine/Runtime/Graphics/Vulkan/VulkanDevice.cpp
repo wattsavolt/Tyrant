@@ -268,20 +268,35 @@ namespace tyr
 			TYR_LOG_FATAL("Buffer device address is not supported by the GPU.");
 		}
 
-		// Only enable the specific Vulkan 1.1 features actually used, for the same reason as
-		// the mesh shader features below - passing the query result straight through would
-		// enable every Vulkan 1.1 feature the GPU supports, some of which (eg. multiview)
-		// have their own extra requirements elsewhere that aren't satisfied here.
+		// GPU-driven instance culling issues one indirect mesh task draw per visible instance,
+		// with the actual draw count produced by a compute pass and read from a GPU buffer
+		// rather than known on the CPU.
+		if (!vulkanPhysicalDevice12Features.drawIndirectCount)
+		{
+			TYR_ASSERT(false);
+			TYR_LOG_FATAL("Indirect draw count is not supported by the GPU.");
+		}
+
+		// A mesh shader looking up its own instance by draw slot needs the shader-visible draw
+		// index this feature exposes.
+		if (!vulkanPhysicalDevice11Features.shaderDrawParameters)
+		{
+			TYR_ASSERT(false);
+			TYR_LOG_FATAL("Shader draw parameters is not supported by the GPU.");
+		}
+
+		// Only the specific Vulkan 1.1 features actually used are enabled here - passing the
+		// query result straight through would turn on every 1.1 feature the GPU supports, some
+		// of which have their own extra requirements that aren't satisfied elsewhere.
 		VkPhysicalDeviceVulkan11Features enabledVulkan11Features{};
 		enabledVulkan11Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
 		enabledVulkan11Features.pNext = &vulkanPhysicalDevice12Features;
 		enabledVulkan11Features.storageBuffer16BitAccess = VK_TRUE;
+		enabledVulkan11Features.shaderDrawParameters = VK_TRUE;
 
-		// Only enable the specific mesh shader features actually used, rather than passing
-		// the query result above straight through - it reports every mesh-shader-related
-		// flag the GPU supports, and some of those (eg. multiviewMeshShader) require other
-		// features we don't enable (multiviewMeshShader requires core multiview, which
-		// nothing here uses) to also be on, which vkCreateDevice validation rejects.
+		// Only the specific mesh shader features actually used are enabled here - some of the
+		// other flags the GPU reports supporting require further features that aren't enabled,
+		// which device creation validation would otherwise reject.
 		VkPhysicalDeviceMeshShaderFeaturesEXT enabledMeshShaderFeatures{};
 		enabledMeshShaderFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
 		enabledMeshShaderFeatures.pNext = &enabledVulkan11Features;
@@ -335,6 +350,10 @@ namespace tyr
 		{
 			allocatorCI.flags |= VMA_ALLOCATOR_CREATE_KHR_DEDICATED_ALLOCATION_BIT;
 		}
+
+		// Required for any buffer created with device-address usage - without this, the allocator
+		// gives their memory no device-address capability, and binding them later fails.
+		allocatorCI.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
 
 		TYR_GASSERT(vmaCreateAllocator(&allocatorCI, &m_Allocator));
 	}
@@ -470,7 +489,7 @@ namespace tyr
 		return static_cast<size_t>(buffer.allocation->GetSize());
 	}
 
-	// In this file for same reason as above function
+	// Needs to be in this file as it requires VmaAllocation's implementation to call GetSize().
 	size_t Device::GetImageAllocationSize(ImageHandle handle)
 	{
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);

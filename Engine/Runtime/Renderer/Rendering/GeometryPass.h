@@ -10,7 +10,6 @@ namespace tyr
 	class Device;
 	class CommandList;
 	class RenderRegistry;
-	class RenderAllocationManager;
 	class RenderGraphBuilder;
 	struct Scene;
 	struct RenderResources;
@@ -19,7 +18,6 @@ namespace tyr
 	{
 		Device* device;
 		RenderRegistry* registry;
-		RenderAllocationManager* allocManager;
 		RenderResources* resources;
 		Scene* scene;
 		GraphicsPipelineHandle pipeline;
@@ -40,7 +38,6 @@ namespace tyr
 	private:
 		Device* m_Device;
 		RenderRegistry* m_Registry;
-		RenderAllocationManager* m_AllocManager;
 		RenderResources* m_Resources;
 		Scene* m_Scene;
 		GraphicsPipelineHandle m_Pipeline;

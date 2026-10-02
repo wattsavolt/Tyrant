@@ -20,7 +20,6 @@ namespace tyr
 		DescriptorSetHandle descriptorSet;
 		RenderBufferHandle vertexBuffer;
 		RenderBufferHandle indexBuffer;
-		const RenderFrame* renderFrame;
 	};
 
 	// Draws whatever immediate-mode UI draw data (editor chrome, in-game HUD/menu) was
@@ -34,7 +33,10 @@ namespace tyr
 		void Recreate(const GUIPassArgs& args);
 
 		void Setup(RenderGraphBuilder& builder);
-		void Execute(CommandList& cmdList);
+		// renderFrame/renderFrameIndex are taken as parameters rather than stored on this
+		// object - it's a single long-lived instance reused every tick, so caching per-tick
+		// state here risks it going stale if anything mutates this object in between.
+		void Execute(CommandList& cmdList, const RenderFrame& renderFrame, uint renderFrameIndex);
 
 	private:
 		RenderRegistry* m_Registry;
@@ -42,6 +44,5 @@ namespace tyr
 		DescriptorSetHandle m_DescriptorSet;
 		RenderBufferHandle m_VertexBuffer;
 		RenderBufferHandle m_IndexBuffer;
-		const RenderFrame* m_RenderFrame;
 	};
 }

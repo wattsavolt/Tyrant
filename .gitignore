@@ -26,3 +26,6 @@
 # Claude Code
 .claude/
 
+# ImGui window-layout state - generated per machine/session, not source
+imgui.ini
+

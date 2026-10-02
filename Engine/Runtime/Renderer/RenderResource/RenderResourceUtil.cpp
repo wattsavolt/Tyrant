@@ -4,6 +4,7 @@
 #include "RenderAPI/CommandList.h"
 #include "RenderResource/RenderBuffer.h"
 #include "RenderResource/Texture.h"
+#include "Rendering/RenderGraphTypes.h"
 
 namespace tyr
 {
@@ -48,6 +49,20 @@ namespace tyr
 			bufferDesc.usage = static_cast<BufferUsage>(BUFFER_USAGE_TRANSFER_DST_BIT | BUFFER_USAGE_INDEX_BUFFER_BIT
 				| BUFFER_USAGE_VERTEX_BUFFER_BIT);
 			break;
+		case RenderBufferUsage::Indirect:
+			bufferDesc.usage = static_cast<BufferUsage>(BUFFER_USAGE_TRANSFER_DST_BIT | BUFFER_USAGE_STORAGE_BUFFER_BIT
+				| BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+			break;
+		case RenderBufferUsage::RayTracing:
+			// STORAGE (still read directly by shaders), TRANSFER_DST (uploads land the same way),
+			// ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY (BLAS/TLAS builds read straight out of
+			// these), and SHADER_DEVICE_ADDRESS (a build addresses this buffer directly, not through a descriptor).
+			bufferDesc.usage = static_cast<BufferUsage>(BUFFER_USAGE_TRANSFER_DST_BIT | BUFFER_USAGE_STORAGE_BUFFER_BIT
+				| BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT | BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+			break;
+		case RenderBufferUsage::AccelerationStructureStorage:
+			bufferDesc.usage = static_cast<BufferUsage>(BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT | BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+			break;
 		default:
 			TYR_ASSERT(false);
 		}
@@ -70,9 +85,8 @@ namespace tyr
 		{
 			BufferViewDesc viewDesc;
 #if !TYR_FINAL
-			// debugName must outlive the CreateBufferView call below - viewDesc.debugName is
-			// a non-owning pointer into its buffer (see TYR_DECLARE_GDEBUGNAME), so it can't
-			// be confined to a narrower scope than that.
+			// debugName must outlive the CreateBufferView call below - it's a non-owning pointer
+			// into its buffer, so it can't be confined to a narrower scope than that.
 			GDebugString debugName;
 			debugName.Set(desc.debugName, "_View");
 			viewDesc.debugName = debugName.Str();
@@ -165,8 +179,8 @@ namespace tyr
 
 		ImageViewDesc viewDesc;
 #if !TYR_FINAL
-		// debugName must outlive the CreateImageView call below - see the matching comment
-		// in InitializeRenderBuffer above.
+		// debugName must outlive the CreateImageView call below - it's a non-owning pointer
+		// into its image, so it can't be confined to a narrower scope than that.
 		GDebugString debugName;
 		debugName.Set(desc.debugName, "_View");
 		viewDesc.debugName = debugName.Str();

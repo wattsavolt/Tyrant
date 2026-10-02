@@ -256,24 +256,34 @@ namespace tyr
 		multisampling.alphaToCoverageEnable = desc.multiSampleDesc.alphaToCoverageEnable; // Get from blend state alphaToCoverageEnabled
 		multisampling.alphaToOneEnable = desc.multiSampleDesc.alphaToOneEnable;
 
-		// Create blend state
-		VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-		colorBlendAttachment.colorWriteMask = desc.blendStateDesc.colorWriteMask & 0xF;
-		colorBlendAttachment.blendEnable = desc.blendStateDesc.blendEnabled;
-		colorBlendAttachment.srcColorBlendFactor = VulkanUtility::ToVulkanBlendFactor(desc.blendStateDesc.srcColorBlendFactor);
-		colorBlendAttachment.dstColorBlendFactor = VulkanUtility::ToVulkanBlendFactor(desc.blendStateDesc.destColorBlendFactor);
-		colorBlendAttachment.colorBlendOp = VulkanUtility::ToVulkanBlendOp(desc.blendStateDesc.colorBlendOp);
-		colorBlendAttachment.srcAlphaBlendFactor = VulkanUtility::ToVulkanBlendFactor(desc.blendStateDesc.srcAlphaBlendFactor);
-		colorBlendAttachment.dstAlphaBlendFactor = VulkanUtility::ToVulkanBlendFactor(desc.blendStateDesc.destAlphaBlendFactor);
-		colorBlendAttachment.alphaBlendOp = VulkanUtility::ToVulkanBlendOp(desc.blendStateDesc.alphaBlendOp);
+		// Create blend state - GraphicsPipelineDesc only has one BlendStateDesc (every colour
+		// attachment blends the same way), but Vulkan still wants one VkPipelineColorBlendAttachmentState
+		// per attachment, matching VkPipelineRenderingCreateInfo::colorAttachmentCount exactly.
+		VkPipelineColorBlendAttachmentState colorBlendAttachmentTemplate{};
+		colorBlendAttachmentTemplate.colorWriteMask = desc.blendStateDesc.colorWriteMask & 0xF;
+		colorBlendAttachmentTemplate.blendEnable = desc.blendStateDesc.blendEnabled;
+		colorBlendAttachmentTemplate.srcColorBlendFactor = VulkanUtility::ToVulkanBlendFactor(desc.blendStateDesc.srcColorBlendFactor);
+		colorBlendAttachmentTemplate.dstColorBlendFactor = VulkanUtility::ToVulkanBlendFactor(desc.blendStateDesc.destColorBlendFactor);
+		colorBlendAttachmentTemplate.colorBlendOp = VulkanUtility::ToVulkanBlendOp(desc.blendStateDesc.colorBlendOp);
+		colorBlendAttachmentTemplate.srcAlphaBlendFactor = VulkanUtility::ToVulkanBlendFactor(desc.blendStateDesc.srcAlphaBlendFactor);
+		colorBlendAttachmentTemplate.dstAlphaBlendFactor = VulkanUtility::ToVulkanBlendFactor(desc.blendStateDesc.destAlphaBlendFactor);
+		colorBlendAttachmentTemplate.alphaBlendOp = VulkanUtility::ToVulkanBlendOp(desc.blendStateDesc.alphaBlendOp);
+
+		const uint declaredColorAttachmentCount = static_cast<uint>(desc.dynamicRendering.colorAttachmentFormats.Size());
+		const uint colorBlendAttachmentCount = declaredColorAttachmentCount > 0 ? declaredColorAttachmentCount : 1;
+		VkPipelineColorBlendAttachmentState* colorBlendAttachments = stack.Alloc<VkPipelineColorBlendAttachmentState>(colorBlendAttachmentCount);
+		for (uint i = 0; i < colorBlendAttachmentCount; ++i)
+		{
+			colorBlendAttachments[i] = colorBlendAttachmentTemplate;
+		}
 
 		VkPipelineColorBlendStateCreateInfo blendState{};
 		blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
 		blendState.pNext = nullptr;
 		blendState.logicOpEnable = VK_FALSE;
 		blendState.logicOp = VK_LOGIC_OP_NO_OP;
-		blendState.attachmentCount = 1;
-		blendState.pAttachments = &colorBlendAttachment;
+		blendState.attachmentCount = colorBlendAttachmentCount;
+		blendState.pAttachments = colorBlendAttachments;
 		blendState.blendConstants[0] = 0.0f;
 		blendState.blendConstants[1] = 0.0f;
 		blendState.blendConstants[2] = 0.0f;

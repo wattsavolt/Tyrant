@@ -9,6 +9,10 @@ namespace tyr
 	{
 		VkAccelerationStructureKHR accelerationStructure;
 		BufferHandle backingBuffer;
+		// True when backingBuffer was supplied by the caller (CreateAccelerationStructureAt,
+		// for a suballocated shared storage buffer) rather than created internally for this
+		// structure alone - DeleteAccelerationStructure must not free a buffer it doesn't own.
+		bool externalBackingBuffer = false;
 		VkDeviceAddress deviceAddress;
 		VkDeviceSize buildScratchSize;
 		VkDeviceSize updateScratchSize;

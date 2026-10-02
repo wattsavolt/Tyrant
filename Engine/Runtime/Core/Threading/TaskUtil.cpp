@@ -8,6 +8,10 @@ namespace tyr
         task.function = std::move(fn);
         task.lifetime = lifetime;
         task.deletionGate.store(lifetime == TaskLifetime::ManualRelease ? 2 : 1, std::memory_order_relaxed);
+
+        // Counts this task as live until it actually finishes running, released the instant
+        // its state becomes Finished - independent of whenever its slot is eventually freed.
+        Task::s_LiveCount.fetch_add(1, std::memory_order_relaxed);
     }
 
     bool TaskUtil::IsActive(const Task& task)
@@ -46,14 +50,17 @@ namespace tyr
             return false;
         }
 
-        // Setting Finished has to happen under the same lock TryAddDependent checks state
-        // under - otherwise a dependent could register itself right as this runs and never
-        // get released, or this could finish believing it has no dependents when one was
-        // about to be added.
+        // Setting Finished has to happen under the same lock dependent-registration checks
+        // state under - otherwise a dependent could register itself right as this runs and
+        // never get released, or this could finish believing it has none when one was about to be added.
         {
             LockGuard guard(task.mutex);
             SetState(task, TaskState::Finished);
         }
+
+        // This task is genuinely done now, regardless of whether its pool slot is ever
+        // actually released.
+        Task::s_LiveCount.fetch_sub(1, std::memory_order_relaxed);
 
         return true;
     }

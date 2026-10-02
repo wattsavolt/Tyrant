@@ -72,16 +72,26 @@ namespace tyr
 		createInfo.pApplicationInfo = &appInfo;
 		createInfo.enabledExtensionCount = static_cast<uint>(extensions.Size());
 		createInfo.ppEnabledExtensionNames = extensions.Data();
+
+		// Catches barrier/access-scope hazards ordinary validation doesn't, at real CPU/GPU cost.
+		// TODO: make this independently toggleable instead of always-on alongside validation.
+		const VkValidationFeatureEnableEXT syncValidationFeature = VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
+		VkValidationFeaturesEXT validationFeatures{};
+		validationFeatures.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+		validationFeatures.enabledValidationFeatureCount = 1;
+		validationFeatures.pEnabledValidationFeatures = &syncValidationFeature;
+
 		if (m_ValidationLayersEnabled)
 		{
 			createInfo.enabledLayerCount = static_cast<uint>(c_ValidationLayers.Size());
 			createInfo.ppEnabledLayerNames = c_ValidationLayers.Data();
+			createInfo.pNext = &validationFeatures;
 		}
 		else
 		{
 			createInfo.enabledLayerCount = 0;
 		}
-		
+
 		TYR_GASSERT(vkCreateInstance(&createInfo, g_VulkanAllocationCallbacks, &m_Instance));
 
 #if !TYR_FINAL 

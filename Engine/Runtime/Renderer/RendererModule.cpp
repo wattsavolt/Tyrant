@@ -25,6 +25,7 @@ namespace tyr
 		RendererConfig rendererConfig;
 		rendererConfig.renderAPIConfig.appName = c_AppName;
 		rendererConfig.renderAPICreateConfig.backend = RenderAPIBackend::Vulkan;
+		rendererConfig.vSyncEnabled = true;
 
 		rendererConfig.shaderConfig.builtInSourceRootDirPath = c_EngineShadersDir;
 		rendererConfig.shaderConfig.appSourceRootDirPath = c_AssetsDir;

@@ -48,6 +48,26 @@ namespace tyr
 
 		void RemoveScene(SceneHandle handle);
 
+		// Just allocates a pool slot (see RenderViewport's own comment on why creation doesn't also
+		// create any textures yet) - call once per scene (see WorldManager::InitWorld) and assign
+		// the result to that scene via SetSceneRenderViewport.
+		RenderViewportHandle CreateRenderViewport();
+
+		void DeleteRenderViewport(RenderViewportHandle viewport);
+
+		// Takes an explicit scene handle (unlike SetActiveScene/AddView/etc, which implicitly mean
+		// "this tick's active scene") so it can update ImmediateSceneData for the right scene
+		// regardless of whether that scene is active yet - see ImmediateSceneData's own comment.
+		// Also queues the merge RenderAsync applies to Scene::renderViewport proper, same as
+		// SetSceneWindow does for windowHandle (see SceneFrame::newRenderViewport) - that merge is
+		// still scoped to whichever scene is active when RenderAsync processes it, so this should
+		// only be called for a scene at or before the same tick it becomes active.
+		void SetSceneRenderViewport(SceneHandle scene, RenderViewportHandle viewport);
+
+		// visible is written straight into ImmediateSceneData (see its own comment) - like
+		// ambient, RenderAsync never reads it, so there's no SceneFrame merge involved for it,
+		// unlike activeScene itself (still plain per-frame RenderFrame state - see AddView's own
+		// comment on why that still needs resupplying every frame).
 		void SetActiveScene(SceneHandle handle, bool visible);
 
 		void AddBufferUploadRequest(const BufferUploadRequest& request);
@@ -61,11 +81,12 @@ namespace tyr
 
 		const TextureInfo& GetTextureInfo(TextureHandle handle);
 
-		// Creates the editor viewport panel's offscreen colour render target on first call, or
-		// resizes it (deleting the old one, creating a new one at the requested size) if
-		// width/height differ from last time. Safe to call every frame from editor code - only
-		// actually does work when the size has changed.
-		TextureHandle GetOrCreateViewportTexture(const char* name, uint width, uint height);
+		// Creates viewport's offscreen colour render target (plus its G-buffer/depth targets) for
+		// this tick's own buffered slot on first call, or resizes them if width/height differ from
+		// last time - see RenderViewport's own comment on how a resize propagates to the other
+		// buffered slots. Safe to call every frame from editor code - only actually does work when
+		// the size has changed.
+		TextureHandle GetOrCreateRenderViewportTexture(RenderViewportHandle viewport, const char* name, uint width, uint height);
 
 		MaterialHandle CreateMaterial(const MaterialDesc& desc);
 
@@ -86,6 +107,13 @@ namespace tyr
 
 		void DeleteMesh(MeshHandle handle);
 
+		// Queues a one-time build of this mesh's bottom-level acceleration structure (BLAS),
+		// from LOD0's already-allocated vertex/index buffer ranges - call once LOD0's geometry
+		// upload has actually been queued (see AssetManager::UploadMeshGeometry), not just
+		// allocated, so the build's implicit ordering against that upload is correct. A no-op
+		// safety net if called again for a mesh that already has one.
+		void RequestBLASBuild(MeshHandle handle);
+
 		MeshInstanceHandle CreateMeshInstance(const MeshInstanceDesc& desc);
 
 		void UpdateMeshInstance(MeshInstanceHandle handle, const MeshInstanceDesc& desc);
@@ -95,33 +123,38 @@ namespace tyr
 
 		// TODO: Add create, update and delete functions for skeletal mesh instances here
 		
-		void SetSceneWindow(RenderWindowHandle window);
+		// Takes an explicit scene handle - see SetSceneRenderViewport's own comment for why.
+		void SetSceneWindow(SceneHandle scene, RenderWindowHandle window);
 
 		// Adds a view for the next frame. Must be called for each view every frame
 		void AddView(const SceneView& view);
 
-		// Flat ambient term added to every pixel regardless of any light - see MeshPS.hlsl.
-		// RenderFrame is per-frame buffered state (see AddView's own comment on the same
-		// pattern), so this needs to be resupplied every frame too, not just once.
-		void SetAmbient(float ambient);
+		// Flat ambient term added to every pixel regardless of any light - see MeshPS.hlsl. Written
+		// straight into ImmediateSceneData (see its own comment) - unlike SetSceneWindow/
+		// SetSceneRenderViewport, RenderAsync never reads this, so there's no SceneFrame merge to
+		// also queue. Persists once set, like windowHandle/renderViewport - no need to resupply it
+		// every frame.
+		void SetSceneAmbient(SceneHandle scene, float ambient);
 
-		DirLightHandle CreateDirectionalLight(const DirectionalLightDesc& desc);
+		// Takes an explicit scene handle (see SetSceneRenderViewport's own comment) so
+		// ImmediateSceneData's light counts stay correct per scene.
+		DirLightHandle CreateDirectionalLight(SceneHandle scene, const DirectionalLightDesc& desc);
 
 		void UpdateDirectionalLight(DirLightHandle handle, const DirectionalLightDesc& desc);
 
-		void DeleteDirectionalLight(DirLightHandle handle);
+		void DeleteDirectionalLight(SceneHandle scene, DirLightHandle handle);
 
-		PointLightHandle CreatePointLight(const PointLightDesc& desc);
+		PointLightHandle CreatePointLight(SceneHandle scene, const PointLightDesc& desc);
 
 		void UpdatePointLight(PointLightHandle handle, const PointLightDesc& desc);
 
-		void DeletePointLight(PointLightHandle handle);
+		void DeletePointLight(SceneHandle scene, PointLightHandle handle);
 
-		SpotLightHandle CreateSpotLight(const SpotLightDesc& desc);
+		SpotLightHandle CreateSpotLight(SceneHandle scene, const SpotLightDesc& desc);
 
 		void UpdateSpotLight(SpotLightHandle handle, const SpotLightDesc& desc);
 
-		void DeleteSpotLight(SpotLightHandle handle);
+		void DeleteSpotLight(SceneHandle scene, SpotLightHandle handle);
 
 		bool RequestResourceUploadAllocation(size_t size, UploadBufferAllocation& allocation);
 
@@ -132,7 +165,7 @@ namespace tyr
 		void SubmitGUIDrawData(const GUIDrawData& data);
 
 		// Discards whatever GUI draw data is still sitting unrendered in the current render
-		// frame slot - see GUIModule::EndFrame's call site for why this is needed.
+		// frame slot - see GUIModule::Update's call site for why this is needed.
 		void ResetGUIDrawData();
 
 	private:

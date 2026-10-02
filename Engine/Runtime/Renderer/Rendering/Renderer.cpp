@@ -1,4 +1,6 @@
 #include "Renderer.h"
+#include <chrono>
+#include "RenderDebug.h"
 #include "RenderSubmissionThread.h"
 #include "GraphicsManager.h"
 #include "RenderAPI/GraphicsUtility.h"
@@ -12,6 +14,7 @@
 #include "RenderAPI/CommandList.h"
 #include "RenderAPI/DescriptorSet.h"
 #include "RenderAPI/Sync.h"
+#include "Memory/StackAllocation.h"
 #include "Math/Matrix4.h"
 #include "RenderResource/RenderResourceUtil.h"
 #include "RenderTransfer/GPUTransferUtil.h"
@@ -24,6 +27,16 @@
 #include "RenderGraphAllocation.h"
 namespace tyr
 {
+	namespace
+	{
+		// Fixed, worst-case-sized byte regions within the ray-tracing culling staging buffer,
+		// one contiguous block per buffered render frame slot, indexed directly by renderFrameIndex.
+		constexpr size_t c_ActiveInstanceIndicesBytes = sizeof(uint) * RenderConstants::c_MaxMeshInstances;
+		constexpr size_t c_DrawCountResetBytes = sizeof(uint);
+		constexpr size_t c_TlasInstancesBytes = RenderConstants::c_TLASInstanceBufferSize;
+		constexpr size_t c_RTCullingStagingSlotSize = c_ActiveInstanceIndicesBytes + c_DrawCountResetBytes + c_TlasInstancesBytes;
+	}
+
 	bool Renderer::s_Instantiated = false;
 
 	Renderer::Renderer(const RendererConfig& rendererConfig, RenderAPI* renderAPI)
@@ -50,6 +63,7 @@ namespace tyr
 		CreateCommandObjects();
 		CreatePipelines();
 		CreateBuffers();
+		CreateAccelerationStructures();
 		CreateSamplers();
 		CreatePasses();
 
@@ -82,29 +96,31 @@ namespace tyr
 		m_RenderSubmissionThread = nullptr;
 
 		// Wait again now that the thread has definitely submitted everything, so nothing else
-		// (a module removing a window/scene, or this object's own destructor) deletes a resource
-		// the GPU might still be using.
+		// deletes a resource the GPU might still be using.
 		m_Ctx.device->WaitIdle();
+
+		// The normal signal-and-reclaim path stops running once the main loop does, so an asset
+		// upload submitted in one of the last few frames before shutdown can reach this point
+		// still marked unsignalled, even though WaitIdle above confirms it was already consumed.
+		m_AllocManager.ReclaimAllResourceUploadMemory();
 	}
 
 	Renderer::~Renderer()
 	{
 		// Safety net - the real call is expected to have already happened explicitly, early in
-		// engine shutdown (see Shutdown()'s own comment). Idempotent, so this is a no-op then.
+		// engine shutdown. Idempotent, so this is a no-op then.
 		Shutdown();
 
 		DeletePasses();
 		DeleteSamplers();
+		DeleteAccelerationStructures();
 		DeleteBuffers();
 		DeletePipelines();
 		DeleteCommandObjects();
 		DeleteShaders();
-		// Safe now (unlike inside Shutdown()) - every module has finished calling
-		// RemoveWindow/RemoveScene/DeleteMesh/etc by this point, and nothing async is left
-		// running that could still touch their data, so whatever's still sitting in any
-		// RenderFrame slot's *ToDelete lists (queued during module shutdown, after the main
-		// loop - and so PrepareForNextFrame - had already stopped running) can finally be
-		// flushed.
+		// Safe now, unlike inside Shutdown() - every module has finished removing its own
+		// windows/scenes/meshes by this point, so whatever's still queued in any RenderFrame
+		// slot's delete lists can finally be flushed.
 		DeleteRemainingFrameResources();
 		DeleteQueues();
 
@@ -127,99 +143,272 @@ namespace tyr
 		RenderFrame& renderFrame = GetRenderFrame();
 		renderFrame.deltaTime = deltaTime;
 
-		if (!renderFrame.activeScene)
+		// One-time per-mesh BLAS build requests, drained into a persistent queue here (main
+		// thread, same as where they were added) rather than in RenderAsync, since this doesn't
+		// need scene.content.meshInstances to have been merged first.
+		for (MeshHandle handle : renderFrame.meshesToBuildBLAS)
 		{
-			return;
+			m_PendingBLASBuilds.Add(handle);
 		}
 
-		SceneFrame& sceneFrame = renderFrame.sceneFrame;
-
-		const Scene& scene = m_Data.scenes[renderFrame.activeScene.h];
-
-		if (!m_FirstRender)
+		// Decide and create this frame's BLAS batch here, on the main thread - acceleration
+		// structure/buffer creation must never happen on a worker thread. The worker thread only
+		// issues the actual build commands from already-created data.
 		{
-			const RenderFrame& prevRenderFrame = GetPrevRenderFrame();
-			// The previous slot might have had no active scene at all (e.g. its tick was
-			// skipped - see Render()'s own early return above) - treat that the same as a
-			// changed scene rather than indexing scenes with an invalid handle.
-			if (!prevRenderFrame.activeScene || m_Data.scenes[prevRenderFrame.activeScene.h].id != scene.id)
+			size_t accumulatedBytes = 0;
+			bool builtAny = false;
+			uint processedCount = 0;
+			size_t maxScratchSize = 0;
+
+			for (uint i = 0; i < m_PendingBLASBuilds.Size(); ++i)
 			{
-				m_ViewIdIndexMap.Clear();
+				Mesh& mesh = m_Registry.GetMesh(m_PendingBLASBuilds[i]);
+				if (mesh.blas)
+				{
+					// Already built (requested more than once)
+					processedCount++;
+					continue;
+				}
+
+				const MeshLODAllocInfo& lodAlloc = m_AllocManager.GetMeshLODAllocInfo(mesh.lodOffset);
+				const size_t meshBytes = lodAlloc.vertexBufferAllocation.size + lodAlloc.indexBufferAllocation.size;
+
+				// Always build at least one real mesh, even if it alone exceeds the budget -
+				// otherwise an oversized mesh at the front of this FIFO (never-reordered, for
+				// streaming priority) queue would stall every mesh behind it forever.
+				if (builtAny && accumulatedBytes + meshBytes > RenderConstants::c_MaxBLASBuildBytesPerFrame)
+				{
+					break;
+				}
+
+				AccelerationStructureGeometryDesc geomDesc;
+				geomDesc.vertexBuffer = m_Registry.GetBuffer(m_Resources.vertexBuffer).buffer;
+				geomDesc.vertexOffset = lodAlloc.vertexBufferAllocation.offset;
+				geomDesc.vertexStride = sizeof(ShaderVertex);
+				geomDesc.maxVertexCount = (uint)(lodAlloc.vertexBufferAllocation.size / sizeof(ShaderVertex));
+				geomDesc.indexBuffer = m_Registry.GetBuffer(m_Resources.indexBuffer).buffer;
+				geomDesc.indexOffset = lodAlloc.indexBufferAllocation.offset;
+				geomDesc.maxPrimitiveCount = (uint)(lodAlloc.indexBufferAllocation.size / sizeof(uint) / 3);
+
+				AccelerationStructureDesc blasDesc;
+				blasDesc.debugName = "Mesh BLAS";
+				blasDesc.type = AccelerationStructureType::BottomLevel;
+				blasDesc.geometries.Add(geomDesc);
+
+				size_t asSize = 0;
+				size_t buildScratchSize = 0;
+				m_Ctx.device->GetAccelerationStructureSize(blasDesc, asSize, buildScratchSize);
+
+				if (!m_AllocManager.RequestBLASStorageAllocation(asSize, mesh.blasStorageAllocation))
+				{
+					// Out of shared BLAS storage - leave this mesh pending (it stays at the front
+					// of the queue) rather than asserting; it simply doesn't cast/receive
+					// ray-traced shadows until room frees up.
+					break;
+				}
+
+				mesh.blas = m_Ctx.device->CreateAccelerationStructureAt(blasDesc, m_Registry.GetBuffer(m_Resources.blasStorageBuffer).buffer, mesh.blasStorageAllocation.offset);
+				maxScratchSize = maxScratchSize > buildScratchSize ? maxScratchSize : buildScratchSize;
+
+				BLASBuildRecord& record = renderFrame.blasBuildsToRecord.ExpandOne();
+				record.blas = mesh.blas;
+				// scratchOffset is filled in below, once this frame's scratch capacity (and so
+				// the per-slot byte offset) is finalized - growing blasScratchBuffer mid-batch
+				// would otherwise shift every record's offset that was already computed above it.
+
+				accumulatedBytes += meshBytes;
+				builtAny = true;
+				processedCount++;
+			}
+
+			m_PendingBLASBuilds.EraseFromFront(processedCount);
+
+			if (maxScratchSize > 0)
+			{
+				// One call for the whole batch, after every BLAS above is created, since growing
+				// mid-batch would shift already-computed offsets.
+				EnsureBLASScratchCapacity(maxScratchSize);
+
+				const size_t scratchOffset = (size_t)m_RenderFrameIndex * m_BLASScratchCapacity;
+				for (BLASBuildRecord& record : renderFrame.blasBuildsToRecord)
+				{
+					record.scratchOffset = scratchOffset;
+				}
 			}
 		}
 
-		ShaderSceneInfo sceneInfo{};
-		sceneInfo.ambient = sceneFrame.ambient;
-		// scene.content.dirLights/pointLights/spotLights are each packed contiguously from
-		// index 0 (swap-and-pop-back on removal - see the merge loop in RenderAsync), so their
-		// sizes are exactly how many of each light buffer's entries, from the start, are real -
-		// see SceneInfo::dirLightCount's own comment on why the shader needs these rather than
-		// a fixed loop.
-		sceneInfo.dirLightCount = scene.content.dirLights.Size();
-		sceneInfo.pointLightCount = scene.content.pointLights.Size();
-		sceneInfo.spotLightCount = scene.content.spotLights.Size();
-
-		const RenderWindowHandle windowHandle = renderFrame.sceneFrame.newWindow ? renderFrame.sceneFrame.newWindow : scene.windowHandle;
-		if (!windowHandle)
+		// Scene-dependent setup only. Not an early return out of Render() - this frame's
+		// already-queued asset/frame buffer uploads still need the transfer pass to run
+		// regardless of whether a scene happens to be active this tick.
+		if (renderFrame.activeScene)
 		{
-			// scene.windowHandle is only ever persisted by RenderAsync (see its own newWindow
-			// handling) once it has actually processed a frame that carried a window change -
-			// until that catches up on the worker thread, there's nothing to render to yet.
-			return;
-		}
+			SceneFrame& sceneFrame = renderFrame.sceneFrame;
 
-		const RenderWindow& renderWindow = m_WindowPool[windowHandle.h];
-		const uint swapChainWidth = renderWindow.swapChain->GetWidth();
-		const uint swapChainHeight = renderWindow.swapChain->GetHeight();
-		// TODO: Extend to multiple views per scene - only the first view's data reaches the
-		// shader for now (see ShaderSceneInfo's own comment).
-		if (!sceneFrame.views.IsEmpty())
-		{
-			const SceneView& sv = sceneFrame.views[0];
+			const Scene& scene = m_Data.scenePool[renderFrame.activeScene.h];
 
-			// Before EditorViewport has ever requested a render target (e.g. the very first
-			// few frames), fall back to the swap chain's own size instead of dividing by zero.
-			const uint viewportWidth = m_Resources.viewportWidth != 0 ? m_Resources.viewportWidth : swapChainWidth;
-			const uint viewportHeight = m_Resources.viewportHeight != 0 ? m_Resources.viewportHeight : swapChainHeight;
-			const float aspect = GraphicsUtility::CalculateAspectRatio(sv.viewArea, viewportWidth, viewportHeight);
+			// Read via the main-thread-only mirror, not Scene's own fields directly, to avoid
+			// racing RenderAsync's (worker thread) writes to the real Scene.
+			const ImmediateSceneData& immediateSceneData = GetImmediateSceneData(renderFrame.activeScene);
 
-			const Matrix4 view = Matrix4::CreateView(sv.camera.position, sv.camera.forward, sv.camera.up);
-			// Do reverse-z for greater floating-point precision
-			const Matrix4 projection = Matrix4::CreatePerspective(sv.camera.fov, aspect, sv.camera.farZ, sv.camera.nearZ);
+			if (!m_FirstRender)
+			{
+				const RenderFrame& prevRenderFrame = GetPrevRenderFrame();
+				// The previous slot might have had no active scene at all - treat that the
+				// same as a changed scene rather than indexing scenes with an invalid handle.
+				if (!prevRenderFrame.activeScene || m_Data.scenePool[prevRenderFrame.activeScene.h].id != scene.id)
+				{
+					m_ViewIdIndexMap.Clear();
+				}
+			}
 
-			sceneInfo.viewProj = view * projection;
-			sceneInfo.camPos = sv.camera.position;
-		}
+			// A scene can be active without being the one on screen right now - e.g. a
+			// level-editing scene once a play scene takes over. Nothing below is needed unless
+			// this scene actually renders/uploads this tick.
+			if (immediateSceneData.visible)
+			{
+				ShaderSceneInfo sceneInfo{};
+				sceneInfo.ambient = immediateSceneData.ambient;
+				sceneInfo.dirLightCount = immediateSceneData.dirLightCount;
+				sceneInfo.pointLightCount = immediateSceneData.pointLightCount;
+				sceneInfo.spotLightCount = immediateSceneData.spotLightCount;
 
-		{
-			UploadBufferAllocation alloc;
-			const bool allocSuccess = m_AllocManager.RequestFrameUploadAllocation(sizeof(ShaderSceneInfo), alloc);
-			TYR_ASSERT(allocSuccess);
+				const RenderWindowHandle windowHandle = immediateSceneData.windowHandle;
+				if (!windowHandle)
+				{
+					// Nothing has reached this scene's ImmediateSceneData yet (e.g. the very first
+					// tick a scene is ever made active, before WorldManager::SetActiveWorld's
+					// SetSceneWindow call this same tick has run) - there's nothing to render to yet.
+					// A narrower, separate case from "no active scene at all" (see this block's own
+					// guard) - left as a full early return here rather than folded into that, since
+					// RenderAsync's scene-content merge still needs scene.content to be handled
+					// consistently either way and hasn't been audited for running safely without a
+					// dispatch on a tick like this.
+					return;
+				}
 
-			RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), *m_Ctx.device, alloc.offset, &sceneInfo, sizeof(ShaderSceneInfo));
+				const RenderWindow& renderWindow = m_WindowPool[windowHandle.h];
+				const uint swapChainWidth = renderWindow.swapChain->GetWidth();
+				const uint swapChainHeight = renderWindow.swapChain->GetHeight();
 
-			BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
-			request.srcBuffer = alloc.buffer;
-			request.srcOffset = alloc.offset;
-			request.dstBuffer = m_Resources.sceneInfoBuffer;
-			// The whole buffer is bound as a single cbuffer at offset 0 - only one scene ever
-			// renders at a time (see Scene's own comment), so there's no per-scene slot to
-			// index into here.
-			request.dstOffset = 0;
-			request.size = sizeof(ShaderSceneInfo);
-		}
+				// Resolve this scene's own RenderViewport (see Scene::renderViewport/RenderViewport's
+				// own comment) and bring its current buffered slot up to date before anything below
+				// reads its width/height or texture handles.
+				const RenderViewportHandle viewportHandle = immediateSceneData.renderViewport;
+				// Before anything has ever requested a render target size yet (e.g. the very first
+				// few frames, or no viewport handle has reached this scene yet), fall back to the
+				// swap chain's own size instead of leaving these at zero.
+				uint viewportWidth = swapChainWidth;
+				uint viewportHeight = swapChainHeight;
+				if (viewportHandle)
+				{
+					RenderViewport& viewport = m_RenderViewportPool[viewportHandle.h];
+					RenderViewportTextureData& targets = viewport.textureData[m_RenderFrameIndex];
 
-		// Clear and update to get rid of old views
-		m_ViewIdIndexMap.Clear();
-		for (uint i = 0; i < sceneFrame.views.Size(); ++i)
-		{
-			const SceneView& sv = sceneFrame.views[i];
-			m_ViewIdIndexMap[sv.id] = i;
+					// Apply this slot's own pending resize, if any - see RenderViewport's own comment
+					// on resize propagation. A no-op (just clears the flag) if this slot already
+					// matches the requested size, whether because a direct request already resized it
+					// this very tick or because it just happened to already be that size.
+					if (viewport.pendingResize[m_RenderFrameIndex])
+					{
+						if (targets.width != viewport.requestedWidth || targets.height != viewport.requestedHeight)
+						{
+							ResizeRenderViewportSlot(viewport, m_RenderFrameIndex, "Viewport", viewport.requestedWidth, viewport.requestedHeight);
+						}
+						viewport.pendingResize[m_RenderFrameIndex] = false;
+					}
+
+					// Keep this slot's lighting-output descriptor pointed at whatever colour texture
+					// is actually here now - see EnsureLightingOutputBound's own comment.
+					EnsureLightingOutputBound(m_RenderFrameIndex, targets.colourTexture);
+
+					if (targets.width != 0 && targets.height != 0)
+					{
+						viewportWidth = targets.width;
+						viewportHeight = targets.height;
+					}
+				}
+
+				// TODO: Extend to multiple views per scene - only the first view's data reaches the
+				// shader for now (see ShaderSceneInfo's own comment).
+				if (!sceneFrame.views.IsEmpty())
+				{
+					const SceneView& sv = sceneFrame.views[0];
+					const float aspect = GraphicsUtility::CalculateAspectRatio(sv.viewArea, viewportWidth, viewportHeight);
+
+					const Matrix4 view = Matrix4::CreateView(sv.camera.position, sv.camera.forward, sv.camera.up);
+					// Do reverse-z for greater floating-point precision
+					const Matrix4 projection = Matrix4::CreatePerspective(sv.camera.fov, aspect, sv.camera.farZ, sv.camera.nearZ);
+
+					sceneInfo.viewProj = view * projection;
+					// Deferred lighting pass reconstructs world position from depth with this - see
+					// DeferredLightingCS.hlsl.
+					sceneInfo.invViewProj = sceneInfo.viewProj.Inverse();
+					sceneInfo.camPos = sv.camera.position;
+
+					// Gribb-Hartmann frustum plane extraction, adapted for this engine's row-vector
+					// convention (v * M, not M * v) - planes come from viewProj's COLUMNS, not rows.
+					// Each resulting Vector4(a,b,c,d) satisfies dot(worldPos,abc)+d >= 0 for "inside",
+					// which holds regardless of the reverse-Z projection used here (Vulkan's clip-space
+					// constraint 0<=z<=w that this derivation relies on is convention-invariant). Used
+					// by CullInstancesCS.hlsl.
+					{
+						const Vector4 c0 = sceneInfo.viewProj.GetColumn4D(0);
+						const Vector4 c1 = sceneInfo.viewProj.GetColumn4D(1);
+						const Vector4 c2 = sceneInfo.viewProj.GetColumn4D(2);
+						const Vector4 c3 = sceneInfo.viewProj.GetColumn4D(3);
+
+						sceneInfo.frustumPlanes[0] = c3 + c0; // Left
+						sceneInfo.frustumPlanes[1] = c3 - c0; // Right
+						sceneInfo.frustumPlanes[2] = c3 + c1; // Bottom
+						sceneInfo.frustumPlanes[3] = c3 - c1; // Top
+						sceneInfo.frustumPlanes[4] = c2;      // Near
+						sceneInfo.frustumPlanes[5] = c3 - c2; // Far
+
+						for (Vector4& plane : sceneInfo.frustumPlanes)
+						{
+							const float invLength = 1.0f / Vector3(plane.x, plane.y, plane.z).Length();
+							plane = plane * invLength;
+						}
+					}
+
+					// GBufferPS.hlsl's motion vectors - see ShaderSceneInfo::prevViewProj's own comment.
+					// On the very first frame there is no real previous frame, so use this frame's own
+					// viewProj (motion vectors come out exactly zero rather than reading identity/garbage).
+					sceneInfo.prevViewProj = m_FirstRender ? sceneInfo.viewProj : m_PrevViewProj;
+					m_PrevViewProj = sceneInfo.viewProj;
+				}
+
+				{
+					UploadBufferAllocation alloc;
+					const bool allocSuccess = m_AllocManager.RequestFrameUploadAllocation(sizeof(ShaderSceneInfo), alloc);
+					TYR_ASSERT(allocSuccess);
+
+					RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), *m_Ctx.device, alloc.offset, &sceneInfo, sizeof(ShaderSceneInfo));
+
+					BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
+					request.srcBuffer = alloc.buffer;
+					request.srcOffset = alloc.offset;
+					request.dstBuffer = m_Resources.sceneInfoBuffer;
+					// The whole buffer is bound as a single cbuffer at offset 0 - only one scene ever
+					// renders at a time (see Scene's own comment), so there's no per-scene slot to
+					// index into here.
+					request.dstOffset = 0;
+					request.size = sizeof(ShaderSceneInfo);
+				}
+
+				// Clear and update to get rid of old views
+				m_ViewIdIndexMap.Clear();
+				for (uint i = 0; i < sceneFrame.views.Size(); ++i)
+				{
+					const SceneView& sv = sceneFrame.views[i];
+					m_ViewIdIndexMap[sv.id] = i;
+				}
+			}
 		}
 
 		if (m_FirstRender)
 		{
-			constexpr uint bindingCount = 12;
+			constexpr uint bindingCount = 16;
 			BufferBindingInfo bindingInfos[bindingCount];
 			BufferBindingUpdate bindingUpdates[bindingCount];
 
@@ -243,6 +432,10 @@ namespace tyr
 			SetBinding(9, TYR_BINDING_POINT_LIGHT, m_Resources.pointLightBuffer);
 			SetBinding(10, TYR_BINDING_SPOT_LIGHT, m_Resources.spotLightBuffer);
 			SetBinding(11, TYR_BINDING_GUI_VERTEX, m_Resources.guiVertexBuffer);
+			SetBinding(12, TYR_BINDING_ACTIVE_INSTANCE_INDICES, m_Resources.activeMeshInstanceIndexBuffer);
+			SetBinding(13, TYR_BINDING_VISIBLE_INSTANCE_INDICES, m_Resources.visibleInstanceIndexBuffer);
+			SetBinding(14, TYR_BINDING_INDIRECT_DRAW_COMMANDS, m_Resources.indirectDrawCommandBuffer);
+			SetBinding(15, TYR_BINDING_DRAW_COUNT, m_Resources.drawCountBuffer);
 
 			m_Ctx.device->UpdateDescriptorSet(m_Resources.descriptorSet, bindingUpdates, bindingCount);
 
@@ -266,6 +459,27 @@ namespace tyr
 			m_Ctx.device->UpdateDescriptorSet(m_Resources.descriptorSet, nullptr, 0, &samplerUpdate, 1);
 		}
 
+		// Everything RendererAPI queued this tick (CreateTexture's bindless write,
+		// EnsureLightingOutputBound's per-slot write, etc. - see QueueImageBindingUpdate and
+		// PendingDescriptorUpdates' own comments) goes to the device in one batched call here,
+		// before RenderAsync is dispatched below - CreateTask's task can start executing on a
+		// worker thread the moment it's created, so every queued write needs to have already
+		// landed before that point, not after.
+		FlushDescriptorUpdates();
+
+		// Safe to dispatch RenderAsync straight from here: every module that writes into this
+		// tick's RenderFrame slot has already run its Update() by the time RendererModule::Update()
+		// (this function) runs - RendererModule is registered so that it executes late in each
+		// phase (see EngineLoop.cpp), specifically so everyone else can feed it first. That
+		// includes GUIModule, whose Update() (not EndFrame() - see its own comment on why) submits
+		// ImGui's/Nuklear's draw data into this exact slot via RendererAPI::SubmitGUIDrawData,
+		// appending to frameBufferUploadRequests. Dispatching here used to run into a real crash
+		// (a BufferUploadRequest read back completely default-constructed, from a worker thread
+		// already inside GpuTransferUtil::UploadToBuffers while the main thread's ExpandOne()
+		// reallocated the same array out from under it) back when GUIModule submitted from
+		// EndFrame() instead, which ran *after* this dispatch - see GUIModule::Update's own
+		// comment before moving GUI submission again.
+		//
 		// The number of images a swap chain lets an app hold acquired-without-presenting is
 		// (imageCount - surfaceMinImageCount + 1), which is only guaranteed to be at least 1 -
 		// not the c_BufferedFrameCount depth the rest of this pacing is built around (drivers
@@ -293,6 +507,15 @@ namespace tyr
 
 		const uint renderFrameIndex = m_RenderFrameIndex;
 		const uint64 frameNumber = m_FrameNumber++;
+
+		// Snapshots this tick's own frame-upload head, tagged with frameNumber, now that every
+		// RequestFrameUploadAllocation call this tick is going to make has already happened
+		// (SceneInfo above, GUI vertex/index uploads from other modules' earlier Update() calls -
+		// see this function's own comment on module ordering) and before the next tick gets a
+		// chance to allocate anything more. See FrameUploadAllocator::RecordAllocationCheckpoint/
+		// Signal's own comments for why this precise pairing matters.
+		m_AllocManager.RecordFrameUploadCheckpoint(frameNumber);
+
 		const TaskID task = TaskScheduler::Instance().CreateTask([this, renderFrameIndex, frameNumber]()
 		{
 			RenderAsync(renderFrameIndex, frameNumber);
@@ -321,23 +544,120 @@ namespace tyr
 		m_FirstRender = false;
 	}
 
+	void Renderer::QueueBufferBindingUpdate(uint bindingIndex, uint descriptorArrayIndex, const BufferBindingInfo& info)
+	{
+		m_PendingDescriptorUpdates.bufferInfos.Add(info);
+		BufferBindingUpdate& update = m_PendingDescriptorUpdates.bufferUpdates.ExpandOne();
+		update.bindingIndex = bindingIndex;
+		update.descriptorArrayIndex = descriptorArrayIndex;
+		// bufferBindingInfos/infoCount are left at their defaults here and only set in
+		// FlushDescriptorUpdates, right before this array is actually read - see
+		// PendingDescriptorUpdates' own comment on why.
+	}
+
+	void Renderer::QueueImageBindingUpdate(uint bindingIndex, uint descriptorArrayIndex, const ImageBindingInfo& info)
+	{
+		m_PendingDescriptorUpdates.imageInfos.Add(info);
+		ImageBindingUpdate& update = m_PendingDescriptorUpdates.imageUpdates.ExpandOne();
+		update.bindingIndex = bindingIndex;
+		update.descriptorArrayIndex = descriptorArrayIndex;
+	}
+
+	void Renderer::QueueAccelerationStructureBindingUpdate(uint bindingIndex, uint descriptorArrayIndex, const AccelerationStructureBindingInfo& info)
+	{
+		m_PendingDescriptorUpdates.accelerationStructureInfos.Add(info);
+		AccelerationStructureBindingUpdate& update = m_PendingDescriptorUpdates.accelerationStructureUpdates.ExpandOne();
+		update.bindingIndex = bindingIndex;
+		update.descriptorArrayIndex = descriptorArrayIndex;
+	}
+
+	void Renderer::FlushDescriptorUpdates()
+	{
+		PendingDescriptorUpdates& pending = m_PendingDescriptorUpdates;
+		if (pending.bufferUpdates.IsEmpty() && pending.imageUpdates.IsEmpty() && pending.accelerationStructureUpdates.IsEmpty())
+		{
+			return;
+		}
+
+		// Point each update at its matching info entry now that that info array is done growing
+		// for this tick - Add()'s own reallocate-on-grow would have left an earlier-computed
+		// pointer dangling had this been done inside Queue*BindingUpdate instead, since a later
+		// call in the same tick can still trigger another reallocation.
+		for (uint i = 0; i < pending.bufferUpdates.Size(); ++i)
+		{
+			pending.bufferUpdates[i].bufferBindingInfos = &pending.bufferInfos[i];
+			pending.bufferUpdates[i].infoCount = 1;
+		}
+		for (uint i = 0; i < pending.imageUpdates.Size(); ++i)
+		{
+			pending.imageUpdates[i].imageBindingInfos = &pending.imageInfos[i];
+			pending.imageUpdates[i].infoCount = 1;
+		}
+		for (uint i = 0; i < pending.accelerationStructureUpdates.Size(); ++i)
+		{
+			pending.accelerationStructureUpdates[i].accelerationStructureBindingInfos = &pending.accelerationStructureInfos[i];
+			pending.accelerationStructureUpdates[i].infoCount = 1;
+		}
+
+		m_Ctx.device->UpdateDescriptorSet(m_Resources.descriptorSet,
+			pending.bufferUpdates.Data(), pending.bufferUpdates.Size(),
+			pending.imageUpdates.Data(), pending.imageUpdates.Size(),
+			pending.accelerationStructureUpdates.Data(), pending.accelerationStructureUpdates.Size());
+
+		pending.bufferInfos.Clear();
+		pending.bufferUpdates.Clear();
+		pending.imageInfos.Clear();
+		pending.imageUpdates.Clear();
+		pending.accelerationStructureInfos.Clear();
+		pending.accelerationStructureUpdates.Clear();
+	}
+
 	void Renderer::RenderAsync(uint renderFrameIndex, uint64 frameNumber)
 	{
 		RenderRegistry& registry = *RenderRegistry::Instance();
 
-		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
+		// Not const - the active-instance-index upload below is scheduled here rather than on
+		// the submission thread (see its own comment), since scene.content.meshInstances isn't
+		// finalized until the merge loop just below has run. Safe to mutate: PrepareForNextFrame
+		// already waits for this slot's previous RenderAsync task before it's reused, so nothing
+		// else touches this renderFrameIndex's frameBufferUploadRequests concurrently.
+		RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
 		FrameContext& frameCtx = m_Ctx.frameContexts[renderFrameIndex];
 
 		m_Data.activeScene = renderFrame.activeScene;
 
+		if (!m_Data.activeScene)
+		{
+			// Nothing to merge/cull/draw, and no window to acquire/present to (only ever known
+			// via the active scene's windowHandle - see below) - but this slot's already-queued
+			// asset/frame buffer uploads (e.g. from AssetModule::Update, which runs before
+			// RendererModule::Update this same tick regardless of whether a scene is active -
+			// see Render()'s own comment) still need to reach the GPU, so still run the
+			// transfer-only path rather than stranding them unsubmitted and never signalled -
+			// see BuildAndExecuteRenderGraph's hasActiveScene parameter.
+			//
+			// No merge needed for any of that: TransferPass::Execute reads RenderFrame's upload
+			// request lists directly (see its own comment), and BuildAndExecuteRenderGraph always
+			// points TransferPassArgs.renderFrame at this slot regardless of hasActiveScene.
+			m_Data.BeginFrame();
+
+			BuildAndExecuteRenderGraph(renderFrameIndex, frameNumber, false, false);
+			return;
+		}
+
 		m_Data.BeginFrame();
 
 		const SceneFrame& sceneFrame = renderFrame.sceneFrame;
-		Scene& scene = m_Data.scenes[m_Data.activeScene.h];
+		Scene& scene = m_Data.scenePool[m_Data.activeScene.h];
 
 		if (sceneFrame.newWindow)
 		{
 			scene.windowHandle = sceneFrame.newWindow;
+		}
+
+		if (sceneFrame.newRenderViewport)
+		{
+			scene.renderViewport = sceneFrame.newRenderViewport;
 		}
 
 		RenderWindow& window = m_WindowPool[scene.windowHandle.h];
@@ -373,6 +693,16 @@ namespace tyr
 			window.swapChainImageIndex = acquireResult->imageIndex;
 		}
 
+#if TYR_RENDER_DEBUG
+		// TEMP DEBUG - flicker investigation. Revert after.
+		{
+			const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+			TYR_LOG_WARNING("[DBG] RenderAsync: ms=%lld frameNumber=%llu renderFrameIndex=%u valid=%d imageIndex=%u",
+				(long long)nowMs, (unsigned long long)frameNumber, renderFrameIndex, (int)hasValidSwapChainImage,
+				hasValidSwapChainImage ? acquireResult->imageIndex : ~0u);
+		}
+#endif
+
 		for (const SceneView& sv : sceneFrame.views)
 		{
 			scene.views.Add(sv);
@@ -399,6 +729,130 @@ namespace tyr
 		{
 			registry.GetMeshInstance(handle).renderIndex = scene.content.meshInstances.Size();
 			scene.content.meshInstances.Add(handle);
+		}
+
+		// GPU-driven instance culling (RecordCullingPass) needs to know exactly which pool
+		// slots belong to this frame's active scene - the mesh instance pool is shared across
+		// every scene (up to RenderConstants::c_MaxScenes in the editor), but only one scene
+		// ever renders at a time, so a naive "cull the whole pool" dispatch would draw other
+		// scenes' instances too. Upload the just-finalized active list as plain pool indices.
+		// Scheduled here (not on the submission thread, unlike every other upload request) since
+		// scene.content.meshInstances only becomes final once the merge above has run. The 3
+		// upload requests this generates go into m_Data.workerUploadRequests, not
+		// renderFrame.frameBufferUploadRequests - RenderFrame may only ever be written from the
+		// main thread (this runs on a RenderAsync worker thread), and RenderData is already
+		// worker-owned (see its own comment). Written straight into this renderFrameIndex's own
+		// fixed slot of rtCullingStagingBuffer, not allocated from RenderAllocationManager - that
+		// allocator is main-thread-only (see FrameUploadAllocator's own comment); a worker thread
+		// may only write into already-allocated memory, never allocate or free it.
+		const size_t stagingSlotBase = renderFrameIndex * c_RTCullingStagingSlotSize;
+		const size_t activeIndicesOffset = stagingSlotBase;
+		const size_t drawCountOffset = stagingSlotBase + c_ActiveInstanceIndicesBytes;
+		const size_t tlasInstancesOffset = drawCountOffset + c_DrawCountResetBytes;
+		RenderBuffer& stagingBuffer = m_Registry.GetBuffer(m_Resources.rtCullingStagingBuffer);
+
+		{
+			const uint activeInstanceCount = scene.content.meshInstances.Size();
+			if (activeInstanceCount > 0)
+			{
+				const size_t uploadSize = sizeof(uint) * activeInstanceCount;
+
+				const SmartStack<uint> indexStack = SmartStackAlloc<uint>(activeInstanceCount);
+				uint* const indices = indexStack;
+				for (uint i = 0; i < activeInstanceCount; ++i)
+				{
+					indices[i] = scene.content.meshInstances[i].h.index;
+				}
+
+				RenderResourceUtil::WriteUploadBuffer(stagingBuffer, *m_Ctx.device, activeIndicesOffset, indices, uploadSize);
+
+				BufferUploadRequest& request = m_Data.workerUploadRequests.ExpandOne();
+				request.srcBuffer = m_Resources.rtCullingStagingBuffer;
+				request.srcOffset = activeIndicesOffset;
+				request.dstBuffer = m_Resources.activeMeshInstanceIndexBuffer;
+				request.dstOffset = 0;
+				request.size = uploadSize;
+			}
+
+			// The culling compute shader atomically increments this from 0 - without resetting
+			// it every frame, a frame with fewer visible instances than the last would still
+			// read the previous frame's higher count via the indirect draw, redrawing stale
+			// entries the shader never touched this frame.
+			uint zero = 0;
+			RenderResourceUtil::WriteUploadBuffer(stagingBuffer, *m_Ctx.device, drawCountOffset, &zero, sizeof(uint));
+
+			BufferUploadRequest& countRequest = m_Data.workerUploadRequests.ExpandOne();
+			countRequest.srcBuffer = m_Resources.rtCullingStagingBuffer;
+			countRequest.srcOffset = drawCountOffset;
+			countRequest.dstBuffer = m_Resources.drawCountBuffer;
+			countRequest.dstOffset = 0;
+			countRequest.size = sizeof(uint);
+		}
+
+		// Ray-traced shadows (Phase 3) - rebuild the TLAS's instance buffer from this same
+		// just-finalized active list. An instance whose mesh hasn't finished its one-time BLAS
+		// build yet (see RequestBLASBuild) is skipped - it simply doesn't cast/receive shadows
+		// for its first few frames.
+		{
+			const uint activeInstanceCount = scene.content.meshInstances.Size();
+			uint tlasInstanceCount = 0;
+
+			if (activeInstanceCount > 0)
+			{
+				const SmartStack<AccelerationStructureInstance> instanceStack = SmartStackAlloc<AccelerationStructureInstance>(activeInstanceCount);
+				AccelerationStructureInstance* const instances = instanceStack;
+
+				for (MeshInstanceHandle handle : scene.content.meshInstances)
+				{
+					const MeshInstance& instance = registry.GetMeshInstance(handle);
+					const Mesh& mesh = registry.GetMesh(instance.info.mesh);
+					if (!mesh.blas)
+					{
+						continue;
+					}
+
+					AccelerationStructureInstance& out = instances[tlasInstanceCount++];
+					// VkAccelerationStructureInstanceKHR's transform is row-major 3x4 for a
+					// COLUMN-vector transform (transformed = M * pos) - the transpose of this
+					// engine's row-vector Matrix4 (pos * M). GetColumn4D(r) of the engine matrix
+					// gives exactly VK row r's 4 components (column c is defined as
+					// (m[0][c],m[1][c],m[2][c],m[3][c]), so fixing the column index at r and
+					// reading its 4 components sweeps m[c][r] for c=0..3 - exactly VK row r,
+					// including the translation landing in the last component as expected).
+					const Matrix4& transform = instance.info.transform;
+					for (uint r = 0; r < 3; ++r)
+					{
+						const Vector4 row = transform.GetColumn4D(r);
+						out.transform[r][0] = row.x;
+						out.transform[r][1] = row.y;
+						out.transform[r][2] = row.z;
+						out.transform[r][3] = row.w;
+					}
+					out.instanceCustomIndex = 0;
+					out.mask = 0xFF;
+					out.shaderBindingTableRecordOffset = 0;
+					out.flags = 0;
+					out.accelerationStructureReference = m_Ctx.device->GetAccelerationStructureDeviceAddress(mesh.blas);
+				}
+
+				if (tlasInstanceCount > 0)
+				{
+					const size_t uploadSize = sizeof(AccelerationStructureInstance) * tlasInstanceCount;
+					RenderResourceUtil::WriteUploadBuffer(stagingBuffer, *m_Ctx.device, tlasInstancesOffset, instances, uploadSize);
+
+					BufferUploadRequest& request = m_Data.workerUploadRequests.ExpandOne();
+					request.srcBuffer = m_Resources.rtCullingStagingBuffer;
+					request.srcOffset = tlasInstancesOffset;
+					request.dstBuffer = m_Resources.tlasInstanceBuffer;
+					// One physical buffer, c_BufferedFrameCount slots big - confine this frame's
+					// upload to its own slot (see RenderResources::tlasInstanceBuffer's own
+					// comment), same pattern as the GUI vertex/index buffers.
+					request.dstOffset = (size_t)renderFrameIndex * RenderConstants::c_TLASInstanceBufferSize;
+					request.size = uploadSize;
+				}
+			}
+
+			m_TLASInstanceCount = tlasInstanceCount;
 		}
 
 		for (DirLightHandle handle : sceneFrame.dirLightsToRemove)
@@ -470,86 +924,186 @@ namespace tyr
 			scene.content.spotLights.Add(handle);
 		}
 
-		m_Data.assetBufferUploadRequests.Reserve(renderFrame.assetBufferUploadRequests.Size());
-		for (const BufferUploadRequest& request : renderFrame.assetBufferUploadRequests)
-		{
-			m_Data.assetBufferUploadRequests.Add(request);
-		}
-
-		scene.frameUploadRequests.Reserve(renderFrame.frameBufferUploadRequests.Size());
-		for (const BufferUploadRequest& request : renderFrame.frameBufferUploadRequests)
-		{
-			scene.frameUploadRequests.Add(request);
-		}
-
-		m_Data.textureUploadRequests.Reserve(renderFrame.textureUploadRequests.Size());
-		for (const TextureUploadRequest& request : renderFrame.textureUploadRequests)
-		{
-			m_Data.textureUploadRequests.Add(request);
-		}
-
-		BuildAndExecuteRenderGraph(renderFrameIndex, frameNumber, hasValidSwapChainImage);
+		// No merge needed for the upload request lists - TransferPass::Execute reads them straight
+		// off RenderFrame (see its own comment).
+		BuildAndExecuteRenderGraph(renderFrameIndex, frameNumber, true, hasValidSwapChainImage);
 	}
 
-	void Renderer::RecordTransferPass(CommandList& cmdList)
+	void Renderer::RecordTransferPass(CommandList& cmdList, uint renderFrameIndex)
 	{
-		m_TransferPass->Execute(cmdList);
+		m_TransferPass->Execute(cmdList, m_RenderFrames[renderFrameIndex], m_Data);
+	}
+
+	void Renderer::SetupCullingPass(RenderGraphBuilder& builder)
+	{
+		const PipelineStage cullingStage = PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+
+		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.sceneInfoBuffer), cullingStage, BARRIER_ACCESS_UNIFORM_READ_BIT);
+		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.meshBuffer), cullingStage, BARRIER_ACCESS_SHADER_READ_BIT);
+		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.meshLODBuffer), cullingStage, BARRIER_ACCESS_SHADER_READ_BIT);
+		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.meshInstanceBuffer), cullingStage, BARRIER_ACCESS_SHADER_READ_BIT);
+		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.activeMeshInstanceIndexBuffer), cullingStage, BARRIER_ACCESS_SHADER_READ_BIT);
+
+		builder.WriteBuffer(m_Registry.GetBuffer(m_Resources.visibleInstanceIndexBuffer), cullingStage, BARRIER_ACCESS_SHADER_WRITE_BIT);
+		builder.WriteBuffer(m_Registry.GetBuffer(m_Resources.indirectDrawCommandBuffer), cullingStage, BARRIER_ACCESS_SHADER_WRITE_BIT);
+		builder.WriteBuffer(m_Registry.GetBuffer(m_Resources.drawCountBuffer), cullingStage, BARRIER_ACCESS_SHADER_WRITE_BIT);
+	}
+
+	void Renderer::RecordCullingPass(CommandList& cmdList, uint renderFrameIndex)
+	{
+		Scene& scene = m_Data.scenePool[m_Data.activeScene.h];
+		const uint activeInstanceCount = scene.content.meshInstances.Size();
+
+		cmdList.BindComputePipeline(m_Resources.cullingPipeline);
+		cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.cullingPipeline);
+		cmdList.PushConstants(m_Resources.cullingPipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint), &activeInstanceCount);
+
+		// Matches CullInstancesCS.hlsl's [numthreads(64, 1, 1)] - a zero count still dispatches
+		// zero groups correctly rather than needing a special case here.
+		const uint groupCount = (activeInstanceCount + 63) / 64;
+		cmdList.Dispatch(groupCount, 1, 1);
+	}
+
+	RenderViewportTextureData* Renderer::GetActiveViewportTextureData(uint renderFrameIndex)
+	{
+		const Scene& scene = m_Data.scenePool[m_Data.activeScene.h];
+		if (!scene.renderViewport)
+		{
+			return nullptr;
+		}
+		return &m_RenderViewportPool[scene.renderViewport.h].textureData[renderFrameIndex];
 	}
 
 	void Renderer::RecordGeometryPass(CommandList& cmdList, uint renderFrameIndex)
 	{
-		// EditorViewport hasn't requested a render target size yet (e.g. the very first few
-		// frames, before any ImGui layout has happened) - nothing to render into.
-		if (m_Resources.viewportWidth == 0 || m_Resources.viewportHeight == 0)
+		// Read the active scene's own RenderViewport directly, in place, rather than a per-frame
+		// copy - see RenderViewport's own comment on why this is safe from a worker thread (nothing
+		// else touches this slot's data between the main thread's own tick and this call).
+		RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
+		if (!viewportData)
 		{
+#if TYR_RENDER_DEBUG
+			// TEMP DEBUG - flicker investigation. Revert after.
+			TYR_LOG_WARNING("[DBG] RecordGeometryPass: SKIPPED (no viewport) renderFrameIndex=%u", renderFrameIndex);
+#endif
+			// Scene has no RenderViewport yet (e.g. World hasn't finished setting one up) -
+			// nothing to render into.
 			return;
 		}
 
-		const Texture& viewportTexture = m_Registry.GetTexture(m_Resources.viewportColourTexture);
+		const TextureHandle gbufferAlbedoAOHandle = viewportData->gbufferAlbedoAO;
+		const TextureHandle gbufferNormalRoughMetalHandle = viewportData->gbufferNormalRoughMetal;
+		const TextureHandle gbufferMotionHandle = viewportData->gbufferMotion;
+		const TextureHandle depthBufferHandle = viewportData->depthBuffer;
+		const uint viewportWidth = viewportData->width;
+		const uint viewportHeight = viewportData->height;
+		const bool viewportTextureIsNew = viewportData->isNew;
+		// Consumed once, right here - unlike the old ViewportSnapshot-era code, this resets the
+		// live struct itself (this worker thread owns this slot exclusively until it cycles back
+		// around - see RenderViewportTextureData::isNew's own comment).
+		viewportData->isNew = false;
+
+		// EditorViewport hasn't requested a render target size yet (e.g. the very first few
+		// frames, before any ImGui layout has happened) - nothing to render into.
+		if (viewportWidth == 0 || viewportHeight == 0)
+		{
+#if TYR_RENDER_DEBUG
+			// TEMP DEBUG - flicker investigation. Revert after.
+			TYR_LOG_WARNING("[DBG] RecordGeometryPass: SKIPPED (zero size) renderFrameIndex=%u width=%u height=%u isNew=%d",
+				renderFrameIndex, viewportWidth, viewportHeight, (int)viewportTextureIsNew);
+#endif
+			return;
+		}
+
+		const Texture& gbufferAlbedoAO = m_Registry.GetTexture(gbufferAlbedoAOHandle);
+		const Texture& gbufferNormalRoughMetal = m_Registry.GetTexture(gbufferNormalRoughMetalHandle);
+		const Texture& gbufferMotion = m_Registry.GetTexture(gbufferMotionHandle);
+		const Texture& depthBuffer = m_Registry.GetTexture(depthBufferHandle);
 
 		Viewport viewport;
-		viewport.width = m_Resources.viewportWidth;
-		viewport.height = m_Resources.viewportHeight;
+		viewport.width = viewportWidth;
+		viewport.height = viewportHeight;
 
-		// A freshly (re)created viewport texture's image is undefined until this transition -
-		// unlike the swap chain image (see RecordGUIPass), this one isn't cycled every frame,
-		// so the transition must only run once per (re)creation, not every frame.
-		if (m_Resources.viewportTextureIsNew)
+		// Freshly (re)created G-buffer/depth images are undefined until this transition - unlike
+		// the swap chain image (see RecordGUIPass), these aren't cycled every frame, so it must
+		// only run once per (re)creation, not every frame.
+		if (viewportTextureIsNew)
 		{
-			ImageBarrier barrier{};
-			barrier.image = viewportTexture.image;
-			barrier.srcAccess = BARRIER_ACCESS_NONE;
-			barrier.dstAccess = BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-			barrier.srcLayout = IMAGE_LAYOUT_UNKNOWN;
-			barrier.dstLayout = viewportTexture.imageLayout;
-			barrier.subresourceRange.aspect = SUBRESOURCE_ASPECT_COLOUR_BIT;
-			barrier.subresourceRange.baseMipLevel = 0;
-			barrier.subresourceRange.mipCount = 1;
-			barrier.subresourceRange.baseArrayLayer = 0;
-			barrier.subresourceRange.arrayLayerCount = 1;
-			barrier.srcStage = PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-			barrier.dstStage = PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-			cmdList.AddBarriers(nullptr, 0, &barrier, 1);
-			m_Resources.viewportTextureIsNew = false;
+			ImageBarrier barriers[4]{};
+
+			barriers[0].image = gbufferAlbedoAO.image;
+			barriers[0].srcAccess = BARRIER_ACCESS_NONE;
+			barriers[0].dstAccess = BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+			barriers[0].srcLayout = IMAGE_LAYOUT_UNKNOWN;
+			barriers[0].dstLayout = gbufferAlbedoAO.imageLayout;
+			barriers[0].subresourceRange.aspect = SUBRESOURCE_ASPECT_COLOUR_BIT;
+			barriers[0].subresourceRange.mipCount = 1;
+			barriers[0].subresourceRange.arrayLayerCount = 1;
+			barriers[0].srcStage = PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			barriers[0].dstStage = PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+			barriers[1] = barriers[0];
+			barriers[1].image = gbufferNormalRoughMetal.image;
+			barriers[1].dstLayout = gbufferNormalRoughMetal.imageLayout;
+
+			barriers[2] = barriers[0];
+			barriers[2].image = gbufferMotion.image;
+			barriers[2].dstLayout = gbufferMotion.imageLayout;
+
+			barriers[3].image = depthBuffer.image;
+			barriers[3].srcAccess = BARRIER_ACCESS_NONE;
+			barriers[3].dstAccess = BARRIER_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+			barriers[3].srcLayout = IMAGE_LAYOUT_UNKNOWN;
+			barriers[3].dstLayout = depthBuffer.imageLayout;
+			barriers[3].subresourceRange.aspect = SUBRESOURCE_ASPECT_DEPTH_BIT;
+			barriers[3].subresourceRange.mipCount = 1;
+			barriers[3].subresourceRange.arrayLayerCount = 1;
+			barriers[3].srcStage = PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			barriers[3].dstStage = PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+
+			cmdList.AddBarriers(nullptr, 0, barriers, 4);
 		}
 
 		// TODO: Render for all views and create render area for each view by calling GraphicsUtility::CreateRenderArea
 		RenderingInfo renderingInfo{};
 		renderingInfo.renderArea.offset = { 0, 0 };
-		renderingInfo.renderArea.extents = { m_Resources.viewportWidth, m_Resources.viewportHeight };
+		renderingInfo.renderArea.extents = { viewportWidth, viewportHeight };
 		renderingInfo.viewMask = 0;
 		renderingInfo.layerCount = 1;
 
-		RenderingAttachmentInfo colourAttachment;
-		colourAttachment.loadOp = AttachmentLoadOp::Clear;
-		colourAttachment.storeOp = AttachmentStoreOp::Store;
-		colourAttachment.resolveMode = RESOLVE_MODE_NONE;
-		colourAttachment.imageLayout = viewportTexture.imageLayout;
-		colourAttachment.clearValue.colour = { 0.0f, 0.0f, 0.0f, 0.0f };
-		colourAttachment.imageView = viewportTexture.imageView;
+		RenderingAttachmentInfo colourAttachments[3];
+		colourAttachments[0].loadOp = AttachmentLoadOp::Clear;
+		colourAttachments[0].storeOp = AttachmentStoreOp::Store;
+		colourAttachments[0].resolveMode = RESOLVE_MODE_NONE;
+		colourAttachments[0].imageLayout = gbufferAlbedoAO.imageLayout;
+		colourAttachments[0].clearValue.colour = { 0.0f, 0.0f, 0.0f, 0.0f };
+		colourAttachments[0].imageView = gbufferAlbedoAO.imageView;
 
-		renderingInfo.colourAttachmentCount = 1;
-		renderingInfo.colourAttachments = &colourAttachment;
+		colourAttachments[1].loadOp = AttachmentLoadOp::Clear;
+		colourAttachments[1].storeOp = AttachmentStoreOp::Store;
+		colourAttachments[1].resolveMode = RESOLVE_MODE_NONE;
+		colourAttachments[1].imageLayout = gbufferNormalRoughMetal.imageLayout;
+		colourAttachments[1].clearValue.colour = { 0.0f, 0.0f, 0.0f, 0.0f };
+		colourAttachments[1].imageView = gbufferNormalRoughMetal.imageView;
+
+		colourAttachments[2].loadOp = AttachmentLoadOp::Clear;
+		colourAttachments[2].storeOp = AttachmentStoreOp::Store;
+		colourAttachments[2].resolveMode = RESOLVE_MODE_NONE;
+		colourAttachments[2].imageLayout = gbufferMotion.imageLayout;
+		colourAttachments[2].clearValue.colour = { 0.0f, 0.0f, 0.0f, 0.0f };
+		colourAttachments[2].imageView = gbufferMotion.imageView;
+
+		renderingInfo.colourAttachmentCount = 3;
+		renderingInfo.colourAttachments = colourAttachments;
+
+		renderingInfo.hasDepthAttachment = true;
+		renderingInfo.depthAttachment.loadOp = AttachmentLoadOp::Clear;
+		renderingInfo.depthAttachment.storeOp = AttachmentStoreOp::Store;
+		renderingInfo.depthAttachment.resolveMode = RESOLVE_MODE_NONE;
+		renderingInfo.depthAttachment.imageLayout = depthBuffer.imageLayout;
+		// Reverse-Z - 0 represents "infinitely far" (see CreatePipelines' depthCompareOp).
+		renderingInfo.depthAttachment.clearValue.depthStencil.depth = 0.0f;
+		renderingInfo.depthAttachment.imageView = depthBuffer.imageView;
 
 		cmdList.BeginRendering(renderingInfo);
 		cmdList.SetViewport(&viewport, 1);
@@ -558,9 +1112,194 @@ namespace tyr
 		cmdList.EndRendering();
 	}
 
+	namespace
+	{
+		// Matches DeferredLightingCS.hlsl's push constant cbuffer byte-for-byte.
+		struct LightingPushConstants
+		{
+			uint gbufferAlbedoAOIndex;
+			uint gbufferNormalRoughMetalIndex;
+			uint depthIndex;
+			uint width;
+			uint height;
+			// Which entry of TYR_BINDING_LIGHTING_OUTPUT's outputImages[] array to write this
+			// dispatch's result into - see RenderResources::ViewportTargets' own comment on why
+			// there's one per buffered RenderFrame slot rather than a single shared image.
+			uint renderFrameIndex;
+		};
+	}
+
+	void Renderer::RecordLightingPass(CommandList& cmdList, uint renderFrameIndex)
+	{
+		// See RecordGeometryPass's identical read.
+		RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
+		if (!viewportData)
+		{
+#if TYR_RENDER_DEBUG
+			// TEMP DEBUG - flicker investigation. Revert after.
+			TYR_LOG_WARNING("[DBG] RecordLightingPass: SKIPPED (no viewport) renderFrameIndex=%u", renderFrameIndex);
+#endif
+			return;
+		}
+
+		const TextureHandle gbufferAlbedoAOHandle = viewportData->gbufferAlbedoAO;
+		const TextureHandle gbufferNormalRoughMetalHandle = viewportData->gbufferNormalRoughMetal;
+		const TextureHandle depthBufferHandle = viewportData->depthBuffer;
+		const TextureHandle viewportColourTextureHandle = viewportData->colourTexture;
+		const uint viewportWidth = viewportData->width;
+		const uint viewportHeight = viewportData->height;
+
+		if (viewportWidth == 0 || viewportHeight == 0)
+		{
+#if TYR_RENDER_DEBUG
+			// TEMP DEBUG - flicker investigation. Revert after.
+			TYR_LOG_WARNING("[DBG] RecordLightingPass: SKIPPED (zero size) renderFrameIndex=%u width=%u height=%u",
+				renderFrameIndex, viewportWidth, viewportHeight);
+#endif
+			return;
+		}
+
+		const Texture& gbufferAlbedoAO = m_Registry.GetTexture(gbufferAlbedoAOHandle);
+		const Texture& gbufferNormalRoughMetal = m_Registry.GetTexture(gbufferNormalRoughMetalHandle);
+		const Texture& depthBuffer = m_Registry.GetTexture(depthBufferHandle);
+		const Texture& outputTexture = m_Registry.GetTexture(viewportColourTextureHandle);
+
+		// GeometryPass wrote these as attachments - make them visible to this pass's shader
+		// reads. Layout stays GENERAL throughout (memory/execution barrier only, no transition).
+		{
+			ImageBarrier barriers[3]{};
+
+			barriers[0].image = gbufferAlbedoAO.image;
+			barriers[0].srcAccess = BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+			barriers[0].dstAccess = BARRIER_ACCESS_SHADER_READ_BIT;
+			barriers[0].srcLayout = gbufferAlbedoAO.imageLayout;
+			barriers[0].dstLayout = gbufferAlbedoAO.imageLayout;
+			barriers[0].subresourceRange.aspect = SUBRESOURCE_ASPECT_COLOUR_BIT;
+			barriers[0].subresourceRange.mipCount = 1;
+			barriers[0].subresourceRange.arrayLayerCount = 1;
+			barriers[0].srcStage = PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+			barriers[0].dstStage = PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+
+			barriers[1] = barriers[0];
+			barriers[1].image = gbufferNormalRoughMetal.image;
+			barriers[1].srcLayout = gbufferNormalRoughMetal.imageLayout;
+			barriers[1].dstLayout = gbufferNormalRoughMetal.imageLayout;
+
+			barriers[2].image = depthBuffer.image;
+			barriers[2].srcAccess = BARRIER_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+			barriers[2].dstAccess = BARRIER_ACCESS_SHADER_READ_BIT;
+			barriers[2].srcLayout = depthBuffer.imageLayout;
+			barriers[2].dstLayout = depthBuffer.imageLayout;
+			barriers[2].subresourceRange.aspect = SUBRESOURCE_ASPECT_DEPTH_BIT;
+			barriers[2].subresourceRange.mipCount = 1;
+			barriers[2].subresourceRange.arrayLayerCount = 1;
+			barriers[2].srcStage = PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+			barriers[2].dstStage = PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+
+			cmdList.AddBarriers(nullptr, 0, barriers, 3);
+		}
+
+		cmdList.BindComputePipeline(m_Resources.lightingPipeline);
+		cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.lightingPipeline);
+
+		LightingPushConstants pushConstants;
+		pushConstants.gbufferAlbedoAOIndex = gbufferAlbedoAOHandle.h.index;
+		pushConstants.gbufferNormalRoughMetalIndex = gbufferNormalRoughMetalHandle.h.index;
+		pushConstants.depthIndex = depthBufferHandle.h.index;
+		pushConstants.width = viewportWidth;
+		pushConstants.height = viewportHeight;
+		pushConstants.renderFrameIndex = renderFrameIndex;
+		cmdList.PushConstants(m_Resources.lightingPipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(LightingPushConstants), &pushConstants);
+
+		const uint groupCountX = (viewportWidth + 7) / 8;
+		const uint groupCountY = (viewportHeight + 7) / 8;
+		cmdList.Dispatch(groupCountX, groupCountY, 1);
+
+		// This pass's write needs to be visible to GUIPass's later sampled read of the same
+		// texture (ImGui::Image() on the Viewport panel).
+		{
+			ImageBarrier barrier{};
+			barrier.image = outputTexture.image;
+			barrier.srcAccess = BARRIER_ACCESS_SHADER_WRITE_BIT;
+			barrier.dstAccess = BARRIER_ACCESS_SHADER_READ_BIT;
+			barrier.srcLayout = outputTexture.imageLayout;
+			barrier.dstLayout = outputTexture.imageLayout;
+			barrier.subresourceRange.aspect = SUBRESOURCE_ASPECT_COLOUR_BIT;
+			barrier.subresourceRange.mipCount = 1;
+			barrier.subresourceRange.arrayLayerCount = 1;
+			barrier.srcStage = PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+			barrier.dstStage = PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+			cmdList.AddBarriers(nullptr, 0, &barrier, 1);
+		}
+	}
+
+	void Renderer::SetupRayTracingBuildPass(RenderGraphBuilder& builder)
+	{
+		const PipelineStage asBuildStage = PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT;
+
+		// This frame's BLAS builds (see RenderFrame::blasBuildsToRecord, decided on the main
+		// thread in Render()) read straight out of the global vertex/index buffers via GPU
+		// address - the same buffers TransferPass just wrote this mesh's geometry into and
+		// GeometryPass/CullInstancesCS.hlsl also read from. Per spec, build input (geometry and
+		// instance data) is read as SHADER_READ, not ACCELERATION_STRUCTURE_READ - that access
+		// type is for reading an already-built AS.
+		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.vertexBuffer), asBuildStage, BARRIER_ACCESS_SHADER_READ_BIT);
+		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.indexBuffer), asBuildStage, BARRIER_ACCESS_SHADER_READ_BIT);
+		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.tlasInstanceBuffer), asBuildStage, BARRIER_ACCESS_SHADER_READ_BIT);
+	}
+
+	void Renderer::RecordRayTracingBuildPass(CommandList& cmdList, uint renderFrameIndex)
+	{
+		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
+
+		// m_Resources.blasScratchBuffer is only ever created lazily, the first time a BLAS
+		// actually needs building (see EnsureBLASScratchCapacity) - on any earlier frame it's
+		// still PoolHandle's default "invalid" sentinel (index == UINT_MAX, not 0), and
+		// RenderRegistry::GetBuffer on that crashes (LocalObjectPool::IsValid indexes
+		// m_Generations[UINT_MAX]). Only touch it once we know there's at least one build this
+		// frame - confirmed via a debugger-symbolized access violation in exactly this call,
+		// reached whenever RecordRayTracingBuildPass ran before any mesh's BLAS had ever built.
+		for (const BLASBuildRecord& record : renderFrame.blasBuildsToRecord)
+		{
+			const BufferHandle blasScratchBuffer = m_Registry.GetBuffer(m_Resources.blasScratchBuffer).buffer;
+
+			AccelerationStructureBuildInfo buildInfo;
+			buildInfo.accelerationStructure = record.blas;
+			buildInfo.scratchBuffer = blasScratchBuffer;
+			buildInfo.scratchOffset = record.scratchOffset;
+			cmdList.BuildAccelerationStructures(&buildInfo, 1);
+
+			// Every build in this frame's batch reuses this same slot's scratch range
+			// sequentially, not concurrently (see RenderResources::blasScratchBuffer's own
+			// comment), and the TLAS build below may reference any BLAS built here - Vulkan
+			// requires a referenced bottom-level structure to have completed construction first.
+			// One barrier serves both needs. Not tracked by the render graph (no AS-aware
+			// resource type - see RenderGraphResourceType), so a manual global memory barrier,
+			// same as RecordLightingPass's manual image barriers.
+			PipelineBarrier barrier{};
+			barrier.srcAccess = BARRIER_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT;
+			barrier.dstAccess = static_cast<BarrierAccess>(BARRIER_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT | BARRIER_ACCESS_ACCELERATION_STRUCTURE_READ_BIT);
+			barrier.srcStage = PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT;
+			barrier.dstStage = PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT;
+			cmdList.AddBarriers(nullptr, 0, nullptr, 0, &barrier, 1);
+		}
+
+		// Full rebuild every frame - refitting (only valid for topology-unchanged, transform-only
+		// updates) is a possible later optimization, not needed for correctness now.
+		AccelerationStructureBuildInfo tlasBuildInfo;
+		tlasBuildInfo.accelerationStructure = m_Resources.tlas[renderFrameIndex];
+		tlasBuildInfo.instanceBuffer = m_Registry.GetBuffer(m_Resources.tlasInstanceBuffer).buffer;
+		tlasBuildInfo.instanceBufferOffset = (size_t)renderFrameIndex * RenderConstants::c_TLASInstanceBufferSize;
+		tlasBuildInfo.instanceCount = m_TLASInstanceCount;
+		tlasBuildInfo.scratchBuffer = m_Registry.GetBuffer(m_Resources.tlasScratchBuffer).buffer;
+		tlasBuildInfo.scratchOffset = (size_t)renderFrameIndex * m_TLASScratchPerSlotSize;
+		tlasBuildInfo.update = false;
+		cmdList.BuildAccelerationStructures(&tlasBuildInfo, 1);
+	}
+
 	void Renderer::RecordGUIPass(CommandList& cmdList, uint renderFrameIndex)
 	{
-		Scene& scene = m_Data.scenes[m_Data.activeScene.h];
+		Scene& scene = m_Data.scenePool[m_Data.activeScene.h];
 		RenderWindow& window = m_WindowPool[scene.windowHandle.h];
 
 		const uint windowWidth = window.swapChain->GetWidth();
@@ -606,7 +1345,7 @@ namespace tyr
 		cmdList.BeginRendering(renderingInfo);
 		cmdList.SetViewport(&viewport, 1);
 		cmdList.SetScissor(&renderingInfo.renderArea, 1);
-		m_GUIPass->Execute(cmdList);
+		m_GUIPass->Execute(cmdList, m_RenderFrames[renderFrameIndex], renderFrameIndex);
 		cmdList.EndRendering();
 
 		// Presenting requires the image to be in the present-source layout, not whatever
@@ -618,30 +1357,16 @@ namespace tyr
 		}
 	}
 
-	void Renderer::BuildAndExecuteRenderGraph(uint renderFrameIndex, uint64 frameNumber, bool hasValidSwapChainImage)
+	void Renderer::BuildAndExecuteRenderGraph(uint renderFrameIndex, uint64 frameNumber, bool hasActiveScene, bool hasValidSwapChainImage)
 	{
 		RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
 		FrameContext& frameCtx = m_Ctx.frameContexts[renderFrameIndex];
 
-		Scene& scene = m_Data.scenes[m_Data.activeScene.h];
-
 		TransferPassArgs transferArgs;
 		transferArgs.device = m_Ctx.device;
-		transferArgs.data = &m_Data;
 		transferArgs.registry = &m_Registry;
 		transferArgs.resources = &m_Resources;
-		transferArgs.renderFrame = &renderFrame;
 		m_TransferPass->Recreate(transferArgs);
-
-		GeometryPassArgs geometryArgs;
-		geometryArgs.device = m_Ctx.device;
-		geometryArgs.registry = &m_Registry;
-		geometryArgs.allocManager = &m_AllocManager;
-		geometryArgs.resources = &m_Resources;
-		geometryArgs.scene = &scene;
-		geometryArgs.pipeline = m_Resources.geometryGraphicsPipeline;
-		geometryArgs.descriptorSet = m_Resources.descriptorSet;
-		m_GeometryPass->Recreate(geometryArgs);
 
 		GUIPassArgs guiArgs;
 		guiArgs.registry = &m_Registry;
@@ -649,11 +1374,36 @@ namespace tyr
 		guiArgs.descriptorSet = m_Resources.descriptorSet;
 		guiArgs.vertexBuffer = m_Resources.guiVertexBuffer;
 		guiArgs.indexBuffer = m_Resources.guiIndexBuffer;
-		guiArgs.renderFrame = &renderFrame;
 		m_GUIPass->Recreate(guiArgs);
 
-		RenderWindow& window = m_WindowPool[scene.windowHandle.h];
-		RenderWindowFrame& windowFrame = window.frames[renderFrameIndex];
+		// Only valid (non-null) when hasActiveScene - RenderAsync never dispatches this function
+		// with hasActiveScene true unless m_Data.activeScene itself is (see its own guard), and
+		// never with hasValidSwapChainImage true unless hasActiveScene is also true (can't
+		// acquire an image without a window to acquire it from). Pointers rather than
+		// references so there's a legitimate "unset" state for the no-active-scene case, where
+		// there's no window to acquire/present to at all - not just "acquired but the image
+		// turned out invalid", which is what hasValidSwapChainImage alone already covered.
+		RenderWindow* window = nullptr;
+		RenderWindowFrame* windowFrame = nullptr;
+		RenderWindowHandle windowHandle{};
+
+		if (hasActiveScene)
+		{
+			Scene& scene = m_Data.scenePool[m_Data.activeScene.h];
+
+			GeometryPassArgs geometryArgs;
+			geometryArgs.device = m_Ctx.device;
+			geometryArgs.registry = &m_Registry;
+			geometryArgs.resources = &m_Resources;
+			geometryArgs.scene = &scene;
+			geometryArgs.pipeline = m_Resources.geometryGraphicsPipeline;
+			geometryArgs.descriptorSet = m_Resources.descriptorSet;
+			m_GeometryPass->Recreate(geometryArgs);
+
+			windowHandle = scene.windowHandle;
+			window = &m_WindowPool[windowHandle.h];
+			windowFrame = &window->frames[renderFrameIndex];
+		}
 
 		// Temporarily use first one
 		CommandList* cmdList = frameCtx.commandLists[CommandQueueType::CQ_GRAPHICS][0];
@@ -671,7 +1421,10 @@ namespace tyr
 			m_Resources.meshBuffer, m_Resources.meshLODBuffer, m_Resources.meshletBuffer,
 			m_Resources.vertexBuffer, m_Resources.indexBuffer, m_Resources.meshInstanceBuffer,
 			m_Resources.materialBuffer, m_Resources.directionalLightBuffer, m_Resources.pointLightBuffer,
-			m_Resources.spotLightBuffer, m_Resources.sceneInfoBuffer
+			m_Resources.spotLightBuffer, m_Resources.sceneInfoBuffer,
+			m_Resources.activeMeshInstanceIndexBuffer, m_Resources.visibleInstanceIndexBuffer,
+			m_Resources.indirectDrawCommandBuffer, m_Resources.drawCountBuffer,
+			m_Resources.tlasInstanceBuffer
 		};
 		constexpr uint bufferCount = (uint)(sizeof(graphBuffers) / sizeof(graphBuffers[0]));
 
@@ -692,7 +1445,7 @@ namespace tyr
 
 		graph.AddPass("Transfer",
 			[this](RenderGraphBuilder& builder) { m_TransferPass->Setup(builder); },
-			[this](CommandList& cl) { RecordTransferPass(cl); },
+			[this, renderFrameIndex](CommandList& cl) { RecordTransferPass(cl, renderFrameIndex); },
 			RenderGraphPhase::Transfer, CommandQueueType::CQ_GRAPHICS);
 
 		// Nothing to draw into or present without a valid acquired image (see RenderAsync -
@@ -701,10 +1454,38 @@ namespace tyr
 		// aren't skipped, just its geometry/GUI/present.
 		if (hasValidSwapChainImage)
 		{
+			// Same phase as "Geometry" below and added first - RenderGraph::AddPass appends each
+			// pass' index to its phase's own bucket in registration order (see m_PassOrder's own
+			// comment), so this always executes (and has its buffer usages recorded, which is
+			// what the automatic barrier-building in RenderGraph::Compile relies on) before
+			// GeometryPass's own indirect draw reads what this pass just wrote.
+			graph.AddPass("Culling",
+				[this](RenderGraphBuilder& builder) { SetupCullingPass(builder); },
+				[this, renderFrameIndex](CommandList& cl) { RecordCullingPass(cl, renderFrameIndex); },
+				RenderGraphPhase::Geometry, CommandQueueType::CQ_GRAPHICS);
+
 			graph.AddPass("Geometry",
 				[this](RenderGraphBuilder& builder) { m_GeometryPass->Setup(builder); },
 				[this, renderFrameIndex](CommandList& cl) { RecordGeometryPass(cl, renderFrameIndex); },
 				RenderGraphPhase::Geometry, CommandQueueType::CQ_GRAPHICS);
+
+			// Builds at most one pending mesh's BLAS (see m_PendingBLASBuilds), then rebuilds the
+			// TLAS from this frame's active instances - see RecordRayTracingBuildPass. Nothing
+			// reads the TLAS yet (that's the upcoming shadow ray-query pass); this just keeps it
+			// current every frame so that pass can be added later without touching this one.
+			graph.AddPass("RayTracingBuild",
+				[this](RenderGraphBuilder& builder) { SetupRayTracingBuildPass(builder); },
+				[this, renderFrameIndex](CommandList& cl) { RecordRayTracingBuildPass(cl, renderFrameIndex); },
+				RenderGraphPhase::RayTracing, CommandQueueType::CQ_GRAPHICS);
+
+			// Reads the G-buffer/depth GeometryPass just wrote (via its own manual image
+			// barriers - see RecordLightingPass) and writes the shaded result into the viewport
+			// colour texture. Same scene-info/light buffers Geometry already reads - no new
+			// buffer barrier needed for a read-after-read, so nothing to register here.
+			graph.AddPass("Lighting",
+				[](RenderGraphBuilder&) {},
+				[this, renderFrameIndex](CommandList& cl) { RecordLightingPass(cl, renderFrameIndex); },
+				RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
 
 			// Always added, even on a frame with nothing to draw - it's what transitions the
 			// swap chain image to the present-source layout now (see RecordGUIPass), so it has
@@ -727,7 +1508,7 @@ namespace tyr
 		// RenderWindow::executeCompleteSemaphores' comment. Only meaningful if there's actually
 		// an image this frame.
 		const SemaphoreHandle executeCompleteSemaphore = hasValidSwapChainImage
-			? window.executeCompleteSemaphores[window.swapChainImageIndex]
+			? window->executeCompleteSemaphores[window->swapChainImageIndex]
 			: SemaphoreHandle{};
 
 		RenderSubmissionRequest submissionRequest;
@@ -736,7 +1517,7 @@ namespace tyr
 		if (hasValidSwapChainImage)
 		{
 			// Wait on the semaphore used when acquiring the next swapchain image
-			submissionRequest.waitSemaphores.Add(windowFrame.aquireSwapChainImageSemaphore);
+			submissionRequest.waitSemaphores.Add(windowFrame->aquireSwapChainImageSemaphore);
 			submissionRequest.waitValues.Add(0);
 			submissionRequest.waitDstPipelineStages.Add(PipelineStage::PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
 			submissionRequest.signalSemaphores.Add(executeCompleteSemaphore);
@@ -749,18 +1530,23 @@ namespace tyr
 		submissionRequest.frameNumber = frameNumber;
 		m_RenderSubmissionThread->EnqueueRenderSubmissionRequest(submissionRequest);
 
-		// Always enqueued, even without a valid image - RenderSubmissionThread still needs to
-		// record this frameNumber as "handled" (see RenderPresentRequest::present's comment) so
-		// Render()'s pacing wait doesn't stall waiting for a present that was never going to
-		// happen. It just skips the actual Present() call when present is false.
+		// Always enqueued, even with no active scene/window at all or a valid window but a
+		// failed acquire - RenderSubmissionThread still needs to record this frameNumber as
+		// "handled" (see RenderPresentRequest::present's comment) so Render()'s pacing wait
+		// doesn't stall waiting for a present that was never going to happen. It just skips the
+		// actual Present() call (and so never reads swapChain/imageIndex) when present is false,
+		// so leaving them default/invalid below when there's no window at all is safe.
 		RenderPresentRequest presentRequest;
-		presentRequest.swapChain = window.swapChain;
+		if (hasActiveScene)
+		{
+			presentRequest.swapChain = window->swapChain;
+			presentRequest.imageIndex = window->swapChainImageIndex;
+			presentRequest.window = windowHandle;
+		}
 		presentRequest.queue = m_Ctx.graphicsQueue;
 		// Wait on the signal semaphore used in the submission above
 		presentRequest.waitSemaphore = executeCompleteSemaphore;
-		presentRequest.imageIndex = window.swapChainImageIndex;
 		presentRequest.frameNumber = frameNumber;
-		presentRequest.window = scene.windowHandle;
 		presentRequest.present = hasValidSwapChainImage;
 		m_RenderSubmissionThread->EnqueueRenderPresentRequest(presentRequest);
 	}
@@ -772,7 +1558,7 @@ namespace tyr
 			RenderSyncData& syncData = m_SyncDatas[completion->renderFrameIndex];
 			syncData.completionTimelineValue = completion->timelineValue;
 			syncData.frameNumber = completion->frameNumber;
-			m_AllocManager.SignalFrameUpload(completion->timelineValue);
+			m_AllocManager.SignalFrameUpload(completion->frameNumber, completion->timelineValue);
 
 			// This slot's asset/texture upload requests are exactly what RenderAsync merged into
 			// m_Data and handed to TransferPass for the submission this completion reports on -
@@ -884,6 +1670,19 @@ namespace tyr
 		{
 			const Mesh& mesh = m_Registry.GetMesh(handle);
 			m_AllocManager.FreeMeshLODs(mesh.lodOffset, mesh.lodCount);
+			// A mesh whose one-time BLAS build (see RendererAPI::RequestBLASBuild) already ran
+			// owns an acceleration structure that nothing else references, backed by a range of
+			// the shared blasStorageBuffer (see Mesh::blasStorageAllocation's own comment) -
+			// leaving the acceleration structure delete out is exactly what produced the
+			// VMA_ASSERT_LEAK in VmaDeviceMemoryBlock::Destroy and the "Mesh BLAS" VkBuffer-not-
+			// destroyed error from vkDestroyDevice at shutdown (back when each BLAS had its own
+			// dedicated backing buffer); leaving the storage free out instead would leak that
+			// range of blasStorageBuffer for the rest of the process' life.
+			if (mesh.blas)
+			{
+				m_Ctx.device->DeleteAccelerationStructure(mesh.blas);
+				m_AllocManager.FreeBLASStorageAllocation(mesh.blasStorageAllocation);
+			}
 			m_Registry.DeleteMesh(handle);
 		}
 		for (SkeletalMeshHandle handle : renderFrame.skeletalMeshesToDelete)
@@ -918,7 +1717,15 @@ namespace tyr
 		}
 		for (SceneHandle handle : renderFrame.scenesToDelete)
 		{
-			m_Data.scenes.Delete(handle.h);
+			m_Data.scenePool.Delete(handle.h);
+		}
+		for (RenderViewportHandle handle : renderFrame.renderViewportsToDelete)
+		{
+			DeleteRenderViewportResources(handle);
+		}
+		for (RenderBufferHandle handle : renderFrame.buffersToDelete)
+		{
+			m_Registry.DeleteBuffer(handle);
 		}
 	}
 
@@ -1024,14 +1831,15 @@ namespace tyr
 		GetRenderFrame().windowsToDelete.Add(PendingWindowDelete{ window, m_WindowPool[window.h] });
 	}
 
-	void Renderer::ResizeWindow(RenderWindowHandle window)
+	void Renderer::StallUntilGPUIdle()
 	{
-		// Resizing isn't frequent enough in practice for anything cleverer to be worth it -
-		// stall the main thread until every already-created RenderAsync task (CPU-side
+		// Stall the main thread until every already-created RenderAsync task (CPU-side
 		// recording), everything RenderSubmissionThread has queued for them (GPU submit/
-		// present), and the GPU itself have all finished, so nothing can still be touching this
-		// window's swap chain when it's recreated below. Mirrors Shutdown()'s quiesce, minus
-		// stopping the submission thread - rendering carries on normally once this returns.
+		// present), and the GPU itself have all finished - for whenever something is about to be
+		// deleted/recreated that an in-flight frame could still be touching. Mirrors Shutdown()'s
+		// quiesce, minus stopping the submission thread - rendering carries on normally once this
+		// returns. Not frequent enough in practice (a window resize, or growing the BLAS scratch
+		// buffer) for anything cleverer to be worth it.
 		WaitForCompletion();
 		if (m_FrameNumber > 0)
 		{
@@ -1042,6 +1850,11 @@ namespace tyr
 			}
 		}
 		m_Ctx.device->WaitIdle();
+	}
+
+	void Renderer::ResizeWindow(RenderWindowHandle window)
+	{
+		StallUntilGPUIdle();
 
 		// No width/height parameter - SwapChain::Resize() reads the current extent straight from
 		// the surface itself (vkGetPhysicalDeviceSurfaceCapabilitiesKHR).
@@ -1052,6 +1865,149 @@ namespace tyr
 		// Resize()'s usual oldSwapchain-kept-around pattern) - everything's confirmed idle above,
 		// so nothing can still be using it.
 		swapChain->DestroyOldSwapChain();
+	}
+
+	RenderViewportHandle Renderer::CreateRenderViewport()
+	{
+		return RenderViewportHandle(m_RenderViewportPool.Create());
+	}
+
+	void Renderer::DeleteRenderViewport(RenderViewportHandle viewport)
+	{
+		// Deferred the same way RemoveWindow/RemoveScene are - a buffered slot's textures might
+		// still be read by a worker thread (or still in-flight on the GPU) from up to
+		// c_BufferedFrameCount frames ago. See DeleteRenderViewportResources, which does the actual
+		// teardown once this slot cycles back around and that's confirmed safe.
+		GetRenderFrame().renderViewportsToDelete.Add(viewport);
+	}
+
+	TextureHandle Renderer::CreateViewportTargetTexture(const char* debugName, PixelFormat format, ImageUsage usage, uint width, uint height)
+	{
+		TextureDesc desc;
+		desc.debugName = debugName;
+		desc.info.width = width;
+		desc.info.height = height;
+		desc.info.depth = 1;
+		desc.info.arrayLayerCount = 1;
+		desc.info.mipCount = 1;
+		desc.info.format = format;
+		desc.info.type = ImageType::Image2D;
+		desc.sampleCount = SampleCount::OneBit;
+		desc.usage = usage;
+		desc.layout = ImageLayout::IMAGE_LAYOUT_GENERAL;
+
+		const TextureHandle handle = m_Registry.CreateTexture(desc);
+		GetRenderFrame().texturesToAdd.Add(handle);
+
+		// Same bindless descriptor write RendererAPI::CreateTexture does - see its own comment.
+		const Texture& texture = m_Registry.GetTexture(handle);
+		ImageBindingInfo imageInfo;
+		imageInfo.imageView = texture.imageView;
+		imageInfo.hasSampler = false;
+		imageInfo.layout = texture.imageLayout;
+		QueueImageBindingUpdate(TYR_BINDING_TEXTURES, handle.h.index, imageInfo);
+
+		return handle;
+	}
+
+	void Renderer::DeleteViewportTargetTexture(TextureHandle handle)
+	{
+		GetRenderFrame().texturesToDelete.Add(handle);
+	}
+
+	void Renderer::ResizeRenderViewportSlot(RenderViewport& viewport, uint slot, const char* debugName, uint width, uint height)
+	{
+		RenderViewportTextureData& targets = viewport.textureData[slot];
+
+		if (targets.colourTexture)
+		{
+			DeleteViewportTargetTexture(targets.colourTexture);
+			DeleteViewportTargetTexture(targets.gbufferAlbedoAO);
+			DeleteViewportTargetTexture(targets.gbufferNormalRoughMetal);
+			DeleteViewportTargetTexture(targets.gbufferMotion);
+			DeleteViewportTargetTexture(targets.depthBuffer);
+		}
+
+		// Written by the deferred lighting pass (a storage image), read by GUIPass to display it
+		// via ImGui::Image() - GeometryPass no longer writes into this directly, see
+		// gbufferAlbedoAO/gbufferNormalRoughMetal below. UNORM, not SRGB - VK_FORMAT_R8G8B8A8_SRGB
+		// doesn't support VK_IMAGE_USAGE_STORAGE_BIT on this hardware (confirmed via
+		// VK_ERROR_FORMAT_NOT_SUPPORTED), so DeferredLightingCS.hlsl writes linear colour directly
+		// instead of sRGB-encoding it - GUIPS.hlsl's later sample+swap-chain-write still does the
+		// one real sRGB encode, same as any other UI element.
+		targets.colourTexture = CreateViewportTargetTexture(debugName, PixelFormat::PF_R8G8B8A8_UNORM,
+			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT), width, height);
+
+		// Must match geometryGraphicsPipeline's declared colour attachment formats (see
+		// CreatePipelines) - dynamic rendering requires the two to agree.
+		targets.gbufferAlbedoAO = CreateViewportTargetTexture("GBuffer AlbedoAO", PixelFormat::PF_R8G8B8A8_SRGB,
+			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_COLOUR_ATTACHMENT_BIT), width, height);
+		targets.gbufferNormalRoughMetal = CreateViewportTargetTexture("GBuffer NormalRoughMetal", PixelFormat::PF_R16G16B16A16_SFLOAT,
+			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_COLOUR_ATTACHMENT_BIT), width, height);
+		targets.gbufferMotion = CreateViewportTargetTexture("GBuffer Motion", PixelFormat::PF_R16G16_SFLOAT,
+			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_COLOUR_ATTACHMENT_BIT), width, height);
+		// Reverse-Z (see Renderer::Render's projection setup) - cleared to 0, compared Greater.
+		targets.depthBuffer = CreateViewportTargetTexture("Depth Buffer", PixelFormat::PF_D32_SFLOAT,
+			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT), width, height);
+
+		targets.width = width;
+		targets.height = height;
+		targets.isNew = true;
+	}
+
+	void Renderer::EnsureLightingOutputBound(uint renderFrameIndex, TextureHandle colourTexture)
+	{
+		if (!colourTexture || m_LightingOutputBoundTextures[renderFrameIndex] == colourTexture)
+		{
+			return;
+		}
+
+		// The lighting compute pass writes colourTexture directly (not through the bindless sampled
+		// textures[] array CreateViewportTargetTexture already bound it into above) - needs its own
+		// storage-image descriptor write, at this slot's own index into the
+		// TYR_BINDING_LIGHTING_OUTPUT array (see DeferredLightingCS.hlsl's outputImages[]) - one
+		// entry per buffered RenderFrame slot. Checked every tick (not just right after a resize)
+		// since the active scene switching to a different RenderViewport also changes which colour
+		// texture this slot should actually point at, even when neither viewport's size changed.
+		const Texture& texture = m_Registry.GetTexture(colourTexture);
+		ImageBindingInfo outputImageInfo;
+		outputImageInfo.imageView = texture.imageView;
+		outputImageInfo.hasSampler = false;
+		outputImageInfo.layout = texture.imageLayout;
+		QueueImageBindingUpdate(TYR_BINDING_LIGHTING_OUTPUT, renderFrameIndex, outputImageInfo);
+
+		m_LightingOutputBoundTextures[renderFrameIndex] = colourTexture;
+	}
+
+	void Renderer::DeleteRenderViewportResources(RenderViewportHandle viewport)
+	{
+		RenderViewport& rv = m_RenderViewportPool[viewport.h];
+		for (uint i = 0; i < RenderConstants::c_BufferedFrameCount; ++i)
+		{
+			RenderViewportTextureData& targets = rv.textureData[i];
+			if (!targets.colourTexture)
+			{
+				continue;
+			}
+
+			// Deleted immediately via the registry, not DeleteViewportTargetTexture/
+			// texturesToDelete - this function only ever runs from ProcessFrameDeleteLists
+			// (processing renderViewportsToDelete), by which point it's already established safe
+			// to delete right away (same reasoning as DeleteWindowResources' direct teardown).
+			// Queuing into texturesToDelete here would be too late: ProcessFrameDeleteLists has
+			// already finished iterating that same list earlier in this same call (see its own
+			// ordering), so a newly queued entry would just sit there and get silently discarded
+			// by the renderFrame.Clear() that follows - confirmed as a real leak (reproduced and
+			// fixed: LocalObjectPool<Texture> asserting on shutdown with exactly
+			// c_BufferedFrameCount * 5 = 15 left over).
+			m_Registry.DeleteTexture(targets.colourTexture);
+			m_Registry.DeleteTexture(targets.gbufferAlbedoAO);
+			m_Registry.DeleteTexture(targets.gbufferNormalRoughMetal);
+			m_Registry.DeleteTexture(targets.gbufferMotion);
+			m_Registry.DeleteTexture(targets.depthBuffer);
+		}
+
+		m_RenderViewportPool.Delete(viewport.h);
 	}
 
 	void Renderer::CreateQueues()
@@ -1099,10 +2055,26 @@ namespace tyr
 		{
 			ShaderDesc desc;
 			desc.entryPoint = "main";
-			desc.fileName = "MeshPS";
+			desc.fileName = "GBufferPS";
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_FRAGMENT_BIT;
 			m_Resources.geometryPixelShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "DeferredLightingCS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_COMPUTE_BIT;
+			m_Resources.lightingComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "CullInstancesCS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_COMPUTE_BIT;
+			m_Resources.cullingComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
 		}
 		{
 			ShaderDesc desc;
@@ -1127,6 +2099,8 @@ namespace tyr
 		m_Ctx.device->DeleteShaderModule(m_Resources.geometryTaskShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.geometryMeshShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.geometryPixelShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.lightingComputeShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.cullingComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.guiVertexShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.guiPixelShader);
 		ShaderCreator::UnloadCompilerLibs();
@@ -1230,7 +2204,9 @@ namespace tyr
 			{
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
 				poolSize.descriptorType = DescriptorType::StorageBuffer;
-				poolSize.descriptorCount = 11;
+				// 11 existing + activeMeshInstanceIndexBuffer/visibleInstanceIndexBuffer/
+				// indirectDrawCommandBuffer/drawCountBuffer for GPU-driven instance culling.
+				poolSize.descriptorCount = 15;
 			}
 			{
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
@@ -1241,6 +2217,13 @@ namespace tyr
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
 				poolSize.descriptorType = DescriptorType::Sampler;
 				poolSize.descriptorCount = Device::c_MaxSamplers;
+			}
+			{
+				// TYR_BINDING_LIGHTING_OUTPUT - the deferred lighting pass's storage image output,
+				// one per buffered RenderFrame slot (see RenderViewportTextureData).
+				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
+				poolSize.descriptorType = DescriptorType::StorageImage;
+				poolSize.descriptorCount = RenderConstants::c_BufferedFrameCount;
 			}
 			poolDesc.flags = DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
 #if !TYR_FINAL
@@ -1266,27 +2249,71 @@ namespace tyr
 				binding.bindingFlags = bindingFlags;
 			};
 
-			AddBinding(TYR_BINDING_SCENE_INFO, DescriptorType::UniformBuffer, 1, meshPipelineStages);
-			AddBinding(TYR_BINDING_MESH, DescriptorType::StorageBuffer, 1, meshPipelineStages);
-			AddBinding(TYR_BINDING_MESH_LOD, DescriptorType::StorageBuffer, 1, meshPipelineStages);
+			// Scene-info/lights/textures/samplers also need to be readable from the deferred
+			// lighting compute pass (DeferredLightingCS.hlsl reads the G-buffer/depth via the
+			// bindless textures[] array and the same light buffers GBufferPS.hlsl's forward
+			// equivalent used to read directly), and mesh/meshLOD/mesh-instance from the
+			// instance culling compute pass too (CullInstancesCS.hlsl) - meshlet/vertex/index/
+			// material stay geometry-only, nothing else needs them.
+			const ShaderStage meshAndComputeStages = static_cast<ShaderStage>(meshPipelineStages | SHADER_STAGE_COMPUTE_BIT);
+
+			AddBinding(TYR_BINDING_SCENE_INFO, DescriptorType::UniformBuffer, 1, meshAndComputeStages);
+			AddBinding(TYR_BINDING_MESH, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
+			AddBinding(TYR_BINDING_MESH_LOD, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
 			AddBinding(TYR_BINDING_MESHLET, DescriptorType::StorageBuffer, 1, meshPipelineStages);
 			AddBinding(TYR_BINDING_VERTEX, DescriptorType::StorageBuffer, 1, meshPipelineStages);
 			AddBinding(TYR_BINDING_INDEX, DescriptorType::StorageBuffer, 1, meshPipelineStages);
-			AddBinding(TYR_BINDING_MESH_INSTANCE, DescriptorType::StorageBuffer, 1, meshPipelineStages);
+			AddBinding(TYR_BINDING_MESH_INSTANCE, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
 			AddBinding(TYR_BINDING_MATERIAL, DescriptorType::StorageBuffer, 1, meshPipelineStages);
-			AddBinding(TYR_BINDING_DIR_LIGHT, DescriptorType::StorageBuffer, 1, meshPipelineStages);
-			AddBinding(TYR_BINDING_POINT_LIGHT, DescriptorType::StorageBuffer, 1, meshPipelineStages);
-			AddBinding(TYR_BINDING_SPOT_LIGHT, DescriptorType::StorageBuffer, 1, meshPipelineStages);
+			AddBinding(TYR_BINDING_DIR_LIGHT, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
+			AddBinding(TYR_BINDING_POINT_LIGHT, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
+			AddBinding(TYR_BINDING_SPOT_LIGHT, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
 
 			const DescriptorBindingFlags bindlessFlags = static_cast<DescriptorBindingFlags>(DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
-			AddBinding(TYR_BINDING_TEXTURES, DescriptorType::SampledImage, RenderConstants::c_MaxTextures, meshPipelineStages, bindlessFlags);
-			AddBinding(TYR_BINDING_SAMPLERS, DescriptorType::Sampler, Device::c_MaxSamplers, meshPipelineStages, bindlessFlags);
+			AddBinding(TYR_BINDING_TEXTURES, DescriptorType::SampledImage, RenderConstants::c_MaxTextures, meshAndComputeStages, bindlessFlags);
+			AddBinding(TYR_BINDING_SAMPLERS, DescriptorType::Sampler, Device::c_MaxSamplers, meshAndComputeStages, bindlessFlags);
 			// GUIVS.hlsl reads this directly (vertex-pulling via SV_VertexID) - a vertex stage,
-			// not one of the mesh pipeline's task/mesh/fragment stages. Declared last, matching
-			// its binding number (13) being the highest - VulkanDescriptorSet.cpp's
-			// bindingDescriptorTypes lookup assumes bindings are declared in ascending binding-
-			// number order with no gaps, so this has to stay last as long as that holds.
+			// not one of the mesh pipeline's task/mesh/fragment stages. Declared in ascending
+			// binding-number order with no gaps after this, matching what
+			// VulkanDescriptorSet.cpp's bindingDescriptorTypes lookup assumes.
 			AddBinding(TYR_BINDING_GUI_VERTEX, DescriptorType::StorageBuffer, 1, SHADER_STAGE_VERTEX_BIT);
+			// Deferred lighting pass's output (the viewport colour texture, written as a storage
+			// image) - compute-only, not part of the bindless sampled textures[] array above.
+			// One entry per buffered RenderFrame slot (see RenderViewportTextureData and
+			// DeferredLightingCS.hlsl's outputImages[]) - each slot's compute dispatch only ever
+			// writes its own array index, so up to c_BufferedFrameCount dispatches can genuinely
+			// be in flight on the GPU at once without racing each other on the same image.
+			//
+			// Needs UPDATE_AFTER_BIND_BIT regardless: EditorViewport::Draw resizes a slot's texture
+			// (and rewrites that slot's array entry via Renderer::EnsureLightingOutputBound)
+			// whenever the panel size changes, and even though PrepareForNextFrame already guarantees that
+			// specific slot's own previous dispatch has finished by the time its turn comes back
+			// around, the descriptor SET as a whole is still normally "in use" by whichever OTHER
+			// slots' dispatches are currently in flight - without this flag, updating any entry
+			// while that's true is a real Vulkan spec violation (VUID-vkUpdateDescriptorSets-
+			// None-03047), not just a validation warning.
+			//
+			// Also needs PARTIALLY_BOUND_BIT, same reason the bindless TYR_BINDING_TEXTURES array
+			// does: g_PushConstants.renderFrameIndex is a dynamic (runtime, not shader-compile-time
+			// constant) index into this array, and EditorViewport::Draw only creates a given slot's
+			// texture - and so only writes that slot's array entry - on that slot's own first turn
+			// through the 0/1/2 cycle. Without this flag, a dispatch for an already-created slot
+			// (dynamically indexing this array) can require every entry to be validly bound, not
+			// just the one it actually reads - including slots that haven't had their first turn
+			// yet during the first couple of ticks.
+			const DescriptorBindingFlags lightingOutputFlags = static_cast<DescriptorBindingFlags>(
+				DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
+			AddBinding(TYR_BINDING_LIGHTING_OUTPUT, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
+				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
+
+			// GPU-driven instance culling (CullInstancesCS.hlsl) - compute-only except
+			// TYR_BINDING_VISIBLE_INSTANCE_INDICES, which MeshAS.hlsl (task stage) also reads
+			// per draw via SV_DrawIndex. See RecordCullingPass/RenderResources.h.
+			AddBinding(TYR_BINDING_ACTIVE_INSTANCE_INDICES, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
+			AddBinding(TYR_BINDING_VISIBLE_INSTANCE_INDICES, DescriptorType::StorageBuffer, 1,
+				static_cast<ShaderStage>(SHADER_STAGE_COMPUTE_BIT | SHADER_STAGE_TASK_BIT));
+			AddBinding(TYR_BINDING_INDIRECT_DRAW_COMMANDS, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
+			AddBinding(TYR_BINDING_DRAW_COUNT, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 
 			m_Resources.descriptorSetLayout = m_Ctx.device->CreateDescriptorSetLayout(layoutDesc);
 
@@ -1299,12 +2326,9 @@ namespace tyr
 			m_Resources.descriptorSet = m_Ctx.device->CreateDescriptorSet(setDesc);
 
 			desc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
-
-			// Which mesh instance this draw call is for.
-			PushConstantRange& pushConstantRange = desc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
-			pushConstantRange.stageFlags = meshPipelineStages;
-			pushConstantRange.offset = 0;
-			pushConstantRange.size = sizeof(uint);
+			// No push constant range needed any more - MeshAS.hlsl resolves its mesh instance
+			// index from CullInstancesCS.hlsl's compacted buffer via SV_DrawIndex instead (a
+			// single indirect multi-draw call can't vary push constants per sub-draw anyway).
 		}
 
 		desc.topology = PrimitiveTopology::TriangeList;
@@ -1331,12 +2355,14 @@ namespace tyr
 		desc.rasterizerStateDesc.depthClampEnabled = false;
 		desc.rasterizerStateDesc.depthBiasEnabled = false;
 
-		// Depth stencil description
-		desc.depthStencilStateDesc.depthCompareOp = CompareOp::Never;
+		// Depth stencil description - reverse-Z (see Renderer::Render's projection setup, which
+		// swaps near/far), so a nearer fragment has a *larger* depth value than what's already
+		// there: compare Greater, cleared to 0 (see RecordGeometryPass).
+		desc.depthStencilStateDesc.depthCompareOp = CompareOp::Greater;
 		desc.depthStencilStateDesc.minDepthBounds = 0.0f;
 		desc.depthStencilStateDesc.maxDepthBounds = 1.0f;
-		desc.depthStencilStateDesc.depthTestEnable = false;
-		desc.depthStencilStateDesc.depthWriteEnable = false;
+		desc.depthStencilStateDesc.depthTestEnable = true;
+		desc.depthStencilStateDesc.depthWriteEnable = true;
 		desc.depthStencilStateDesc.depthBoundsTestEnable = false;
 		desc.depthStencilStateDesc.stencilTestEnable = false;
 		desc.depthStencilStateDesc.front.failOp = StencilOp::Zero;
@@ -1355,8 +2381,12 @@ namespace tyr
 		desc.multiSampleDesc.alphaToCoverageEnable = false;
 		desc.multiSampleDesc.alphaToOneEnable = false;
 
-		desc.dynamicRendering.colorAttachmentFormats.Add(PF_R8G8B8A8_SRGB); // TODO: Don't hardcode this later?
-		desc.dynamicRendering.depthAttachmentFormat = PF_UNKNOWN;
+		// Must match Renderer::ResizeRenderViewportSlot's gbufferAlbedoAO/gbufferNormalRoughMetal/
+		// gbufferMotion/depthBuffer formats - dynamic rendering requires the two to agree.
+		desc.dynamicRendering.colorAttachmentFormats.Add(PF_R8G8B8A8_SRGB);
+		desc.dynamicRendering.colorAttachmentFormats.Add(PF_R16G16B16A16_SFLOAT);
+		desc.dynamicRendering.colorAttachmentFormats.Add(PF_R16G16_SFLOAT);
+		desc.dynamicRendering.depthAttachmentFormat = PF_D32_SFLOAT;
 		desc.dynamicRendering.stencilAttachmentFormat = PF_UNKNOWN;
 		desc.dynamicRendering.viewMask = 0;
 
@@ -1392,7 +2422,23 @@ namespace tyr
 		guiDesc.rasterizerStateDesc.depthClampEnabled = false;
 		guiDesc.rasterizerStateDesc.depthBiasEnabled = false;
 
-		guiDesc.depthStencilStateDesc = desc.depthStencilStateDesc;
+		// Not desc.depthStencilStateDesc - that's real depth test/write now (for the G-buffer
+		// pass), which would be invalid here since GUI declares no depth attachment at all below.
+		guiDesc.depthStencilStateDesc.depthCompareOp = CompareOp::Never;
+		guiDesc.depthStencilStateDesc.minDepthBounds = 0.0f;
+		guiDesc.depthStencilStateDesc.maxDepthBounds = 1.0f;
+		guiDesc.depthStencilStateDesc.depthTestEnable = false;
+		guiDesc.depthStencilStateDesc.depthWriteEnable = false;
+		guiDesc.depthStencilStateDesc.depthBoundsTestEnable = false;
+		guiDesc.depthStencilStateDesc.stencilTestEnable = false;
+		guiDesc.depthStencilStateDesc.front.failOp = StencilOp::Zero;
+		guiDesc.depthStencilStateDesc.front.passOp = StencilOp::Zero;
+		guiDesc.depthStencilStateDesc.front.depthFailOp = StencilOp::Zero;
+		guiDesc.depthStencilStateDesc.front.compareOp = CompareOp::Never;
+		guiDesc.depthStencilStateDesc.front.compareMask = 0;
+		guiDesc.depthStencilStateDesc.front.writeMask = 0;
+		guiDesc.depthStencilStateDesc.front.reference = 0;
+		guiDesc.depthStencilStateDesc.back = guiDesc.depthStencilStateDesc.front;
 		guiDesc.multiSampleDesc = desc.multiSampleDesc;
 
 		guiDesc.dynamicRendering.colorAttachmentFormats.Add(PF_R8G8B8A8_SRGB);
@@ -1412,12 +2458,48 @@ namespace tyr
 		guiDesc.shaders.Add(m_Resources.guiPixelShader);
 
 		m_Resources.guiPipeline = m_Ctx.device->CreateGraphicsPipeline(guiDesc);
+
+		// Deferred lighting pass - full-screen compute, reads the G-buffer/depth via the same
+		// bindless textures[] array and writes the shaded result into the viewport colour
+		// texture via TYR_BINDING_LIGHTING_OUTPUT (see RecordLightingPass).
+		ComputePipelineDesc lightingDesc;
+		lightingDesc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
+
+		PushConstantRange& lightingPushConstantRange = lightingDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
+		lightingPushConstantRange.stageFlags = SHADER_STAGE_COMPUTE_BIT;
+		lightingPushConstantRange.offset = 0;
+		// sizeof(LightingPushConstants) directly, not a hand-counted field size, so this can't
+		// silently drift out of sync with the struct (see DeferredLightingCS.hlsl's matching one)
+		// again - this exact mismatch (a stale hardcoded size after adding renderFrameIndex) is
+		// what produced a real VUID-VkComputePipelineCreateInfo-layout-10069 validation error.
+		lightingPushConstantRange.size = sizeof(LightingPushConstants);
+
+		lightingDesc.shader = m_Resources.lightingComputeShader;
+
+		m_Resources.lightingPipeline = m_Ctx.device->CreateComputePipeline(lightingDesc);
+
+		// GPU-driven instance frustum culling - runs just before GeometryPass, compacting
+		// visible instances into the indirect draw buffers it then draws from directly. See
+		// RecordCullingPass.
+		ComputePipelineDesc cullingDesc;
+		cullingDesc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
+
+		PushConstantRange& cullingPushConstantRange = cullingDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
+		cullingPushConstantRange.stageFlags = SHADER_STAGE_COMPUTE_BIT;
+		cullingPushConstantRange.offset = 0;
+		cullingPushConstantRange.size = sizeof(uint); // activeInstanceCount - see CullInstancesCS.hlsl
+
+		cullingDesc.shader = m_Resources.cullingComputeShader;
+
+		m_Resources.cullingPipeline = m_Ctx.device->CreateComputePipeline(cullingDesc);
 	}
 
 	void Renderer::DeletePipelines()
 	{
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.geometryGraphicsPipeline);
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.guiPipeline);
+		m_Ctx.device->DeleteComputePipeline(m_Resources.lightingPipeline);
+		m_Ctx.device->DeleteComputePipeline(m_Resources.cullingPipeline);
 		m_Ctx.device->DeleteDescriptorSet(m_Resources.descriptorSet);
 		m_Ctx.device->DeleteDescriptorSetLayout(m_Resources.descriptorSetLayout);
 		m_Ctx.device->DeleteDescriptorPool(m_Resources.descriptorPool);
@@ -1436,14 +2518,17 @@ namespace tyr
 			RenderBufferDesc desc;
 			desc.debugName = "Vertex Buffer";
 			desc.size = RenderConstants::c_VertexBufferSize;
-			desc.usage = RenderBufferUsage::Storage;
+			// RayTracing, not Storage - BLAS builds (Renderer::RecordRayTracingBuildPass) read
+			// straight out of this buffer via its GPU address, on top of the existing mesh/task
+			// shader StructuredBuffer reads.
+			desc.usage = RenderBufferUsage::RayTracing;
 			m_Resources.vertexBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
 			RenderBufferDesc desc;
 			desc.debugName = "Index Buffer";
 			desc.size = RenderConstants::c_IndexBufferSize;
-			desc.usage = RenderBufferUsage::Storage;
+			desc.usage = RenderBufferUsage::RayTracing;
 			m_Resources.indexBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
@@ -1505,7 +2590,9 @@ namespace tyr
 		{
 			RenderBufferDesc desc;
 			desc.debugName = "GUI Vertex Buffer";
-			desc.size = RenderConstants::c_GUIVertexBufferSize;
+			// One c_BufferedFrameCount-th per buffered RenderFrame slot - see
+			// RenderConstants::c_GUIVertexBufferSize's own comment on why.
+			desc.size = RenderConstants::c_GUIVertexBufferSize * RenderConstants::c_BufferedFrameCount;
 			// Storage, not Vertex - GUIVS.hlsl pulls its own vertex via a StructuredBuffer
 			// binding (TYR_BINDING_GUI_VERTEX) instead of fixed-function vertex input.
 			desc.usage = RenderBufferUsage::Storage;
@@ -1514,10 +2601,67 @@ namespace tyr
 		{
 			RenderBufferDesc desc;
 			desc.debugName = "GUI Index Buffer";
-			desc.size = RenderConstants::c_GUIIndexBufferSize;
+			// One c_BufferedFrameCount-th per buffered RenderFrame slot - see
+			// RenderConstants::c_GUIIndexBufferSize's own comment on why.
+			desc.size = RenderConstants::c_GUIIndexBufferSize * RenderConstants::c_BufferedFrameCount;
 			desc.usage = RenderBufferUsage::Index;
 			desc.stride = sizeof(uint16);
 			m_Resources.guiIndexBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
+			desc.debugName = "Active Mesh Instance Index Buffer";
+			desc.size = sizeof(uint) * RenderConstants::c_MaxMeshInstances;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.activeMeshInstanceIndexBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
+			desc.debugName = "Visible Instance Index Buffer";
+			desc.size = sizeof(uint) * RenderConstants::c_MaxMeshInstances;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.visibleInstanceIndexBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
+			desc.debugName = "Indirect Draw Command Buffer";
+			desc.size = sizeof(uint) * 3 * RenderConstants::c_MaxMeshInstances; // VkDrawMeshTasksIndirectCommandEXT
+			desc.usage = RenderBufferUsage::Indirect;
+			m_Resources.indirectDrawCommandBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
+			desc.debugName = "Draw Count Buffer";
+			desc.size = sizeof(uint);
+			desc.usage = RenderBufferUsage::Indirect;
+			m_Resources.drawCountBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
+			desc.debugName = "TLAS Instance Buffer";
+			// One c_BufferedFrameCount-th per buffered RenderFrame slot - see
+			// RenderResources::tlasInstanceBuffer's own comment on why.
+			desc.size = RenderConstants::c_TLASInstanceBufferSize * RenderConstants::c_BufferedFrameCount;
+			desc.usage = RenderBufferUsage::RayTracing;
+			m_Resources.tlasInstanceBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			// See RenderResources::rtCullingStagingBuffer's own comment - RenderAsync writes
+			// directly into this at a fixed offset for its own renderFrameIndex slot, no
+			// allocator involved.
+			RenderBufferDesc desc;
+			desc.debugName = "RT/Culling Staging Buffer";
+			desc.size = c_RTCullingStagingSlotSize * RenderConstants::c_BufferedFrameCount;
+			desc.usage = RenderBufferUsage::Upload;
+			m_Resources.rtCullingStagingBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			// See RenderResources::blasStorageBuffer's own comment.
+			RenderBufferDesc desc;
+			desc.debugName = "BLAS Storage Buffer";
+			desc.size = RenderConstants::c_BLASStorageBufferSize;
+			desc.usage = RenderBufferUsage::AccelerationStructureStorage;
+			m_Resources.blasStorageBuffer = m_Registry.CreateBuffer(desc);
 		}
 	}
 
@@ -1536,6 +2680,13 @@ namespace tyr
 		m_Registry.DeleteBuffer(m_Resources.sceneInfoBuffer);
 		m_Registry.DeleteBuffer(m_Resources.guiVertexBuffer);
 		m_Registry.DeleteBuffer(m_Resources.guiIndexBuffer);
+		m_Registry.DeleteBuffer(m_Resources.activeMeshInstanceIndexBuffer);
+		m_Registry.DeleteBuffer(m_Resources.visibleInstanceIndexBuffer);
+		m_Registry.DeleteBuffer(m_Resources.indirectDrawCommandBuffer);
+		m_Registry.DeleteBuffer(m_Resources.drawCountBuffer);
+		m_Registry.DeleteBuffer(m_Resources.tlasInstanceBuffer);
+		m_Registry.DeleteBuffer(m_Resources.rtCullingStagingBuffer);
+		m_Registry.DeleteBuffer(m_Resources.blasStorageBuffer);
 	}
 
 	void Renderer::CreateSamplers()
@@ -1563,6 +2714,69 @@ namespace tyr
 		}
 	}
 
+	void Renderer::CreateAccelerationStructures()
+	{
+		// One TLAS per buffered RenderFrame slot - see RenderResources::tlas's own comment. Sized
+		// once for the worst case (every active mesh instance visible); the TLAS itself is never
+		// recreated, only rebuilt (see RecordRayTracingBuildPass). m_Resources.blasScratchBuffer
+		// is the one that grows on demand, since a mesh's triangle count isn't known up front.
+		AccelerationStructureDesc tlasDesc;
+		tlasDesc.debugName = "TLAS";
+		tlasDesc.type = AccelerationStructureType::TopLevel;
+		tlasDesc.maxInstanceCount = RenderConstants::c_MaxMeshInstances;
+
+		for (uint i = 0; i < RenderConstants::c_BufferedFrameCount; ++i)
+		{
+			m_Resources.tlas[i] = m_Ctx.device->CreateAccelerationStructure(tlasDesc);
+			// Every slot's TLAS shares the same desc, so the same scratch size - just keep
+			// whichever came back, they're all identical.
+			m_TLASScratchPerSlotSize = m_Ctx.device->GetAccelerationStructureBuildScratchSize(m_Resources.tlas[i]);
+		}
+
+		RenderBufferDesc scratchDesc;
+		scratchDesc.debugName = "TLAS Scratch Buffer";
+		// One c_BufferedFrameCount-th per buffered RenderFrame slot - see
+		// RenderResources::tlasScratchBuffer's own comment.
+		scratchDesc.size = m_TLASScratchPerSlotSize * RenderConstants::c_BufferedFrameCount;
+		scratchDesc.usage = RenderBufferUsage::RayTracing;
+		m_Resources.tlasScratchBuffer = m_Registry.CreateBuffer(scratchDesc);
+	}
+
+	void Renderer::DeleteAccelerationStructures()
+	{
+		for (uint i = 0; i < RenderConstants::c_BufferedFrameCount; ++i)
+		{
+			m_Ctx.device->DeleteAccelerationStructure(m_Resources.tlas[i]);
+		}
+		m_Registry.DeleteBuffer(m_Resources.tlasScratchBuffer);
+		if (m_Resources.blasScratchBuffer)
+		{
+			m_Registry.DeleteBuffer(m_Resources.blasScratchBuffer);
+		}
+	}
+
+	void Renderer::EnsureBLASScratchCapacity(size_t requiredPerSlotSize)
+	{
+		// m_BLASScratchCapacity is a PER-SLOT size (see RenderResources::blasScratchBuffer's own
+		// comment) - the buffer itself is c_BufferedFrameCount times this.
+		if (requiredPerSlotSize <= m_BLASScratchCapacity)
+		{
+			return;
+		}
+
+		if (m_Resources.blasScratchBuffer)
+		{
+			GetRenderFrame().buffersToDelete.Add(m_Resources.blasScratchBuffer);
+		}
+
+		RenderBufferDesc desc;
+		desc.debugName = "BLAS Scratch Buffer";
+		desc.size = requiredPerSlotSize * RenderConstants::c_BufferedFrameCount;
+		desc.usage = RenderBufferUsage::RayTracing;
+		m_Resources.blasScratchBuffer = m_Registry.CreateBuffer(desc);
+		m_BLASScratchCapacity = requiredPerSlotSize;
+	}
+
 	void Renderer::DeleteSamplers()
 	{
 		m_Ctx.device->DeleteSampler(m_Resources.materialSampler);
@@ -1572,16 +2786,13 @@ namespace tyr
 	{
 		TransferPassArgs transferArgs;
 		transferArgs.device = m_Ctx.device;
-		transferArgs.data = &m_Data;
 		transferArgs.registry = &m_Registry;
 		transferArgs.resources = &m_Resources;
-		transferArgs.renderFrame = nullptr;
 		m_TransferPass = new TransferPass(transferArgs);
 
 		GeometryPassArgs geometryArgs;
 		geometryArgs.device = m_Ctx.device;
 		geometryArgs.registry = &m_Registry;
-		geometryArgs.allocManager = &m_AllocManager;
 		geometryArgs.resources = &m_Resources;
 		geometryArgs.scene = nullptr;
 		geometryArgs.pipeline = m_Resources.geometryGraphicsPipeline;
@@ -1594,7 +2805,6 @@ namespace tyr
 		guiArgs.descriptorSet = m_Resources.descriptorSet;
 		guiArgs.vertexBuffer = m_Resources.guiVertexBuffer;
 		guiArgs.indexBuffer = m_Resources.guiIndexBuffer;
-		guiArgs.renderFrame = nullptr;
 		m_GUIPass = new GUIPass(guiArgs);
 	}
 

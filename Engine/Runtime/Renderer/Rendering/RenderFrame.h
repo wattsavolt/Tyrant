@@ -7,6 +7,7 @@
 #include "Rendering/RenderConstants.h"
 #include "RenderInstance/RenderInstances.h"
 #include "RenderWindow.h"
+#include "RenderViewport.h"
 
 namespace tyr
 {
@@ -53,8 +54,9 @@ namespace tyr
 		Array<SpotLightUpdate> spotLightsToUpdate;
 		Array<SpotLightHandle> spotLightsToRemove;
 		RenderWindowHandle newWindow{};
-		float ambient{};
-		bool visible{};
+		// Set via RendererAPI::SetSceneRenderViewport - merged into Scene::renderViewport by
+		// RenderAsync, the same way newWindow is merged into Scene::windowHandle.
+		RenderViewportHandle newRenderViewport{};
 
 		SceneFrame()
 		{
@@ -94,14 +96,23 @@ namespace tyr
 			spotLightsToAdd.Clear();
 			spotLightsToUpdate.Clear();
 			spotLightsToRemove.Clear();
-			visible = true;
 			newWindow = {};
+			newRenderViewport = {};
 		}
 	};
 
 	struct RenderWindowResizeRequest
 	{
 		RenderWindowHandle window{};
+	};
+
+	// One entry per BLAS the main thread decided to build this frame - the acceleration
+	// structure and scratch buffer are both created on the main thread, so the worker thread
+	// building into this just needs the handle and where its scratch region starts.
+	struct BLASBuildRecord
+	{
+		AccelerationStructureHandle blas;
+		size_t scratchOffset;
 	};
 
 	struct RenderFrame
@@ -122,6 +133,13 @@ namespace tyr
 		Array<TextureHandle> texturesToDelete;
 		Array<MaterialHandle> materialsToDelete;
 		Array<MeshHandle> meshesToDelete;
+		// Meshes whose LOD0 geometry upload was just queued - drained into Renderer's own
+		// persistent build queue in RenderAsync, then cleared here like every other per-frame
+		// list. Not itself a queue of pending builds across frames.
+		Array<MeshHandle> meshesToBuildBLAS;
+		// Filled by Render() (main thread) right after it batches this frame's BLAS builds.
+		// Read-only from the worker thread that records them.
+		Array<BLASBuildRecord> blasBuildsToRecord;
 		Array<SkeletalMeshHandle> skeletalMeshesToDelete;
 		Array<MeshInstanceHandle> meshInstancesToDelete;
 		Array<SkeletalMeshInstanceHandle> skeletalMeshInstancesToDelete;
@@ -129,16 +147,20 @@ namespace tyr
 		Array<PointLightHandle> pointLightsToDelete;
 		Array<SpotLightHandle> spotLightsToDelete;
 		// Windows removed this tick. A window's swap chain/semaphores can't be deleted right
-		// away - RenderAsync or RenderSubmissionThread might still be using them from up to
-		// c_BufferedFrameCount frames ago - so, like every list above, actual deletion waits
-		// until this slot cycles back around and its GPU work is confirmed done. The pool handle
-		// travels with each entry too, so the pool slot itself is freed at that same safe point
-		// rather than immediately (see RemoveWindow's own comment).
+		// away - something might still be using them from up to c_BufferedFrameCount frames
+		// ago - so deletion waits until this slot cycles back and its GPU work is done.
 		Array<PendingWindowDelete> windowsToDelete;
 		// Scenes removed this tick - deferred the same way and for the same reason as windows
-		// above (see RendererAPI::RemoveScene). Unlike windows, nothing needs copying out first:
-		// Scene::Reset() runs in place once it's safe, so this just needs the handle.
+		// above. Scene::Reset() runs in place once it's safe, so this just needs the handle.
 		Array<SceneHandle> scenesToDelete;
+		// Viewports removed this tick - deferred the same way as scenes above, but needs its
+		// own teardown step (deleting every buffered slot's textures, if any) before the pool
+		// slot itself is freed.
+		Array<RenderViewportHandle> renderViewportsToDelete;
+		// Buffers retired this tick, deferred the same way as windows/scenes above - an
+		// already-in-flight frame may have a command buffer referencing the old handle, so it
+		// must stay alive until this slot's GPU work is confirmed done.
+		Array<RenderBufferHandle> buffersToDelete;
 		float deltaTime;
 		// Default-constructs to invalid (falsy) - no separate sentinel needed.
 		SceneHandle activeScene;
@@ -163,6 +185,8 @@ namespace tyr
 			texturesToDelete.Reserve(c_DefaultPendingListReserve);
 			materialsToDelete.Reserve(c_DefaultPendingListReserve);
 			meshesToDelete.Reserve(c_DefaultPendingListReserve);
+			meshesToBuildBLAS.Reserve(c_DefaultPendingListReserve);
+			blasBuildsToRecord.Reserve(c_DefaultPendingListReserve);
 			skeletalMeshesToDelete.Reserve(c_DefaultPendingListReserve);
 			meshInstancesToDelete.Reserve(c_DefaultPendingListReserve);
 			skeletalMeshInstancesToDelete.Reserve(RenderConstants::c_MaxSkeletalMeshInstances);
@@ -182,6 +206,8 @@ namespace tyr
 			texturesToDelete.Clear();
 			materialsToDelete.Clear();
 			meshesToDelete.Clear();
+			meshesToBuildBLAS.Clear();
+			blasBuildsToRecord.Clear();
 			skeletalMeshesToDelete.Clear();
 			meshInstancesToDelete.Clear();
 			skeletalMeshInstancesToDelete.Clear();
@@ -190,6 +216,8 @@ namespace tyr
 			spotLightsToDelete.Clear();
 			windowsToDelete.Clear();
 			scenesToDelete.Clear();
+			renderViewportsToDelete.Clear();
+			buffersToDelete.Clear();
 			sceneFrame.Clear();
 			activeScene = {};
 			guiDrawData.Clear();

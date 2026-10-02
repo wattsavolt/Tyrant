@@ -57,6 +57,10 @@ namespace tyr
 		RenderWindowHandle windowHandle;
 		WindowHandle osWindowHandle;
 		SceneHandle sceneHandle;
+		// Created/destroyed alongside sceneHandle (see WorldManager::InitWorld/ShutdownWorld) - the
+		// world's scene owns this for its whole lifetime, regardless of whether this world is
+		// currently the active one (see RenderViewport's own comment).
+		RenderViewportHandle renderViewportHandle;
 		bool visible = true;
 		EntitySystem entities;
 		Array<WorldMeshInstance> meshInstances;
@@ -83,6 +87,7 @@ namespace tyr
 			windowHandle = {};
 			osWindowHandle = {};
 			sceneHandle = {};
+			renderViewportHandle = {};
 			visible = true;
 			entities.Reset();
 			meshInstances.Clear();

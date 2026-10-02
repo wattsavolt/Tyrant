@@ -42,15 +42,9 @@ namespace tyr
 
 		TYR_REGISTER_MODULE(WindowModule);
 		TYR_REGISTER_MODULE(RendererModule);
-		// ModuleManager runs Update()/EndFrame() in REVERSE registration order, so RendererModule
-		// (registered here, early) actually executes LATE in each phase - deliberately, so every
-		// other module's Update() has already run by the time RendererModule::Update() (Renderer::
-		// Render) does, including GUIModule's, which is what lets Render() safely dispatch
-		// RenderAsync directly instead of deferring it - see Render()'s own comment. If GUIModule
-		// (or AssetModule/WorldModule/AppModule, which also write into the current RenderFrame
-		// slot before Render() runs) is ever registered AFTER RendererModule, that safety breaks
-		// silently - no compile error, just the crash this ordering was fixed to prevent coming
-		// back. Talk it through before reordering this list.
+		// ModuleManager runs Update()/EndFrame() in reverse registration order, so a module
+		// registered here, early, executes late in each phase. RendererModule must run after
+		// every module that writes into the current render frame, so keep it registered before them.
 		TYR_REGISTER_MODULE(GUIModule);
 		TYR_REGISTER_MODULE(InputModule);
 		TYR_REGISTER_MODULE(AssetModule);
@@ -98,20 +92,14 @@ namespace tyr
 	{
 		TYR_ASSERT(m_Initialized);
 
-		// Must happen before any module's Shutdown() below - some (AssetModule, deleting
-		// AssetManager) delete objects that a still-running background task could be
-		// referencing via a captured `this`, which would otherwise be a dangling-pointer
-		// hazard. See TaskScheduler::WaitForAllTasks' own comment for why this is a single
-		// global wait here rather than each module separately tracking and waiting on its own
-		// tasks.
+		// Must happen before any module's Shutdown() below - some modules delete objects that
+		// a still-running background task could be referencing via a captured `this`, which
+		// would otherwise be a dangling-pointer hazard.
 		TaskScheduler::Instance().WaitForAllTasks();
 
-		// Every module's Shutdown() below tears down things (windows, scenes, assets, ...) that
-		// in-flight render work might still reference. This is safe without an explicit early
-		// flush because RemoveWindow/RemoveScene defer their actual work instead of touching
-		// live data immediately - RendererModule's own Shutdown(), later in this same call (in
-		// reverse registration order), is what actually waits for everything and processes the
-		// deferred lists, by which point nothing before it needed that to have already happened.
+		// Every module's Shutdown() below tears down things that in-flight render work might
+		// still reference. This is safe without an explicit early flush because teardown defers
+		// its actual work instead of touching live data immediately, processed later in this same call.
 		ModuleManager::Instance().ShutdownModules();
 
 		m_Initialized = false;

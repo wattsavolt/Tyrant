@@ -290,9 +290,8 @@ namespace tyr
 				const uint swapChainWidth = renderWindow.swapChain->GetWidth();
 				const uint swapChainHeight = renderWindow.swapChain->GetHeight();
 
-				// Resolve this scene's own RenderViewport (see Scene::renderViewport/RenderViewport's
-				// own comment) and bring its current buffered slot up to date before anything below
-				// reads its width/height or texture handles.
+				// Resolve this scene's own RenderViewport and bring its current buffered slot up
+				// to date before anything below reads its width/height or texture handles.
 				const RenderViewportHandle viewportHandle = immediateSceneData.renderViewport;
 				// Before anything has ever requested a render target size yet (e.g. the very first
 				// few frames, or no viewport handle has reached this scene yet), fall back to the
@@ -304,10 +303,8 @@ namespace tyr
 					RenderViewport& viewport = m_RenderViewportPool[viewportHandle.h];
 					RenderViewportTextureData& targets = viewport.textureData[m_RenderFrameIndex];
 
-					// Apply this slot's own pending resize, if any - see RenderViewport's own comment
-					// on resize propagation. A no-op (just clears the flag) if this slot already
-					// matches the requested size, whether because a direct request already resized it
-					// this very tick or because it just happened to already be that size.
+					// Apply this slot's own pending resize, if any. A no-op (just clears the flag) if
+					// this slot already matches the requested size.
 					if (viewport.pendingResize[m_RenderFrameIndex])
 					{
 						if (targets.width != viewport.requestedWidth || targets.height != viewport.requestedHeight)
@@ -317,8 +314,8 @@ namespace tyr
 						viewport.pendingResize[m_RenderFrameIndex] = false;
 					}
 
-					// Keep this slot's lighting-output descriptor pointed at whatever colour texture
-					// is actually here now - see EnsureLightingOutputBound's own comment.
+					// Keep this slot's lighting-output descriptor pointed at the current colour
+					// texture.
 					EnsureLightingOutputBound(m_RenderFrameIndex, targets.colourTexture);
 
 					if (targets.width != 0 && targets.height != 0)
@@ -328,8 +325,8 @@ namespace tyr
 					}
 				}
 
-				// TODO: Extend to multiple views per scene - only the first view's data reaches the
-				// shader for now (see ShaderSceneInfo's own comment).
+				// TODO: Extend to multiple views per scene - only the first view's data reaches
+				// the shader for now.
 				if (!sceneFrame.views.IsEmpty())
 				{
 					const SceneView& sv = sceneFrame.views[0];
@@ -340,17 +337,13 @@ namespace tyr
 					const Matrix4 projection = Matrix4::CreatePerspective(sv.camera.fov, aspect, sv.camera.farZ, sv.camera.nearZ);
 
 					sceneInfo.viewProj = view * projection;
-					// Deferred lighting pass reconstructs world position from depth with this - see
-					// DeferredLightingCS.hlsl.
+					// Deferred lighting reconstructs world position from depth using this.
 					sceneInfo.invViewProj = sceneInfo.viewProj.Inverse();
 					sceneInfo.camPos = sv.camera.position;
 
 					// Gribb-Hartmann frustum plane extraction, adapted for this engine's row-vector
-					// convention (v * M, not M * v) - planes come from viewProj's COLUMNS, not rows.
-					// Each resulting Vector4(a,b,c,d) satisfies dot(worldPos,abc)+d >= 0 for "inside",
-					// which holds regardless of the reverse-Z projection used here (Vulkan's clip-space
-					// constraint 0<=z<=w that this derivation relies on is convention-invariant). Used
-					// by CullInstancesCS.hlsl.
+					// convention (v * M, not M * v) - planes come from viewProj's columns, not rows.
+					// Each plane satisfies dot(worldPos,abc)+d >= 0 for "inside".
 					{
 						const Vector4 c0 = sceneInfo.viewProj.GetColumn4D(0);
 						const Vector4 c1 = sceneInfo.viewProj.GetColumn4D(1);
@@ -371,9 +364,9 @@ namespace tyr
 						}
 					}
 
-					// GBufferPS.hlsl's motion vectors - see ShaderSceneInfo::prevViewProj's own comment.
-					// On the very first frame there is no real previous frame, so use this frame's own
-					// viewProj (motion vectors come out exactly zero rather than reading identity/garbage).
+					// On the very first frame there is no real previous frame, so use this frame's
+					// own viewProj - motion vectors come out exactly zero rather than reading
+					// identity/garbage.
 					sceneInfo.prevViewProj = m_FirstRender ? sceneInfo.viewProj : m_PrevViewProj;
 					m_PrevViewProj = sceneInfo.viewProj;
 				}
@@ -390,8 +383,7 @@ namespace tyr
 					request.srcOffset = alloc.offset;
 					request.dstBuffer = m_Resources.sceneInfoBuffer;
 					// The whole buffer is bound as a single cbuffer at offset 0 - only one scene ever
-					// renders at a time (see Scene's own comment), so there's no per-scene slot to
-					// index into here.
+					// renders at a time, so there's no per-scene slot to index into here.
 					request.dstOffset = 0;
 					request.size = sizeof(ShaderSceneInfo);
 				}
@@ -439,14 +431,9 @@ namespace tyr
 
 			m_Ctx.device->UpdateDescriptorSet(m_Resources.descriptorSet, bindingUpdates, bindingCount);
 
-			// The one material sampler every texture is read with (see CreateSamplers) - bound
-			// once here, like the buffers above, rather than per-texture, since MeshPS.hlsl
-			// always indexes samplers[0] regardless of which texture it's sampling. Unlike
-			// CreateTexture's own descriptor write (TYR_BINDING_TEXTURES, one call per texture
-			// as each is created), nothing was ever writing this binding at all - samplers[0]
-			// sat permanently unwritten, and reading an unwritten bindless descriptor is what
-			// was producing black/zero samples regardless of how correct everything upstream of
-			// the pixel shader was.
+			// The one material sampler every texture is read with - bound once here, like the
+			// buffers above, rather than per-texture, since the pixel shader always indexes
+			// samplers[0] regardless of which texture it's sampling.
 			ImageBindingInfo samplerBindingInfo{};
 			samplerBindingInfo.sampler = m_Resources.materialSampler;
 			samplerBindingInfo.hasSampler = true;
@@ -459,38 +446,14 @@ namespace tyr
 			m_Ctx.device->UpdateDescriptorSet(m_Resources.descriptorSet, nullptr, 0, &samplerUpdate, 1);
 		}
 
-		// Everything RendererAPI queued this tick (CreateTexture's bindless write,
-		// EnsureLightingOutputBound's per-slot write, etc. - see QueueImageBindingUpdate and
-		// PendingDescriptorUpdates' own comments) goes to the device in one batched call here,
-		// before RenderAsync is dispatched below - CreateTask's task can start executing on a
-		// worker thread the moment it's created, so every queued write needs to have already
-		// landed before that point, not after.
+		// Everything queued this tick goes to the device in one batched call here, before
+		// RenderAsync is dispatched below - a worker thread could start executing the moment the
+		// task is created, so every queued write needs to have already landed before that point.
 		FlushDescriptorUpdates();
 
-		// Safe to dispatch RenderAsync straight from here: every module that writes into this
-		// tick's RenderFrame slot has already run its Update() by the time RendererModule::Update()
-		// (this function) runs - RendererModule is registered so that it executes late in each
-		// phase (see EngineLoop.cpp), specifically so everyone else can feed it first. That
-		// includes GUIModule, whose Update() (not EndFrame() - see its own comment on why) submits
-		// ImGui's/Nuklear's draw data into this exact slot via RendererAPI::SubmitGUIDrawData,
-		// appending to frameBufferUploadRequests. Dispatching here used to run into a real crash
-		// (a BufferUploadRequest read back completely default-constructed, from a worker thread
-		// already inside GpuTransferUtil::UploadToBuffers while the main thread's ExpandOne()
-		// reallocated the same array out from under it) back when GUIModule submitted from
-		// EndFrame() instead, which ran *after* this dispatch - see GUIModule::Update's own
-		// comment before moving GUI submission again.
-		//
-		// The number of images a swap chain lets an app hold acquired-without-presenting is
-		// (imageCount - surfaceMinImageCount + 1), which is only guaranteed to be at least 1 -
-		// not the c_BufferedFrameCount depth the rest of this pacing is built around (drivers
-		// commonly report a surface minImageCount of 2, which with our 3-image swap chain
-		// leaves room for exactly 2). RenderAsync tasks are chained one-to-the-next, not
-		// three-to-the-next, so without this, tasks for frame-1 and frame could both already
-		// hold an acquired image by the time frame+1 tries to acquire a third. Waiting for the
-		// previous frame's present to have been issued (not completed - vkQueuePresentKHR
-		// itself is what the validation layer's acquire/present accounting cares about) before
-		// creating this one's task keeps at most one frame's image "acquired but not yet
-		// presented" at a time, which every implementation is guaranteed to allow.
+		// A swap chain only guarantees one image held acquired-without-presenting at minimum, not
+		// the full buffered-frame depth - wait for the previous frame's present to have been
+		// issued first, keeping at most one frame's image in that state at a time.
 		if (m_FrameNumber > 0)
 		{
 			const uint64 requiredPresentedFrame = m_FrameNumber - 1;
@@ -509,11 +472,8 @@ namespace tyr
 		const uint64 frameNumber = m_FrameNumber++;
 
 		// Snapshots this tick's own frame-upload head, tagged with frameNumber, now that every
-		// RequestFrameUploadAllocation call this tick is going to make has already happened
-		// (SceneInfo above, GUI vertex/index uploads from other modules' earlier Update() calls -
-		// see this function's own comment on module ordering) and before the next tick gets a
-		// chance to allocate anything more. See FrameUploadAllocator::RecordAllocationCheckpoint/
-		// Signal's own comments for why this precise pairing matters.
+		// allocation call this tick is going to make has already happened, and before the next
+		// tick gets a chance to allocate anything more.
 		m_AllocManager.RecordFrameUploadCheckpoint(frameNumber);
 
 		const TaskID task = TaskScheduler::Instance().CreateTask([this, renderFrameIndex, frameNumber]()
@@ -527,11 +487,9 @@ namespace tyr
 		}
 		m_PrevRenderAsyncTask = task;
 
-		// Whatever's still sitting in this slot is guaranteed already finished - by the time
-		// m_RenderFrameIndex reaches renderFrameIndex again, PrepareForNextFrame's wait for it
-		// has already run at least once - but may not have been released yet if it was still
-		// m_PrevRenderAsyncTask at that point (see its comment). Release it now that it
-		// definitely isn't anymore, so it isn't overwritten below without ever being released.
+		// Whatever's still sitting in this slot is guaranteed already finished by the time
+		// m_RenderFrameIndex reaches renderFrameIndex again - release it now so it isn't
+		// overwritten below without ever being released.
 		if (m_RenderAsyncTasks[renderFrameIndex] != c_InvalidTaskID)
 		{
 			TaskScheduler::Instance().ReleaseTask(m_RenderAsyncTasks[renderFrameIndex]);
@@ -551,8 +509,7 @@ namespace tyr
 		update.bindingIndex = bindingIndex;
 		update.descriptorArrayIndex = descriptorArrayIndex;
 		// bufferBindingInfos/infoCount are left at their defaults here and only set in
-		// FlushDescriptorUpdates, right before this array is actually read - see
-		// PendingDescriptorUpdates' own comment on why.
+		// FlushDescriptorUpdates, right before this array is actually read.
 	}
 
 	void Renderer::QueueImageBindingUpdate(uint bindingIndex, uint descriptorArrayIndex, const ImageBindingInfo& info)
@@ -579,10 +536,9 @@ namespace tyr
 			return;
 		}
 
-		// Point each update at its matching info entry now that that info array is done growing
-		// for this tick - Add()'s own reallocate-on-grow would have left an earlier-computed
-		// pointer dangling had this been done inside Queue*BindingUpdate instead, since a later
-		// call in the same tick can still trigger another reallocation.
+		// Point each update at its matching info entry now that the info array is done growing
+		// for this tick - doing this earlier risks a dangling pointer if a later call in the
+		// same tick triggers a reallocation.
 		for (uint i = 0; i < pending.bufferUpdates.Size(); ++i)
 		{
 			pending.bufferUpdates[i].bufferBindingInfos = &pending.bufferInfos[i];
@@ -616,11 +572,9 @@ namespace tyr
 	{
 		RenderRegistry& registry = *RenderRegistry::Instance();
 
-		// Not const - the active-instance-index upload below is scheduled here rather than on
-		// the submission thread (see its own comment), since scene.content.meshInstances isn't
-		// finalized until the merge loop just below has run. Safe to mutate: PrepareForNextFrame
-		// already waits for this slot's previous RenderAsync task before it's reused, so nothing
-		// else touches this renderFrameIndex's frameBufferUploadRequests concurrently.
+		// Not const - the active-instance-index upload below is scheduled here since
+		// scene.content.meshInstances isn't finalized until the merge loop just below has run.
+		// Safe to mutate: nothing else touches this slot's data concurrently.
 		RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
 		FrameContext& frameCtx = m_Ctx.frameContexts[renderFrameIndex];
 
@@ -628,17 +582,9 @@ namespace tyr
 
 		if (!m_Data.activeScene)
 		{
-			// Nothing to merge/cull/draw, and no window to acquire/present to (only ever known
-			// via the active scene's windowHandle - see below) - but this slot's already-queued
-			// asset/frame buffer uploads (e.g. from AssetModule::Update, which runs before
-			// RendererModule::Update this same tick regardless of whether a scene is active -
-			// see Render()'s own comment) still need to reach the GPU, so still run the
-			// transfer-only path rather than stranding them unsubmitted and never signalled -
-			// see BuildAndExecuteRenderGraph's hasActiveScene parameter.
-			//
-			// No merge needed for any of that: TransferPass::Execute reads RenderFrame's upload
-			// request lists directly (see its own comment), and BuildAndExecuteRenderGraph always
-			// points TransferPassArgs.renderFrame at this slot regardless of hasActiveScene.
+			// Nothing to merge/cull/draw, and no window to acquire/present to - but this slot's
+			// already-queued asset/frame buffer uploads still need to reach the GPU, so still run
+			// the transfer-only path rather than stranding them unsubmitted.
 			m_Data.BeginFrame();
 
 			BuildAndExecuteRenderGraph(renderFrameIndex, frameNumber, false, false);
@@ -664,11 +610,8 @@ namespace tyr
 		RenderWindowFrame& windowFrame = window.frames[renderFrameIndex];
 
 		// A swap chain's acquire/present calls must be externally synchronized against each
-		// other. Present() is issued from RenderSubmissionThread, and this function can run on
-		// any worker-pool thread, so acquiring here directly would let the two race on the same
-		// VkSwapchainKHR - instead, ask RenderSubmissionThread to do the acquire too, keeping
-		// every call touching this swap chain on that one thread, and spin-wait for its result
-		// (RenderAsync calls are already serialized, so only ever one request in flight).
+		// other. Present is issued from the submission thread and this runs on any worker-pool
+		// thread, so acquiring here directly would race the two on the same swap chain.
 		RenderAcquireRequest acquireRequest;
 		acquireRequest.swapChain = window.swapChain;
 		acquireRequest.semaphore = windowFrame.aquireSwapChainImageSemaphore;
@@ -682,11 +625,9 @@ namespace tyr
 			acquireResult = m_RenderSubmissionThread->DequeueAcquireResult();
 		}
 
-		// A failed acquire (VK_ERROR_OUT_OF_DATE_KHR) leaves no valid image - swapChainImageIndex
-		// must not be touched in that case (see BuildAndExecuteRenderGraph, which skips the
-		// geometry pass and present entirely when this is false). Either way, resizeNeeded was
-		// already turned into a RenderNotification by RenderSubmissionThread - Render() drains
-		// and resizes from those itself, so nothing further is needed here.
+		// A failed acquire leaves no valid image - swapChainImageIndex must not be touched in
+		// that case. Either way, a resize request was already turned into a notification
+		// elsewhere, so nothing further is needed here.
 		const bool hasValidSwapChainImage = acquireResult->valid;
 		if (hasValidSwapChainImage)
 		{
@@ -694,7 +635,6 @@ namespace tyr
 		}
 
 #if TYR_RENDER_DEBUG
-		// TEMP DEBUG - flicker investigation. Revert after.
 		{
 			const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 			TYR_LOG_WARNING("[DBG] RenderAsync: ms=%lld frameNumber=%llu renderFrameIndex=%u valid=%d imageIndex=%u",
@@ -731,20 +671,9 @@ namespace tyr
 			scene.content.meshInstances.Add(handle);
 		}
 
-		// GPU-driven instance culling (RecordCullingPass) needs to know exactly which pool
-		// slots belong to this frame's active scene - the mesh instance pool is shared across
-		// every scene (up to RenderConstants::c_MaxScenes in the editor), but only one scene
-		// ever renders at a time, so a naive "cull the whole pool" dispatch would draw other
-		// scenes' instances too. Upload the just-finalized active list as plain pool indices.
-		// Scheduled here (not on the submission thread, unlike every other upload request) since
-		// scene.content.meshInstances only becomes final once the merge above has run. The 3
-		// upload requests this generates go into m_Data.workerUploadRequests, not
-		// renderFrame.frameBufferUploadRequests - RenderFrame may only ever be written from the
-		// main thread (this runs on a RenderAsync worker thread), and RenderData is already
-		// worker-owned (see its own comment). Written straight into this renderFrameIndex's own
-		// fixed slot of rtCullingStagingBuffer, not allocated from RenderAllocationManager - that
-		// allocator is main-thread-only (see FrameUploadAllocator's own comment); a worker thread
-		// may only write into already-allocated memory, never allocate or free it.
+		// GPU-driven culling needs this frame's active mesh instance pool indices - the pool is
+		// shared across scenes, so a naive "cull everything" dispatch would draw other scenes'
+		// data too. Uploaded via this worker thread's own fixed staging slot.
 		const size_t stagingSlotBase = renderFrameIndex * c_RTCullingStagingSlotSize;
 		const size_t activeIndicesOffset = stagingSlotBase;
 		const size_t drawCountOffset = stagingSlotBase + c_ActiveInstanceIndicesBytes;
@@ -774,10 +703,9 @@ namespace tyr
 				request.size = uploadSize;
 			}
 
-			// The culling compute shader atomically increments this from 0 - without resetting
-			// it every frame, a frame with fewer visible instances than the last would still
-			// read the previous frame's higher count via the indirect draw, redrawing stale
-			// entries the shader never touched this frame.
+			// The culling compute shader atomically increments this from 0 - without resetting it
+			// every frame, fewer visible instances than last frame would still redraw stale
+			// entries via the indirect draw.
 			uint zero = 0;
 			RenderResourceUtil::WriteUploadBuffer(stagingBuffer, *m_Ctx.device, drawCountOffset, &zero, sizeof(uint));
 
@@ -789,10 +717,9 @@ namespace tyr
 			countRequest.size = sizeof(uint);
 		}
 
-		// Ray-traced shadows (Phase 3) - rebuild the TLAS's instance buffer from this same
-		// just-finalized active list. An instance whose mesh hasn't finished its one-time BLAS
-		// build yet (see RequestBLASBuild) is skipped - it simply doesn't cast/receive shadows
-		// for its first few frames.
+		// Rebuild the TLAS's instance buffer from this same active list. An instance whose mesh
+		// hasn't finished its one-time BLAS build yet is skipped - it simply doesn't
+		// cast/receive shadows for its first few frames.
 		{
 			const uint activeInstanceCount = scene.content.meshInstances.Size();
 			uint tlasInstanceCount = 0;
@@ -813,12 +740,8 @@ namespace tyr
 
 					AccelerationStructureInstance& out = instances[tlasInstanceCount++];
 					// VkAccelerationStructureInstanceKHR's transform is row-major 3x4 for a
-					// COLUMN-vector transform (transformed = M * pos) - the transpose of this
-					// engine's row-vector Matrix4 (pos * M). GetColumn4D(r) of the engine matrix
-					// gives exactly VK row r's 4 components (column c is defined as
-					// (m[0][c],m[1][c],m[2][c],m[3][c]), so fixing the column index at r and
-					// reading its 4 components sweeps m[c][r] for c=0..3 - exactly VK row r,
-					// including the translation landing in the last component as expected).
+					// column-vector transform, the transpose of this engine's row-vector Matrix4 -
+					// GetColumn4D(r) of the engine matrix gives exactly VK row r's 4 components.
 					const Matrix4& transform = instance.info.transform;
 					for (uint r = 0; r < 3; ++r)
 					{
@@ -845,8 +768,7 @@ namespace tyr
 					request.srcOffset = tlasInstancesOffset;
 					request.dstBuffer = m_Resources.tlasInstanceBuffer;
 					// One physical buffer, c_BufferedFrameCount slots big - confine this frame's
-					// upload to its own slot (see RenderResources::tlasInstanceBuffer's own
-					// comment), same pattern as the GUI vertex/index buffers.
+					// upload to its own slot.
 					request.dstOffset = (size_t)renderFrameIndex * RenderConstants::c_TLASInstanceBufferSize;
 					request.size = uploadSize;
 				}
@@ -924,8 +846,8 @@ namespace tyr
 			scene.content.spotLights.Add(handle);
 		}
 
-		// No merge needed for the upload request lists - TransferPass::Execute reads them straight
-		// off RenderFrame (see its own comment).
+		// No merge needed for the upload request lists - TransferPass reads them straight off
+		// RenderFrame.
 		BuildAndExecuteRenderGraph(renderFrameIndex, frameNumber, true, hasValidSwapChainImage);
 	}
 
@@ -977,13 +899,12 @@ namespace tyr
 	void Renderer::RecordGeometryPass(CommandList& cmdList, uint renderFrameIndex)
 	{
 		// Read the active scene's own RenderViewport directly, in place, rather than a per-frame
-		// copy - see RenderViewport's own comment on why this is safe from a worker thread (nothing
-		// else touches this slot's data between the main thread's own tick and this call).
+		// copy - safe from a worker thread since nothing else touches this slot's data
+		// concurrently.
 		RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
 		if (!viewportData)
 		{
 #if TYR_RENDER_DEBUG
-			// TEMP DEBUG - flicker investigation. Revert after.
 			TYR_LOG_WARNING("[DBG] RecordGeometryPass: SKIPPED (no viewport) renderFrameIndex=%u", renderFrameIndex);
 #endif
 			// Scene has no RenderViewport yet (e.g. World hasn't finished setting one up) -
@@ -998,9 +919,8 @@ namespace tyr
 		const uint viewportWidth = viewportData->width;
 		const uint viewportHeight = viewportData->height;
 		const bool viewportTextureIsNew = viewportData->isNew;
-		// Consumed once, right here - unlike the old ViewportSnapshot-era code, this resets the
-		// live struct itself (this worker thread owns this slot exclusively until it cycles back
-		// around - see RenderViewportTextureData::isNew's own comment).
+		// Consumed once, right here - this worker thread owns this slot exclusively until it
+		// cycles back around.
 		viewportData->isNew = false;
 
 		// EditorViewport hasn't requested a render target size yet (e.g. the very first few
@@ -1008,7 +928,6 @@ namespace tyr
 		if (viewportWidth == 0 || viewportHeight == 0)
 		{
 #if TYR_RENDER_DEBUG
-			// TEMP DEBUG - flicker investigation. Revert after.
 			TYR_LOG_WARNING("[DBG] RecordGeometryPass: SKIPPED (zero size) renderFrameIndex=%u width=%u height=%u isNew=%d",
 				renderFrameIndex, viewportWidth, viewportHeight, (int)viewportTextureIsNew);
 #endif
@@ -1025,8 +944,8 @@ namespace tyr
 		viewport.height = viewportHeight;
 
 		// Freshly (re)created G-buffer/depth images are undefined until this transition - unlike
-		// the swap chain image (see RecordGUIPass), these aren't cycled every frame, so it must
-		// only run once per (re)creation, not every frame.
+		// the swap chain image, these aren't cycled every frame, so it must only run once per
+		// (re)creation.
 		if (viewportTextureIsNew)
 		{
 			ImageBarrier barriers[4]{};
@@ -1101,7 +1020,7 @@ namespace tyr
 		renderingInfo.depthAttachment.storeOp = AttachmentStoreOp::Store;
 		renderingInfo.depthAttachment.resolveMode = RESOLVE_MODE_NONE;
 		renderingInfo.depthAttachment.imageLayout = depthBuffer.imageLayout;
-		// Reverse-Z - 0 represents "infinitely far" (see CreatePipelines' depthCompareOp).
+		// Reverse-Z - 0 represents "infinitely far".
 		renderingInfo.depthAttachment.clearValue.depthStencil.depth = 0.0f;
 		renderingInfo.depthAttachment.imageView = depthBuffer.imageView;
 
@@ -1123,20 +1042,17 @@ namespace tyr
 			uint width;
 			uint height;
 			// Which entry of TYR_BINDING_LIGHTING_OUTPUT's outputImages[] array to write this
-			// dispatch's result into - see RenderResources::ViewportTargets' own comment on why
-			// there's one per buffered RenderFrame slot rather than a single shared image.
+			// dispatch's result into - one per buffered RenderFrame slot.
 			uint renderFrameIndex;
 		};
 	}
 
 	void Renderer::RecordLightingPass(CommandList& cmdList, uint renderFrameIndex)
 	{
-		// See RecordGeometryPass's identical read.
 		RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
 		if (!viewportData)
 		{
 #if TYR_RENDER_DEBUG
-			// TEMP DEBUG - flicker investigation. Revert after.
 			TYR_LOG_WARNING("[DBG] RecordLightingPass: SKIPPED (no viewport) renderFrameIndex=%u", renderFrameIndex);
 #endif
 			return;
@@ -1152,7 +1068,6 @@ namespace tyr
 		if (viewportWidth == 0 || viewportHeight == 0)
 		{
 #if TYR_RENDER_DEBUG
-			// TEMP DEBUG - flicker investigation. Revert after.
 			TYR_LOG_WARNING("[DBG] RecordLightingPass: SKIPPED (zero size) renderFrameIndex=%u width=%u height=%u",
 				renderFrameIndex, viewportWidth, viewportHeight);
 #endif
@@ -1237,12 +1152,9 @@ namespace tyr
 	{
 		const PipelineStage asBuildStage = PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT;
 
-		// This frame's BLAS builds (see RenderFrame::blasBuildsToRecord, decided on the main
-		// thread in Render()) read straight out of the global vertex/index buffers via GPU
-		// address - the same buffers TransferPass just wrote this mesh's geometry into and
-		// GeometryPass/CullInstancesCS.hlsl also read from. Per spec, build input (geometry and
-		// instance data) is read as SHADER_READ, not ACCELERATION_STRUCTURE_READ - that access
-		// type is for reading an already-built AS.
+		// This frame's BLAS builds read straight out of the global vertex/index buffers via GPU
+		// address. Per spec, build input is read as SHADER_READ, not
+		// ACCELERATION_STRUCTURE_READ - that access type is for reading an already-built AS.
 		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.vertexBuffer), asBuildStage, BARRIER_ACCESS_SHADER_READ_BIT);
 		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.indexBuffer), asBuildStage, BARRIER_ACCESS_SHADER_READ_BIT);
 		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.tlasInstanceBuffer), asBuildStage, BARRIER_ACCESS_SHADER_READ_BIT);

@@ -46,13 +46,8 @@ namespace tyr
 
 #if !TYR_FINAL
 		// ImTextureData::BackendUserData is our one slot for backend bookkeeping - stash the
-		// full TextureHandle (index + generation) there so WantDestroy/Shutdown can delete the
-		// exact texture RendererAPI created, rather than just the index SetTexID carries.
-		// +1 on the index: a texture's first-ever pool slot is (index=0, generation=0), which
-		// packs to literal 0 without the offset - indistinguishable from "no handle stored yet"
-		// (BackendUserData == nullptr), which is exactly the check Shutdown() uses to decide
-		// whether a texture still needs deleting. Without this, that first texture's handle
-		// silently reads back as null and never gets deleted, leaking it past exit.
+		// full TextureHandle (index + generation) there. +1 on the index avoids a first-ever
+		// handle (index 0) packing to literal 0, indistinguishable from "no handle stored yet".
 		void* PackTextureHandle(TextureHandle handle)
 		{
 			const uint64 packed = (uint64)(handle.h.index + 1) | ((uint64)handle.h.generation << 32);
@@ -69,7 +64,7 @@ namespace tyr
 		}
 
 		// (Win32 virtual-key code, ImGuiKey) pairs - not exhaustive, just enough for menus,
-		// text fields and dialog navigation. KeyCode is a raw VK_* code (see InputManager.h).
+		// text fields and dialog navigation.
 		struct KeyMapping
 		{
 			KeyCode vk;
@@ -139,14 +134,14 @@ namespace tyr
 
 		m_NuklearContext = new nk_context();
 		// No font set up yet - baking one needs stb_truetype/stb_rect_pack, which aren't
-		// vendored yet (see ThirdParty/CMakeLists.txt's own comment on Nuklear). Text won't
-		// render until that's done; layout and non-text widgets still work without it.
+		// vendored yet. Text won't render until that's done; layout and non-text widgets
+		// still work without it.
 		nk_init_fixed(m_NuklearContext, m_NuklearContextMemory.Data(), m_NuklearContextMemory.Size(), nullptr);
 
 #if !TYR_FINAL
 		m_ImGuiContext = ImGui::CreateContext();
-		// Tells ImGui this backend handles ImTextureData create/update/destroy requests itself
-		// (see ProcessImGuiTextures) instead of needing a pre-built font atlas up front.
+		// Tells ImGui this backend handles texture create/update/destroy requests itself
+		// instead of needing a pre-built font atlas up front.
 		ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
 #endif
 	}
@@ -175,9 +170,8 @@ namespace tyr
 	void GUIModule::BeginFrame()
 	{
 		// Starts this frame's UI. BeginFrame/Update/EndFrame each run as a full pass over every
-		// module before the next phase starts, so this is guaranteed to happen before any
-		// module's Update() (where widgets actually get drawn), regardless of registration
-		// order. EndFrame() converts and submits everything, after every Update() has run.
+		// module before the next phase starts, so this is guaranteed to run before any module
+		// draws widgets, regardless of registration order.
 		const double currentTimeMs = m_Timer.GetMillisecondsPrecise();
 		const float deltaTime = (float)((currentTimeMs - m_LastFrameTimeMs) / 1000.0);
 		m_LastFrameTimeMs = currentTimeMs;
@@ -199,27 +193,16 @@ namespace tyr
 
 	void GUIModule::Update(float deltaTime)
 	{
-		// Must run after every module whose Update() makes ImGui::/Nuklear calls - currently just
-		// AppModule (Editor/EditorViewport) - which is guaranteed by module registration order
-		// (see EngineLoop.cpp: GUIModule is registered before RendererModule, and ModuleManager
-		// runs Update() in reverse registration order, so GUIModule::Update() itself already runs
-		// after AppModule's). Also must run before RendererModule::Update() (Renderer::Render),
-		// which is exactly what that same ordering guarantees - see Render()'s own comment on why
-		// it can safely dispatch RenderAsync directly, at its own end, rather than deferring to
-		// EndFrame. If a future module needs to draw ImGui/Nuklear content from its own EndFrame()
-		// instead of Update() (or registration order ever changes), this placement would need
-		// revisiting - talk to me before moving this again.
-		//
-		// The CPU update loop can tick more than once before the renderer actually consumes and
-		// clears this render frame slot (RenderAsync decouples the two) - without this, an older
-		// tick's now-stale submission would sit alongside this tick's, and GUIPass would draw both
-		// overlaid on top of each other, showing as flicker/jitter frame to frame.
+		// Must run after every module that draws UI widgets, and before RendererModule's own
+		// Update - module registration order controls this.
+
+		// The update loop can tick more than once before a render frame slot is actually
+		// consumed - reset first so a stale submission never sits alongside a new one.
 		m_RendererAPI->ResetGUIDrawData();
 
-		// Nuklear is for the in-game HUD, not used anywhere yet (the editor draws through ImGui
-		// below) - not calling this keeps it from converting/submitting/drawing anything, without
-		// touching SubmitNuklearDrawData's own implementation, which stays ready for when the
-		// in-game HUD actually starts using it.
+		// Nuklear is for the in-game HUD, not used anywhere yet - not calling this keeps it
+		// from converting/submitting/drawing anything, while keeping the implementation ready
+		// for when the HUD starts using it.
 		// SubmitNuklearDrawData();
 
 #if !TYR_FINAL
@@ -247,8 +230,8 @@ namespace tyr
 		config.vertex_layout = g_NuklearVertexLayout;
 		config.vertex_size = sizeof(GUIVertex);
 		config.vertex_alignment = alignof(GUIVertex);
-		// No white-pixel texture set up yet (see Initialize's comment) - solid shape fills
-		// won't sample correctly until a real font atlas exists.
+		// No white-pixel texture set up yet - solid shape fills won't sample correctly until
+		// a real font atlas exists.
 
 		nk_convert(m_NuklearContext, &cmds, &vertices, &indices, &config);
 
@@ -257,16 +240,12 @@ namespace tyr
 
 		if (vertexCount > 0 && indexCount > 0)
 		{
-			// Reused every frame rather than a fresh local GUIDrawData - see its own declaration's
-			// comment on why.
+			// Reused every frame rather than a fresh local GUIDrawData, to avoid a heap
+			// allocation per frame.
 			m_NuklearDrawData.Clear();
-			// Must be the real window size, same as SubmitImGuiDrawData's below - GUIPass::Execute
-			// divides by this to build its scale/translate push constants, so a (0,0) placeholder
-			// here (as this used to be) produces +-INF scale and NaN clip positions for any vertex
-			// whose local position is exactly 0 on that axis, which silently discards the entire
-			// submission's geometry at the rasterizer - confirmed via RenderDoc as a real cause of
-			// a whole-window-black flicker (GUIPass shares one set of push constants per
-			// submission, so this corrupted every draw command in it, not just Nuklear's own).
+			// Must be the real window size - the shader divides by this to build its
+			// scale/translate, so a zero or placeholder size would corrupt every vertex's
+			// clip-space position.
 			m_NuklearDrawData.displaySize = m_WindowModule
 				? Vector2((float)m_WindowModule->GetWindowWidth(m_Window), (float)m_WindowModule->GetWindowHeight(m_Window))
 				: Vector2(1920.0f, 1080.0f);
@@ -328,10 +307,9 @@ namespace tyr
 		{
 			io.AddKeyEvent(mapping.imguiKey, input->IsKeyDown(mapping.vk));
 		}
-		// 'A'-'Z'/'0'-'9'/F1-F12 follow a simple contiguous range each, so map them here instead
-		// of listing all 47 of them in g_KeyMappings above. Loop counter must be wider than
-		// KeyCode (uint8) - c_MaxKeyCodes is 256, which a uint8 can never reach (255 + 1 wraps
-		// to 0), making `vk < c_MaxKeyCodes` an infinite loop with a uint8 vk.
+		// 'A'-'Z'/'0'-'9'/F1-F12 follow a simple contiguous range each, so map them here
+		// instead of listing all of them individually. Loop counter must be wider than
+		// KeyCode (uint8), or `vk < c_MaxKeyCodes` (256) would never terminate once vk wraps.
 		for (uint vk = 0; vk < c_MaxKeyCodes; ++vk)
 		{
 			const ImGuiKey key = VkDigitOrLetterToImGuiKey((KeyCode)vk);
@@ -451,7 +429,7 @@ namespace tyr
 	{
 		const ImDrawData* imDrawData = ImGui::GetDrawData();
 		// CmdListsCount is an obsolete field ImGui only ever resets to 0 and never updates -
-		// CmdLists.Size is the real count (see imgui.h's own comment on CmdListsCount).
+		// CmdLists.Size is the real count.
 		if (!imDrawData || imDrawData->CmdLists.Size == 0)
 		{
 			return;

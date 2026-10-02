@@ -48,25 +48,21 @@ namespace tyr
 			world.entities.ForEach<MeshComponent>([this, worldHandle](Entity /*entity*/, MeshComponent& meshComponent)
 			{
 				// world (the reference captured just below) only stays valid for this call -
-				// the pool slot could be freed by the time onCreated fires later, since
-				// creation is asynchronous - so onCreated re-fetches by handle, validated,
-				// rather than capturing a pointer/reference to it directly.
+				// the pool slot could be freed by the time onCreated fires later, so it
+				// re-fetches by handle, validated, rather than capturing a reference directly.
 				World& world = m_WorldPool[worldHandle];
 				const uint index = world.meshInstances.Size();
 				WorldMeshInstance& tracked = world.meshInstances.ExpandOne();
 				tracked.meshAssetID = meshComponent.mesh;
 
-				// TODO: MeshComponent has no transform of its own yet (see its own comment) -
-				// once one exists, or entities get a proper transform component lookup here,
-				// use that instead of identity.
+				// TODO: MeshComponent has no transform of its own yet - once one exists, or
+				// entities get a proper transform component lookup here, use that instead of identity.
 				m_AssetManager->CreateMeshInstance(meshComponent.mesh, Matrix4::c_Identity, meshComponent.materialOverrides,
 					[this, worldHandle, index](MeshInstanceHandle handle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materialAssetIDs)
 					{
 						// The world might have been removed while this was still loading -
-						// nothing to write back to in that case (ShutdownWorld already
-						// released everything it knew about; this instance is now an
-						// orphan the renderer will just carry - see WorldMeshInstance's
-						// own comment on this being a known, accepted gap for now).
+						// nothing to write back to in that case; this instance becomes an
+						// orphan the renderer just carries.
 						if (m_WorldPool.IsValid(worldHandle))
 						{
 							WorldMeshInstance& tracked = m_WorldPool[worldHandle].meshInstances[index];
@@ -93,29 +89,23 @@ namespace tyr
 			});
 		}
 
-		// The other way a resize can be detected - externally, by the OS/windowing system
-		// (PCWindow's WM_SIZE, or a future platform equivalent) - rather than internally by the
-		// renderer itself (handled in Renderer::Render). Always consumed (so a stale pending flag
-		// never lingers), but only acted on if the window is still active - a WM_SIZE can fire as
-		// part of a window being closed/destroyed, and recreating a swap chain for a window that's
-		// going away rather than resizing crashes (there's nothing valid left to recreate against).
-		// RemoveWindow already handles proper teardown for that case.
+		// The other way a resize can be detected - externally, by the OS/windowing system -
+		// rather than internally by the renderer itself. Always consumed, but only acted on if
+		// the window is still active, since a resize can fire as part of the window being destroyed.
 		const bool resizePending = world.osWindowHandle && m_WindowModule->ConsumeResizePending(world.osWindowHandle);
 		if (resizePending && m_WindowModule->IsWindowActive(world.osWindowHandle))
 		{
 			m_RendererAPI->ResizeWindow(world.windowHandle);
 		}
 
-		// RenderFrame is per-frame buffered data (RendererModule double/triple-buffers it and
-		// clears each slot as it cycles back around), not persistent state - so the active
-		// scene index has to be re-supplied every frame or the renderer silently stops picking
-		// this world's data up once the buffered slot it was last written to gets reused.
+		// RenderFrame is per-frame buffered data, not persistent state - the active scene index
+		// has to be re-supplied every frame or the renderer silently stops picking this
+		// world's data up once the buffered slot it was last written to gets reused.
 		m_RendererAPI->SetActiveScene(world.sceneHandle, world.visible);
 
-		// TODO: Shoehorned flat ambient term until a proper scene/lighting-settings system exists
-		// to make this configurable per world. Unlike SetActiveScene/AddView above, this doesn't
-		// strictly need resupplying every tick (see SetSceneAmbient's own comment) - called here
-		// anyway since nothing else makes this value change yet.
+		// TODO: Shoehorned flat ambient term until a proper scene/lighting-settings system
+		// exists to make this configurable per world. Called here every tick anyway since
+		// nothing else makes this value change yet.
 		m_RendererAPI->SetSceneAmbient(world.sceneHandle, 0.15f);
 
 		SceneView view;

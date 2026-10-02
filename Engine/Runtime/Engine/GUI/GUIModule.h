@@ -21,9 +21,8 @@ namespace tyr
 	class InputModule;
 
 	// Owns the immediate-mode UI contexts and turns whatever gets drawn into them each frame
-	// into a GUIDrawData submission via RendererAPI::SubmitGUIDrawData. Doesn't own any widget
-	// content itself - Editor.cpp (via GetImGuiContext) and game/App code (via
-	// GetNuklearContext) are expected to draw between this module's per-frame begin/end.
+	// into a GUIDrawData submission. Doesn't own any widget content itself - other code is
+	// expected to draw between this module's per-frame begin/end.
 	class TYR_ENGINE_API GUIModule final : public IModule
 	{
 	public:
@@ -40,8 +39,8 @@ namespace tyr
 		ImGuiContext* GetImGuiContext() const { return m_ImGuiContext; }
 #endif
 
-		// Lets widgets fill the real window instead of the hardcoded fallback size - called once
-		// by whoever owns the window (Editor::Initialize) after creating it.
+		// Lets widgets fill the real window instead of the hardcoded fallback size - called
+		// once by whoever owns the window, after creating it.
 		void SetPrimaryWindow(WindowModule* windowModule, WindowHandle window) { m_WindowModule = windowModule; m_Window = window; }
 
 	private:
@@ -58,9 +57,8 @@ namespace tyr
 		InputModule* m_InputModule = nullptr;
 
 		// ModuleManager runs BeginFrame/Update/EndFrame as three separate passes over every
-		// module, each pass in reverse registration order - so a module can't rely on the
-		// deltaTime Update() gets for something it needs to do in its own BeginFrame(), which
-		// runs in an earlier pass. This tracks time independently instead.
+		// module, each in reverse registration order - so a module can't rely on Update()'s
+		// deltaTime for something it needs in its own, earlier-running BeginFrame().
 		Timer m_Timer;
 		double m_LastFrameTimeMs = 0.0;
 
@@ -71,17 +69,14 @@ namespace tyr
 		Array<uint8> m_NuklearCmdMemory;
 		Array<uint8> m_NuklearVertexMemory;
 		Array<uint8> m_NuklearIndexMemory;
-		// Persistent, reused-every-frame scratch for the GUIDrawData SubmitNuklearDrawData builds
-		// and hands to RendererAPI::SubmitGUIDrawData - same reasoning as the fixed Nuklear memory
-		// above (its own comment), just for the converted output instead of Nuklear's own working
-		// memory: a fresh GUIDrawData (and so fresh heap allocations for its three Arrays) every
-		// single call would otherwise be built and torn down every frame for no reason, since
-		// SubmitGUIDrawData only ever reads from it and never keeps a reference past that call.
+		// Persistent, reused-every-frame scratch for the converted draw data, to avoid a fresh
+		// heap allocation every frame for something only ever read once and never kept.
 		GUIDrawData m_NuklearDrawData;
 
 #if !TYR_FINAL
 		ImGuiContext* m_ImGuiContext = nullptr;
-		// See m_NuklearDrawData's own comment - same reasoning, for SubmitImGuiDrawData.
+		// Persistent, reused-every-frame scratch for ImGui's converted draw data, to avoid a
+		// fresh heap allocation every frame for something read once and never kept.
 		GUIDrawData m_ImGuiDrawData;
 #endif
 	};

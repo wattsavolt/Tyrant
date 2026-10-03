@@ -6,12 +6,13 @@
 namespace tyr
 {
 	class GUIModule;
+	class RendererAPI;
 
 	// Draws the editor's main menu bar each frame.
 	class EditorUI final
 	{
 	public:
-		EditorUI(GUIModule& guiModule);
+		EditorUI(GUIModule& guiModule, RendererAPI& rendererAPI);
 
 		void Draw();
 

@@ -160,6 +160,13 @@ namespace tyr
 		// one-shot way SetSceneRenderViewport is, since RenderAsync runs on a worker thread.
 		void SetQualityLevel(QualityLevel level);
 
+		// Independent of SetQualityLevel - TAA's own on/off switch isn't tied to any quality
+		// preset, so it can be flipped on its own to isolate whether it's responsible for a
+		// visual issue. Also updates a main-thread-only mirror immediately (unlike the worker-
+		// owned override queued above), since the editor's own viewport display needs to know
+		// which texture to show without waiting for RenderAsync to catch up.
+		void SetTaaEnabled(bool enabled);
+
 	private:
 		void UploadMeshInstance(const MeshInstanceInfo& info, uint index);
 		void UploadDirectionalLight(const DirectionalLightInfo& info, uint index);

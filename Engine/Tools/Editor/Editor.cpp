@@ -26,7 +26,6 @@ namespace tyr
 {
 	Editor::Editor(GUIModule& guiModule)
 		: m_GUIModule(&guiModule)
-		, m_EditorUI(guiModule)
 	{
 	}
 
@@ -74,6 +73,7 @@ namespace tyr
 		inputModule->GetInputManager()->SetWindow(m_WindowModule, m_PrimaryWindow);
 
 		m_EditorViewport = MakeURef<EditorViewport>(*m_RendererAPI);
+		m_EditorUI = MakeURef<EditorUI>(*m_GUIModule, *m_RendererAPI);
 
 		// Step 7 test entity: import the test cube mesh if it hasn't been imported yet, then
 		// spawn a single entity for it with a transform and mesh component. This is
@@ -132,7 +132,7 @@ namespace tyr
 
 	void Editor::Update(float deltaTime)
 	{
-		m_EditorUI.Draw();
+		m_EditorUI->Draw();
 		m_EditorViewport->Draw(m_WorldManager->GetWorld(m_LevelEditorWorld).renderViewportHandle);
 	}
 

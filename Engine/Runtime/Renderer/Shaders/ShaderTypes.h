@@ -40,6 +40,11 @@
 // re-uploaded every tick. Point entries first, then spot - see
 // RenderConstants::c_ShadowLightSlotMapEntryCount.
 #define TYR_BINDING_SHADOW_LIGHT_SLOT_MAP 22
+// TAA resolve's own storage-image output, one per buffered RenderFrame slot - same
+// re-bindable-on-resize shape as TYR_BINDING_LIGHTING_OUTPUT. Read back later (as the next
+// relevant tick's history, and by the editor/GUI for display) via the ordinary bindless
+// TYR_BINDING_TEXTURES array instead, since this texture is also registered there.
+#define TYR_BINDING_TAA_RESOLVE_OUTPUT 23
 
 // How many copies of the per-frame render targets TYR_BINDING_LIGHTING_OUTPUT holds, one
 // per buffered frame slot - kept in sync with the matching C++ constant.
@@ -57,6 +62,7 @@
 
 #include "RendererMacros.h"
 #include "Core.h"
+#include "Math/Vector2.h"
 #include "Math/Vector3.h"
 #include "Math/Vector4.h"
 #include "Math/Quaternion.h"
@@ -125,6 +131,10 @@ namespace tyr
 		// minus reprojected previous-frame NDC). Camera motion only for now - per-instance
 		// motion needs each instance's own previous transform, not tracked yet.
 		TYR_SHADER_FLOAT4x4 prevViewProj;
+		// This tick's TAA sub-pixel jitter minus last tick's (both in NDC units) - subtracted
+		// from GBufferPS.hlsl's raw motion vector so the jitter itself doesn't get mistaken for
+		// real scene motion. Zero whenever TAA is disabled.
+		TYR_SHADER_FLOAT2 jitterDelta;
 	};
 
 	/// Point light used in renderer 

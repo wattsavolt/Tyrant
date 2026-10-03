@@ -36,9 +36,9 @@ namespace tyr
 		RendererAPI* m_RendererAPI{};
 		Handle m_LevelEditorWorld{};
 		GUIModule* m_GUIModule{};
-		EditorUI m_EditorUI;
-		// Constructed in Initialize() rather than the member init list - it needs m_RendererAPI,
-		// which isn't resolved from the module manager until then.
+		// Both constructed in Initialize() rather than the member init list - they need
+		// m_RendererAPI, which isn't resolved from the module manager until then.
+		URef<EditorUI> m_EditorUI;
 		URef<EditorViewport> m_EditorViewport;
 	};
 	

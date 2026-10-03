@@ -92,6 +92,11 @@ namespace tyr
 		// different than activeMeshInstanceIndexBuffer).
 		RenderBufferHandle shadowLightSlotMapBuffer;
 
+		// TAA resolve - optional (Renderer::m_TaaEnabled), blends this tick's lit colour with the
+		// previous buffered viewport slot's own resolved history.
+		ComputePipelineHandle taaResolvePipeline;
+		ShaderModuleHandle taaResolveComputeShader;
+
 		// Ray-traced shadows - one top-level acceleration structure per buffered RenderFrame
 		// slot, rebuilt every frame from the active scene's mesh instances. Per-mesh bottom-level
 		// structures live on Mesh::blas instead.

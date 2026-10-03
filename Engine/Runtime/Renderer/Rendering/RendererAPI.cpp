@@ -161,7 +161,14 @@ namespace tyr
 			rv.pendingResize[otherSlot] = true;
 		}
 
-		return rv.textureData[renderFrameIndex].colourTexture;
+		// Which one actually holds this tick's "real" result - read via the main-thread-safe
+		// mirror, not Renderer::m_TaaEnabled directly, since that's worker-owned (see its own
+		// comment). The two can briefly disagree for a tick or two right after toggling TAA (the
+		// override takes a moment to reach RenderAsync) - a harmless, self-correcting display lag,
+		// not a hazard, since both textures are always kept in a valid state by their own passes
+		// regardless of which one is actually selected here.
+		const RenderViewportTextureData& textureData = rv.textureData[renderFrameIndex];
+		return m_Renderer.IsTaaEnabledMainThread() ? textureData.resolvedColourTexture : textureData.colourTexture;
 	}
 
 	MaterialHandle RendererAPI::CreateMaterial(const MaterialDesc& desc)
@@ -667,5 +674,13 @@ namespace tyr
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		renderFrame.hasQualityLevelOverride = true;
 		renderFrame.qualityLevelOverride = level;
+	}
+
+	void RendererAPI::SetTaaEnabled(bool enabled)
+	{
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		renderFrame.hasTaaEnabledOverride = true;
+		renderFrame.taaEnabledOverride = enabled;
+		m_Renderer.SetTaaEnabledMainThread(enabled);
 	}
 }

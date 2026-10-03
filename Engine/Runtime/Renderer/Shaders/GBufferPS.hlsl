@@ -19,6 +19,7 @@ cbuffer SceneInfoCBuffer : register(b0)
 	float _pad0;
 	float4 _frustumPlanes[6];
 	float4x4 PrevViewProj;
+	float2 JitterDelta;
 };
 
 [[vk::binding(TYR_BINDING_MATERIAL, 0)]] StructuredBuffer<Material> materials : register(t7);
@@ -71,10 +72,13 @@ GBufferOutput main(VS_OUTPUT input)
 	const float3 aoRoughMetal = textures[material.texture2].Sample(samplers[0], uv).rgb;
 
 	// Perspective-divide both this frame's and last frame's clip-space position of the same
-	// world point to get their NDC.xy, then take the difference.
+	// world point to get their NDC.xy, then take the difference. ViewProj/PrevViewProj both
+	// carry this tick's/last tick's own TAA jitter baked in (see Renderer.cpp), so the raw
+	// difference also carries a spurious jitter-delta term - subtracting JitterDelta removes it,
+	// leaving only real scene motion. A no-op (JitterDelta is zero) whenever TAA is disabled.
 	const float4 currentClip = mul(input.worldPos, ViewProj);
 	const float4 previousClip = mul(input.worldPos, PrevViewProj);
-	const float2 motion = (currentClip.xy / currentClip.w) - (previousClip.xy / previousClip.w);
+	const float2 motion = ((currentClip.xy / currentClip.w) - (previousClip.xy / previousClip.w)) - JitterDelta;
 
 	GBufferOutput output;
 	output.albedoAO = float4(albedo, aoRoughMetal.r);

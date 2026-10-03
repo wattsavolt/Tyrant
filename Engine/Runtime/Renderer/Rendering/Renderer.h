@@ -92,6 +92,12 @@ namespace tyr
 		// only advancing in PrepareForNextFrame. Main thread only, like GetRenderFrame().
 		uint GetRenderFrameIndex() const { return m_RenderFrameIndex; }
 
+		// Main-thread-only mirror of the worker-owned m_TaaEnabled - see its own comment. Read by
+		// Render() (jitter decision) and RendererAPI::GetOrCreateRenderViewportTexture (which
+		// texture to display); written only by RendererAPI::SetTaaEnabled.
+		bool IsTaaEnabledMainThread() const { return m_TaaEnabledMainThread; }
+		void SetTaaEnabledMainThread(bool enabled) { m_TaaEnabledMainThread = enabled; }
+
 		RenderFrame& GetPrevRenderFrame()
 		{
 			const uint index = Utility::GetPrevCircularIndex(m_RenderFrameIndex, RenderConstants::c_BufferedFrameCount);
@@ -139,6 +145,13 @@ namespace tyr
 		void RecordCullingPass(CommandList& cmdList, uint renderFrameIndex);
 		void RecordGeometryPass(CommandList& cmdList, uint renderFrameIndex);
 		void RecordLightingPass(CommandList& cmdList, uint renderFrameIndex);
+		// No separate Setup - the render graph usage declarations this needs are simple enough to
+		// stay inline in BuildAndExecuteRenderGraph's own "TAAResolve" lambda, the same way
+		// RecordLightingPass's sibling AddPass call already does. Re-derives the previous slot's
+		// own data itself (same cross-slot lookup Setup's lambda already did) rather than taking
+		// it all as parameters - keeps this Execute lambda's capture list small enough for
+		// Function<>'s fixed inline buffer (see Function.h).
+		void RecordTAAResolvePass(CommandList& cmdList, uint renderFrameIndex);
 		// Resolves the active scene's own RenderViewport down to this renderFrameIndex's own
 		// buffered slot - returns null if the active scene has no RenderViewport yet. Called
 		// from a RenderAsync worker thread - safe to read/write this slot without a lock.
@@ -175,6 +188,8 @@ namespace tyr
 		void EnsureLightingOutputBound(uint renderFrameIndex, TextureHandle colourTexture);
 		// Same idea as EnsureLightingOutputBound, for the two shadow mask arrays.
 		void EnsureShadowMaskArraysBound(uint renderFrameIndex, TextureHandle shadowMasksRaw, TextureHandle shadowMasks);
+		// Same idea as EnsureLightingOutputBound, for TAA's own resolve output.
+		void EnsureTaaResolveOutputBound(uint renderFrameIndex, TextureHandle resolvedColourTexture);
 		// Actually deletes every buffered slot's textures (if any were ever created) and frees the
 		// pool slot - shared by ProcessFrameDeleteLists' handling of renderViewportsToDelete,
 		// wherever it's called from. Mirrors DeleteWindowResources.
@@ -241,6 +256,7 @@ namespace tyr
 		// Same idea as m_LightingOutputBoundTextures, for the two shadow mask arrays.
 		TextureHandle m_ShadowMasksRawBoundTextures[RenderConstants::c_BufferedFrameCount];
 		TextureHandle m_ShadowMasksBoundTextures[RenderConstants::c_BufferedFrameCount];
+		TextureHandle m_TaaResolveOutputBoundTextures[RenderConstants::c_BufferedFrameCount];
 		HashMap<uint, uint> m_ViewIdIndexMap;
 		RenderContext m_Ctx{};
 		RenderResources m_Resources{};
@@ -271,6 +287,10 @@ namespace tyr
 		// vectors - camera motion only for now (no per-instance previous transform is tracked,
 		// so a moving/rotating object won't get a motion vector of its own yet).
 		Matrix4 m_PrevViewProj = Matrix4::c_Identity;
+		// Last frame's TAA jitter offset (NDC units) - fed into SceneInfo::jitterDelta the same
+		// way m_PrevViewProj feeds prevViewProj, so GBufferPS.hlsl's motion vectors can subtract
+		// out the jitter itself rather than mistaking it for real scene motion.
+		Vector2 m_PrevJitterNDC = Vector2::c_Zero;
 
 		// Meshes still waiting on their one-time BLAS build, persistent across frames - processed
 		// strictly front-to-back every frame (earlier requests build first), stopping once the
@@ -294,7 +314,17 @@ namespace tyr
 		// Only ever read/written from inside RenderAsync, never the main thread directly - safe
 		// as plain shared state since consecutive RenderAsync invocations are never concurrent
 		// (see m_PrevRenderAsyncTask below).
-		RenderQualitySettings m_QualitySettings = ResolveQualitySettings(QualityLevel::Medium);
+		RenderQualitySettings m_QualitySettings = ResolveQualitySettings(QualityLevel::Ultra);
+		// TAA's own independent on/off switch - not part of RenderQualitySettings, same
+		// RenderAsync-only-access safety as m_QualitySettings above.
+		bool m_TaaEnabled = true;
+		// Main-thread-only mirror of m_TaaEnabled, updated directly by RendererAPI::SetTaaEnabled
+		// (never derived from m_TaaEnabled itself, which is worker-owned) - lets Render() decide
+		// whether to apply this tick's jitter, and lets RendererAPI::GetOrCreateRenderViewportTexture
+		// decide which texture the editor should display, without racing the worker thread's own
+		// read/write of m_TaaEnabled. The same ImmediateSceneData-style pattern used for other
+		// worker-owned state the main thread also needs a safe view of.
+		bool m_TaaEnabledMainThread = true;
 
 		// The previous frame's RenderAsync task - each new one depends on this, so they never
 		// run at the same time.

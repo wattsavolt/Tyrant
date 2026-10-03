@@ -24,6 +24,10 @@ namespace tyr
 		// history.
 		TextureHandle shadowMasksRaw;
 		TextureHandle shadowMasks;
+		// TAA's resolved output - what the editor/GUI actually displays when TAA is enabled
+		// (colourTexture otherwise). Reads the previous buffered slot's own resolvedColourTexture
+		// as history, the same cross-slot-reuse pattern the shadow denoiser already uses.
+		TextureHandle resolvedColourTexture;
 		uint width = 0;
 		uint height = 0;
 		// Set whenever this slot's own targets are (re)created, consumed once by the geometry

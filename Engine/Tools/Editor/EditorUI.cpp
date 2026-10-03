@@ -4,8 +4,9 @@
 
 namespace tyr
 {
-	EditorUI::EditorUI(GUIModule& guiModule)
+	EditorUI::EditorUI(GUIModule& guiModule, RendererAPI& rendererAPI)
 		: m_GUIModule(guiModule)
+		, m_EditMenu(rendererAPI)
 	{
 	}
 

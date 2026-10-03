@@ -172,7 +172,11 @@ namespace tyr
 		// Set via RendererAPI::SetQualityLevel - merged into Renderer's own quality settings by
 		// RenderAsync, the same one-shot-request pattern SceneFrame::newRenderViewport uses.
 		bool hasQualityLevelOverride = false;
-		QualityLevel qualityLevelOverride = QualityLevel::Medium;
+		QualityLevel qualityLevelOverride = QualityLevel::Ultra;
+		// Set via RendererAPI::SetTaaEnabled - independent of qualityLevelOverride above (TAA's
+		// own on/off switch isn't tied to any quality preset), same one-shot-request pattern.
+		bool hasTaaEnabledOverride = false;
+		bool taaEnabledOverride = true;
 		// Frame update for the active scene
 		SceneFrame sceneFrame;
 
@@ -230,6 +234,7 @@ namespace tyr
 			sceneFrame.Clear();
 			activeScene = {};
 			hasQualityLevelOverride = false;
+			hasTaaEnabledOverride = false;
 			guiDrawData.Clear();
 			guiVertexCursor = 0;
 			guiIndexCursor = 0;

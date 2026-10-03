@@ -31,6 +31,38 @@ namespace tyr
 {
 	namespace
 	{
+		// Low-discrepancy base-`base` value for index `index` - standard Halton sequence
+		// construction. Used as a TAA sub-pixel jitter source: cycling through a handful of
+		// indices gives a sequence of camera offsets that cover sub-pixel space evenly, rather
+		// than clustering like plain random numbers would.
+		float HaltonSequence(uint index, uint base)
+		{
+			float result = 0.0f;
+			float f = 1.0f;
+			while (index > 0)
+			{
+				f /= (float)base;
+				result += f * (float)(index % base);
+				index /= base;
+			}
+			return result;
+		}
+
+		// A held-constant 8-sample Halton(2,3) cycle - long enough to decorrelate well, short
+		// enough to converge quickly once the camera stops moving. Index starts at 1, not 0, so
+		// the first sample isn't the degenerate (0,0) offset every base-N Halton sequence starts
+		// with.
+		constexpr uint c_JitterSampleCount = 8;
+		Vector2 ComputeJitterNDC(uint64 frameNumber, uint viewportWidth, uint viewportHeight)
+		{
+			const uint index = (uint)(frameNumber % c_JitterSampleCount) + 1;
+			const float haltonX = HaltonSequence(index, 2) - 0.5f;
+			const float haltonY = HaltonSequence(index, 3) - 0.5f;
+			// A one-pixel screen-space offset is 2/resolution in NDC, since NDC spans [-1, 1]
+			// across the full screen.
+			return Vector2(haltonX * 2.0f / (float)viewportWidth, haltonY * 2.0f / (float)viewportHeight);
+		}
+
 		// Fixed, worst-case-sized byte regions within the ray-tracing culling staging buffer,
 		// one contiguous block per buffered render frame slot, indexed directly by renderFrameIndex.
 		constexpr size_t c_ActiveInstanceIndicesBytes = sizeof(uint) * RenderConstants::c_MaxMeshInstances;
@@ -332,6 +364,7 @@ namespace tyr
 					// texture.
 					EnsureLightingOutputBound(m_RenderFrameIndex, targets.colourTexture);
 					EnsureShadowMaskArraysBound(m_RenderFrameIndex, targets.shadowMasksRaw, targets.shadowMasks);
+				EnsureTaaResolveOutputBound(m_RenderFrameIndex, targets.resolvedColourTexture);
 
 					if (targets.width != 0 && targets.height != 0)
 					{
@@ -352,7 +385,23 @@ namespace tyr
 					const Matrix4 projection = Matrix4::CreatePerspective(sv.camera.fov, aspect, sv.camera.farZ, sv.camera.nearZ);
 
 					sceneInfo.viewProj = view * projection;
-					// Deferred lighting reconstructs world position from depth using this.
+
+					// TAA sub-pixel jitter - read via the main-thread-safe mirror, not
+					// m_TaaEnabled directly, since that's only safe to touch from inside
+					// RenderAsync (see its own comment). Zero whenever TAA is off, which also
+					// makes jitterDelta below come out exactly zero - a full, clean bypass.
+					const Vector2 jitterNDC = m_TaaEnabledMainThread
+						? ComputeJitterNDC(m_FrameNumber, viewportWidth, viewportHeight)
+						: Vector2::c_Zero;
+					// clip.xy += jitterNDC * clip.w, expressed as columns since clip = v * M
+					// (row-vector convention) means clip.x = dot(v, column0(M)) and
+					// clip.w = dot(v, column3(M)).
+					sceneInfo.viewProj.SetColumn(0, sceneInfo.viewProj.GetColumn4D(0) + sceneInfo.viewProj.GetColumn4D(3) * jitterNDC.x);
+					sceneInfo.viewProj.SetColumn(1, sceneInfo.viewProj.GetColumn4D(1) + sceneInfo.viewProj.GetColumn4D(3) * jitterNDC.y);
+
+					// Deferred lighting reconstructs world position from depth using this - must
+					// be the jittered viewProj's own inverse, since depth was written using that
+					// same jittered matrix.
 					sceneInfo.invViewProj = sceneInfo.viewProj.Inverse();
 					sceneInfo.camPos = sv.camera.position;
 
@@ -384,6 +433,11 @@ namespace tyr
 					// identity/garbage.
 					sceneInfo.prevViewProj = m_FirstRender ? sceneInfo.viewProj : m_PrevViewProj;
 					m_PrevViewProj = sceneInfo.viewProj;
+
+					// Same first-frame reasoning as prevViewProj above - no real previous jitter
+					// yet, so the delta comes out exactly zero instead of reading garbage.
+					sceneInfo.jitterDelta = m_FirstRender ? Vector2::c_Zero : (jitterNDC - m_PrevJitterNDC);
+					m_PrevJitterNDC = jitterNDC;
 				}
 
 				{
@@ -597,6 +651,10 @@ namespace tyr
 		if (renderFrame.hasQualityLevelOverride)
 		{
 			m_QualitySettings = ResolveQualitySettings(renderFrame.qualityLevelOverride);
+		}
+		if (renderFrame.hasTaaEnabledOverride)
+		{
+			m_TaaEnabled = renderFrame.taaEnabledOverride;
 		}
 
 		m_Data.activeScene = renderFrame.activeScene;
@@ -1022,6 +1080,19 @@ namespace tyr
 			// dispatch's result into - one per buffered RenderFrame slot.
 			uint renderFrameIndex;
 		};
+
+		// Matches TAAResolveCS.hlsl's push constant cbuffer byte-for-byte.
+		struct TAAResolvePushConstants
+		{
+			uint colourIndex;
+			uint motionIndex;
+			uint prevResolvedIndex;
+			uint width;
+			uint height;
+			uint renderFrameIndex;
+			uint hasHistory;
+			float historyBlendWeight;
+		};
 	}
 
 	void Renderer::RecordLightingPass(CommandList& cmdList, uint renderFrameIndex)
@@ -1065,6 +1136,44 @@ namespace tyr
 
 		const uint groupCountX = (viewportWidth + 7) / 8;
 		const uint groupCountY = (viewportHeight + 7) / 8;
+		cmdList.Dispatch(groupCountX, groupCountY, 1);
+	}
+
+	void Renderer::RecordTAAResolvePass(CommandList& cmdList, uint renderFrameIndex)
+	{
+		RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
+		if (!viewportData || viewportData->width == 0 || viewportData->height == 0)
+		{
+			return;
+		}
+
+		// Same cross-slot history lookup "TAAResolve"'s own setup lambda already did in
+		// BuildAndExecuteRenderGraph - redone here too rather than threaded through as capture
+		// state, to keep this Execute lambda's own capture list small (see this function's own
+		// declaration comment).
+		const Scene& scene = m_Data.scenePool[m_Data.activeScene.h];
+		const RenderViewport& parentViewport = m_RenderViewportPool[scene.renderViewport.h];
+		const uint prevRenderFrameIndex = (renderFrameIndex + RenderConstants::c_BufferedFrameCount - 1) % RenderConstants::c_BufferedFrameCount;
+		const RenderViewportTextureData& prevViewportData = parentViewport.textureData[prevRenderFrameIndex];
+		const bool hasHistory = prevViewportData.resolvedColourTexture &&
+			prevViewportData.width == viewportData->width && prevViewportData.height == viewportData->height;
+
+		cmdList.BindComputePipeline(m_Resources.taaResolvePipeline);
+		cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.taaResolvePipeline);
+
+		TAAResolvePushConstants pushConstants{};
+		pushConstants.colourIndex = viewportData->colourTexture.h.index;
+		pushConstants.motionIndex = viewportData->gbufferMotion.h.index;
+		pushConstants.prevResolvedIndex = hasHistory ? prevViewportData.resolvedColourTexture.h.index : viewportData->resolvedColourTexture.h.index;
+		pushConstants.width = viewportData->width;
+		pushConstants.height = viewportData->height;
+		pushConstants.renderFrameIndex = renderFrameIndex;
+		pushConstants.hasHistory = hasHistory ? 1u : 0u;
+		pushConstants.historyBlendWeight = m_QualitySettings.taaHistoryBlendWeight;
+		cmdList.PushConstants(m_Resources.taaResolvePipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(TAAResolvePushConstants), &pushConstants);
+
+		const uint groupCountX = (viewportData->width + 7) / 8;
+		const uint groupCountY = (viewportData->height + 7) / 8;
 		cmdList.Dispatch(groupCountX, groupCountY, 1);
 	}
 
@@ -1287,6 +1396,7 @@ namespace tyr
 			Texture* colourTexture = nullptr;
 			Texture* shadowMasksRaw = nullptr;
 			Texture* shadowMasks = nullptr;
+			Texture* resolvedColourTexture = nullptr;
 
 			if (hasViewportTextures)
 			{
@@ -1297,6 +1407,7 @@ namespace tyr
 				colourTexture = &m_Registry.GetTexture(viewportData->colourTexture);
 				shadowMasksRaw = &m_Registry.GetTexture(viewportData->shadowMasksRaw);
 				shadowMasks = &m_Registry.GetTexture(viewportData->shadowMasks);
+				resolvedColourTexture = &m_Registry.GetTexture(viewportData->resolvedColourTexture);
 
 				// A freshly (re)created texture's imageLayout is pre-set to its steady-state
 				// value, not UNKNOWN, even though the real image always starts life as
@@ -1313,6 +1424,7 @@ namespace tyr
 					colourTexture->imageLayout = IMAGE_LAYOUT_UNKNOWN;
 					shadowMasksRaw->imageLayout = IMAGE_LAYOUT_UNKNOWN;
 					shadowMasks->imageLayout = IMAGE_LAYOUT_UNKNOWN;
+					resolvedColourTexture->imageLayout = IMAGE_LAYOUT_UNKNOWN;
 					viewportData->isNew = false;
 				}
 
@@ -1323,6 +1435,7 @@ namespace tyr
 				graph.RegisterTexture(colourTexture);
 				graph.RegisterTexture(shadowMasksRaw);
 				graph.RegisterTexture(shadowMasks);
+				graph.RegisterTexture(resolvedColourTexture);
 			}
 
 			Texture& swapChainImageProxy = window->swapChainImageProxies[window->swapChainImageIndex];
@@ -1499,14 +1612,52 @@ namespace tyr
 				[this, renderFrameIndex](CommandList& cl) { RecordLightingPass(cl, renderFrameIndex); },
 				RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
 
+			// TAA resolve - optional (m_TaaEnabled, independent of quality level so it can be
+			// isolated on its own). Whichever texture it leaves as the "real" result this tick is
+			// what "GUI" below actually reads and what the editor displays.
+			Texture* taaDisplayTexture = colourTexture;
+			if (m_TaaEnabled && colourTexture)
+			{
+				const Scene& taaScene = m_Data.scenePool[m_Data.activeScene.h];
+				const RenderViewport& parentViewport = m_RenderViewportPool[taaScene.renderViewport.h];
+				const uint prevRenderFrameIndex = (renderFrameIndex + RenderConstants::c_BufferedFrameCount - 1) % RenderConstants::c_BufferedFrameCount;
+				const RenderViewportTextureData& prevViewportData = parentViewport.textureData[prevRenderFrameIndex];
+				const bool taaHasHistory = prevViewportData.resolvedColourTexture &&
+					prevViewportData.width == viewportData->width && prevViewportData.height == viewportData->height;
+				const TextureHandle taaPrevResolvedColourTextureHandle = prevViewportData.resolvedColourTexture;
+
+				// A different buffered slot's own texture - never registered with this tick's
+				// graph otherwise, the same reasoning as the shadow denoiser's own history read.
+				if (taaHasHistory)
+				{
+					graph.RegisterTexture(&m_Registry.GetTexture(taaPrevResolvedColourTextureHandle));
+				}
+
+				graph.AddPass("TAAResolve",
+					[this, colourTexture, gbufferMotion, resolvedColourTexture, taaPrevResolvedColourTextureHandle, taaHasHistory](RenderGraphBuilder& builder)
+					{
+						builder.ReadTexture(*colourTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+						builder.ReadTexture(*gbufferMotion, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+						builder.WriteTexture(*resolvedColourTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
+						if (taaHasHistory)
+						{
+							builder.ReadTexture(m_Registry.GetTexture(taaPrevResolvedColourTextureHandle), PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+						}
+					},
+					[this, renderFrameIndex](CommandList& cl) { RecordTAAResolvePass(cl, renderFrameIndex); },
+					RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
+
+				taaDisplayTexture = resolvedColourTexture;
+			}
+
 			// Always added, even on a frame with nothing to draw - this is the only pass that
 			// touches the swap chain image.
 			graph.AddPass("GUI",
-				[this, colourTexture, &swapChainImageProxy, window, &renderFrame](RenderGraphBuilder& builder)
+				[this, taaDisplayTexture, &swapChainImageProxy, window, &renderFrame](RenderGraphBuilder& builder)
 				{
 					m_GUIPass->Setup(builder, renderFrame);
-					if (colourTexture)
-						builder.ReadTexture(*colourTexture, PIPELINE_STAGE_FRAGMENT_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+					if (taaDisplayTexture)
+						builder.ReadTexture(*taaDisplayTexture, PIPELINE_STAGE_FRAGMENT_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
 					builder.WriteTexture(swapChainImageProxy, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, window->swapChain->GetRenderingWriteAccess(), window->swapChain->GetRenderingLayout());
 				},
 				[this, renderFrameIndex](CommandList& cl) { RecordGUIPass(cl, renderFrameIndex); },
@@ -1943,6 +2094,7 @@ namespace tyr
 			DeleteViewportTargetTexture(targets.depthBuffer);
 			DeleteViewportTargetTexture(targets.shadowMasksRaw);
 			DeleteViewportTargetTexture(targets.shadowMasks);
+			DeleteViewportTargetTexture(targets.resolvedColourTexture);
 		}
 
 		// Written by the deferred lighting pass (a storage image), read by the GUI pass to
@@ -1965,6 +2117,11 @@ namespace tyr
 
 		targets.shadowMasksRaw = CreateShadowMaskArrayTexture("Shadow Masks Raw", width, height);
 		targets.shadowMasks = CreateShadowMaskArrayTexture("Shadow Masks", width, height);
+
+		// Same usage as colourTexture above - written by a compute pass, sampled by the editor
+		// for display.
+		targets.resolvedColourTexture = CreateViewportTargetTexture("Resolved Colour", PixelFormat::PF_R8G8B8A8_UNORM,
+			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT), width, height);
 
 		targets.width = width;
 		targets.height = height;
@@ -2016,6 +2173,22 @@ namespace tyr
 		}
 	}
 
+	void Renderer::EnsureTaaResolveOutputBound(uint renderFrameIndex, TextureHandle resolvedColourTexture)
+	{
+		if (!resolvedColourTexture || m_TaaResolveOutputBoundTextures[renderFrameIndex] == resolvedColourTexture)
+		{
+			return;
+		}
+
+		const Texture& texture = m_Registry.GetTexture(resolvedColourTexture);
+		ImageBindingInfo bindingInfo;
+		bindingInfo.imageView = texture.imageView;
+		bindingInfo.hasSampler = false;
+		bindingInfo.layout = texture.imageLayout;
+		QueueImageBindingUpdate(TYR_BINDING_TAA_RESOLVE_OUTPUT, renderFrameIndex, bindingInfo);
+		m_TaaResolveOutputBoundTextures[renderFrameIndex] = resolvedColourTexture;
+	}
+
 	void Renderer::DeleteRenderViewportResources(RenderViewportHandle viewport)
 	{
 		RenderViewport& rv = m_RenderViewportPool[viewport.h];
@@ -2037,6 +2210,7 @@ namespace tyr
 			m_Registry.DeleteTexture(targets.depthBuffer);
 			m_Registry.DeleteTexture(targets.shadowMasksRaw);
 			m_Registry.DeleteTexture(targets.shadowMasks);
+			m_Registry.DeleteTexture(targets.resolvedColourTexture);
 		}
 
 		m_RenderViewportPool.Delete(viewport.h);
@@ -2127,6 +2301,14 @@ namespace tyr
 		{
 			ShaderDesc desc;
 			desc.entryPoint = "main";
+			desc.fileName = "TAAResolveCS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_COMPUTE_BIT;
+			m_Resources.taaResolveComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
 			desc.fileName = "GUIVS";
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_VERTEX_BIT;
@@ -2151,6 +2333,7 @@ namespace tyr
 		m_Ctx.device->DeleteShaderModule(m_Resources.cullingComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.shadowRTComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.shadowDenoiseComputeShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.taaResolveComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.guiVertexShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.guiPixelShader);
 		ShaderCreator::UnloadCompilerLibs();
@@ -2271,11 +2454,12 @@ namespace tyr
 				poolSize.descriptorCount = Device::c_MaxSamplers;
 			}
 			{
-				// TYR_BINDING_LIGHTING_OUTPUT plus TYR_BINDING_SHADOW_MASKS_RAW/SHADOW_MASKS -
-				// three storage-image arrays, each one entry per buffered RenderFrame slot.
+				// TYR_BINDING_LIGHTING_OUTPUT, TYR_BINDING_SHADOW_MASKS_RAW/SHADOW_MASKS, and
+				// TYR_BINDING_TAA_RESOLVE_OUTPUT - four storage-image arrays, each one entry per
+				// buffered RenderFrame slot.
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
 				poolSize.descriptorType = DescriptorType::StorageImage;
-				poolSize.descriptorCount = RenderConstants::c_BufferedFrameCount * 3;
+				poolSize.descriptorCount = RenderConstants::c_BufferedFrameCount * 4;
 			}
 			{
 				// TYR_BINDING_TLAS - one top-level acceleration structure per buffered
@@ -2359,6 +2543,8 @@ namespace tyr
 			AddBinding(TYR_BINDING_SHADOW_MASKS, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 			AddBinding(TYR_BINDING_SHADOW_LIGHT_SLOT_MAP, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
+			AddBinding(TYR_BINDING_TAA_RESOLVE_OUTPUT, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
+				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 
 			m_Resources.descriptorSetLayout = m_Ctx.device->CreateDescriptorSetLayout(layoutDesc);
 
@@ -2559,6 +2745,19 @@ namespace tyr
 		shadowDenoiseDesc.shader = m_Resources.shadowDenoiseComputeShader;
 
 		m_Resources.shadowDenoisePipeline = m_Ctx.device->CreateComputePipeline(shadowDenoiseDesc);
+
+		// TAA resolve.
+		ComputePipelineDesc taaResolveDesc;
+		taaResolveDesc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
+
+		PushConstantRange& taaResolvePushConstantRange = taaResolveDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
+		taaResolvePushConstantRange.stageFlags = SHADER_STAGE_COMPUTE_BIT;
+		taaResolvePushConstantRange.offset = 0;
+		taaResolvePushConstantRange.size = sizeof(TAAResolvePushConstants);
+
+		taaResolveDesc.shader = m_Resources.taaResolveComputeShader;
+
+		m_Resources.taaResolvePipeline = m_Ctx.device->CreateComputePipeline(taaResolveDesc);
 	}
 
 	void Renderer::DeletePipelines()
@@ -2569,6 +2768,7 @@ namespace tyr
 		m_Ctx.device->DeleteComputePipeline(m_Resources.cullingPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.shadowRTPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.shadowDenoisePipeline);
+		m_Ctx.device->DeleteComputePipeline(m_Resources.taaResolvePipeline);
 		m_Ctx.device->DeleteDescriptorSet(m_Resources.descriptorSet);
 		m_Ctx.device->DeleteDescriptorSetLayout(m_Resources.descriptorSetLayout);
 		m_Ctx.device->DeleteDescriptorPool(m_Resources.descriptorPool);

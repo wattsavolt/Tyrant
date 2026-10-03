@@ -361,6 +361,7 @@ namespace tyr
 					request.dstTexture = handle;
 					request.highestMip = 0;
 					request.mipCount = 1;
+					request.type = TextureUploadRequestType::GUI;
 					request.resourceId = alloc.resourceId;
 					m_RendererAPI->AddTextureUploadRequest(request);
 				}
@@ -413,6 +414,7 @@ namespace tyr
 					request.dstTexture = handle;
 					request.highestMip = 0;
 					request.mipCount = 1;
+					request.type = TextureUploadRequestType::GUI;
 					request.resourceId = alloc.resourceId;
 					m_RendererAPI->AddTextureUploadRequest(request);
 				}

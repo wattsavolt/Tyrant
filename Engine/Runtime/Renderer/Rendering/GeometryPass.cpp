@@ -6,6 +6,9 @@
 #include "Rendering/RenderGraphBuilder.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderConstants.h"
+#include "Rendering/RenderFrame.h"
+#include "RenderResource/Texture.h"
+#include "RenderTransfer/UploadRequest.h"
 #include "Shaders/ShaderTypes.h"
 
 namespace tyr
@@ -30,7 +33,7 @@ namespace tyr
 		m_DescriptorSet = args.descriptorSet;
 	}
 
-	void GeometryPass::Setup(RenderGraphBuilder& builder)
+	void GeometryPass::Setup(RenderGraphBuilder& builder, const RenderFrame& renderFrame)
 	{
 		const PipelineStage meshPipelineStages = static_cast<PipelineStage>(PIPELINE_STAGE_TASK_SHADER_BIT | PIPELINE_STAGE_MESH_SHADER_BIT | PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
 
@@ -53,6 +56,14 @@ namespace tyr
 		builder.ReadBuffer(m_Registry->GetBuffer(m_Resources->visibleInstanceIndexBuffer), meshPipelineStages, BARRIER_ACCESS_SHADER_READ_BIT);
 		builder.ReadBuffer(m_Registry->GetBuffer(m_Resources->indirectDrawCommandBuffer), PIPELINE_STAGE_DRAW_INDIRECT_BIT, BARRIER_ACCESS_INDIRECT_COMBAND_READ_BIT);
 		builder.ReadBuffer(m_Registry->GetBuffer(m_Resources->drawCountBuffer), PIPELINE_STAGE_DRAW_INDIRECT_BIT, BARRIER_ACCESS_INDIRECT_COMBAND_READ_BIT);
+
+		for (const TextureUploadRequest& request : renderFrame.textureUploadRequests)
+		{
+			if (request.type == TextureUploadRequestType::Material)
+			{
+				builder.ReadTexture(m_Registry->GetTexture(request.dstTexture), PIPELINE_STAGE_FRAGMENT_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+			}
+		}
 	}
 
 	void GeometryPass::Execute(CommandList& cmdList)

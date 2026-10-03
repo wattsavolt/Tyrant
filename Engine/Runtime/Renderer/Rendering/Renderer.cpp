@@ -1322,9 +1322,9 @@ namespace tyr
 				RenderGraphPhase::Geometry, CommandQueueType::CQ_GRAPHICS);
 
 			graph.AddPass("Geometry",
-				[this, gbufferAlbedoAO, gbufferNormalRoughMetal, gbufferMotion, depthBuffer](RenderGraphBuilder& builder)
+				[this, gbufferAlbedoAO, gbufferNormalRoughMetal, gbufferMotion, depthBuffer, &renderFrame](RenderGraphBuilder& builder)
 				{
-					m_GeometryPass->Setup(builder);
+					m_GeometryPass->Setup(builder, renderFrame);
 					if (!gbufferAlbedoAO)
 						return;
 					builder.WriteTexture(*gbufferAlbedoAO, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
@@ -1378,9 +1378,9 @@ namespace tyr
 			// Always added, even on a frame with nothing to draw - this is the only pass that
 			// touches the swap chain image.
 			graph.AddPass("GUI",
-				[this, colourTexture, &swapChainImageProxy, window](RenderGraphBuilder& builder)
+				[this, colourTexture, &swapChainImageProxy, window, &renderFrame](RenderGraphBuilder& builder)
 				{
-					m_GUIPass->Setup(builder);
+					m_GUIPass->Setup(builder, renderFrame);
 					if (colourTexture)
 						builder.ReadTexture(*colourTexture, PIPELINE_STAGE_FRAGMENT_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
 					builder.WriteTexture(swapChainImageProxy, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, window->swapChain->GetRenderingWriteAccess(), window->swapChain->GetRenderingLayout());

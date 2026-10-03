@@ -39,6 +39,15 @@ namespace tyr
 		}
 	};
 
+	// What this upload's destination texture is used for - lets a pass tell whether it's the
+	// sole intended consumer of a given upload, e.g. GUIPass only needs to declare reads for
+	// GUI-type uploads.
+	enum class TextureUploadRequestType : uint8
+	{
+		Material,
+		GUI
+	};
+
 	struct TextureUploadRequest
 	{
 		RenderBufferHandle srcBuffer;
@@ -46,6 +55,7 @@ namespace tyr
 		TextureHandle dstTexture;
 		uint highestMip;
 		uint mipCount;
+		TextureUploadRequestType type = TextureUploadRequestType::Material;
 		// Set only when srcBuffer's data came from a resource upload allocation, so it can be
 		// reclaimed once the GPU catches up to this request's submission.
 		Handle resourceId;

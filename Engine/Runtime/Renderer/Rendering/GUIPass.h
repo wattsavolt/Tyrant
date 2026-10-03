@@ -32,7 +32,10 @@ namespace tyr
 
 		void Recreate(const GUIPassArgs& args);
 
-		void Setup(RenderGraphBuilder& builder);
+		// Also declares reads for this tick's GUI-flagged texture uploads (font atlas, UI images)
+		// - the only pass that ever samples a GUI texture, so this is a real, exact dependency,
+		// not a borrowed one. Material texture uploads are unrelated and not declared here.
+		void Setup(RenderGraphBuilder& builder, const RenderFrame& renderFrame);
 		// renderFrame/renderFrameIndex are taken as parameters rather than stored on this
 		// object - it's a single long-lived instance reused every tick, so caching per-tick
 		// state here risks it going stale if anything mutates this object in between.

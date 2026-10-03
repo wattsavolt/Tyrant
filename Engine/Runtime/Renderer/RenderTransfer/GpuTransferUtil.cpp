@@ -100,36 +100,6 @@ namespace tyr
 			commandList.CopyBufferToImage(registry.GetBuffer(requests[i].srcBuffer).buffer, dstTexture.image, dstTexture.imageLayout, copyInfos.Data(), copyInfos.Size());
 			copyInfos.Clear();
 		}
-
-		// Deliberately kept manual rather than declared through the render graph: these textures
-		// are sampled through the bindless array at an index resolved entirely on the GPU, so
-		// there's no CPU-known "consumer pass" to pin a graph read declaration to. This barrier
-		// is the only thing making the upload visible to any later shader read - do not remove
-		// it without replacing it with something equivalent.
-		if (count > 0)
-		{
-			LocalArray<ImageBarrier, RenderConstants::c_MaxTextures> barriers;
-			for (uint i = 0; i < count; ++i)
-			{
-				const Texture& dstTexture = registry.GetTexture(requests[i].dstTexture);
-
-				ImageBarrier& barrier = barriers.ExpandOne();
-				barrier.image = dstTexture.image;
-				barrier.srcAccess = BARRIER_ACCESS_TRANSFER_WRITE_BIT;
-				barrier.dstAccess = BARRIER_ACCESS_SHADER_READ_BIT;
-				barrier.srcLayout = dstTexture.imageLayout;
-				barrier.dstLayout = dstTexture.imageLayout;
-				barrier.srcStage = PIPELINE_STAGE_TRANSFER_BIT;
-				barrier.dstStage = PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-				barrier.subresourceRange.aspect = SUBRESOURCE_ASPECT_COLOUR_BIT;
-				barrier.subresourceRange.baseMipLevel = 0;
-				barrier.subresourceRange.mipCount = dstTexture.info.mipCount;
-				barrier.subresourceRange.baseArrayLayer = 0;
-				barrier.subresourceRange.arrayLayerCount = dstTexture.info.arrayLayerCount;
-			}
-
-			commandList.AddBarriers(nullptr, 0, barriers.Data(), barriers.Size());
-		}
 	}
 
 	void GpuTransferUtil::FileToBuffer(CommandList& commandList, const FileToBufferUploadRequest& request)

@@ -6,6 +6,8 @@
 #include "Rendering/RenderGraphBuilder.h"
 #include "Rendering/RenderConstants.h"
 #include "RenderResource/RenderBuffer.h"
+#include "RenderResource/Texture.h"
+#include "RenderTransfer/UploadRequest.h"
 #include <chrono>
 
 namespace tyr
@@ -36,7 +38,7 @@ namespace tyr
 		m_IndexBuffer = args.indexBuffer;
 	}
 
-	void GUIPass::Setup(RenderGraphBuilder& builder)
+	void GUIPass::Setup(RenderGraphBuilder& builder, const RenderFrame& renderFrame)
 	{
 		// The vertex shader pulls its own vertex out of this via a StructuredBuffer binding - a
 		// real shader read, at the shader stages.
@@ -46,6 +48,14 @@ namespace tyr
 		// Unlike the vertex buffer above, this one is consumed through fixed-function index
 		// fetch, so it needs INDEX_READ at the index-input stage instead.
 		builder.ReadBuffer(m_Registry->GetBuffer(m_IndexBuffer), PIPELINE_STAGE_INDEX_INPUT_BIT, BARRIER_ACCESS_INDEX_READ_BIT);
+
+		for (const TextureUploadRequest& request : renderFrame.textureUploadRequests)
+		{
+			if (request.type == TextureUploadRequestType::GUI)
+			{
+				builder.ReadTexture(m_Registry->GetTexture(request.dstTexture), PIPELINE_STAGE_FRAGMENT_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+			}
+		}
 	}
 
 	void GUIPass::Execute(CommandList& cmdList, const RenderFrame& renderFrame, uint renderFrameIndex)

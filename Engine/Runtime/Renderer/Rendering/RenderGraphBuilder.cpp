@@ -3,6 +3,7 @@
 #include "RenderAPI/Buffer.h"
 #include "RenderResource/RenderBuffer.h"
 #include "RenderResource/Texture.h"
+#include "RenderResource/RenderAccelerationStructure.h"
 
 namespace tyr
 {
@@ -56,6 +57,28 @@ namespace tyr
             access,
             RenderGraphAccessType::Write,
             layout
+            });
+    }
+
+    void RenderGraphBuilder::ReadAccelerationStructure(const RenderAccelerationStructure& accelerationStructure, PipelineStage stage, BarrierAccess access)
+    {
+        m_Graph.m_AccelerationStructureNodes[accelerationStructure.renderGraphIndex].usages.Add({
+            m_PassIndex,
+            stage,
+            access,
+            RenderGraphAccessType::Read,
+            IMAGE_LAYOUT_UNKNOWN
+            });
+    }
+
+    void RenderGraphBuilder::WriteAccelerationStructure(const RenderAccelerationStructure& accelerationStructure, PipelineStage stage, BarrierAccess access)
+    {
+        m_Graph.m_AccelerationStructureNodes[accelerationStructure.renderGraphIndex].usages.Add({
+            m_PassIndex,
+            stage,
+            access,
+            RenderGraphAccessType::Write,
+            IMAGE_LAYOUT_UNKNOWN
             });
     }
 }

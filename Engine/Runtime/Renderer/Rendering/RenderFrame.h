@@ -3,6 +3,7 @@
 #include "Rendering/Scene.h"
 #include "Rendering/GUIDrawData.h"
 #include "RenderResource/Texture.h"
+#include "RenderResource/RenderAccelerationStructure.h"
 #include "RenderTransfer/UploadRequest.h"
 #include "Rendering/RenderConstants.h"
 #include "RenderInstance/RenderInstances.h"
@@ -113,6 +114,9 @@ namespace tyr
 	{
 		AccelerationStructureHandle blas;
 		size_t scratchOffset;
+		// The owning Mesh's own persistent barrier-state wrapper, stable for this tick - lets the
+		// render graph track and barrier this exact build without a separate mesh lookup.
+		RenderAccelerationStructure* blasResource;
 	};
 
 	struct RenderFrame

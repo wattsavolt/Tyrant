@@ -178,4 +178,10 @@ namespace tyr
 		const DeviceInternal& device = static_cast<const DeviceInternal&>(*this);
 		return static_cast<size_t>(device.GetAccelerationStructure(handle).updateScratchSize);
 	}
+
+	size_t Device::GetAccelerationStructureScratchOffsetAlignment() const
+	{
+		const DeviceInternal& device = static_cast<const DeviceInternal&>(*this);
+		return static_cast<size_t>(device.GetAccelerationStructureProperties().minAccelerationStructureScratchOffsetAlignment);
+	}
 }

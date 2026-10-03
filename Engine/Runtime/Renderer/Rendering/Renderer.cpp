@@ -158,12 +158,17 @@ namespace tyr
 			size_t accumulatedBytes = 0;
 			bool builtAny = false;
 			uint processedCount = 0;
-			size_t maxScratchSize = 0;
+			// A simple bump allocator over this tick's own batch - each build gets its own
+			// distinct, non-overlapping sub-range instead of every build in the batch reusing the
+			// same one, so no barrier is needed between consecutive builds' scratch writes. Starts
+			// aligned (0) and stays aligned, since every advance below re-aligns it.
+			size_t scratchCursor = 0;
+			const size_t scratchAlignment = m_Ctx.device->GetAccelerationStructureScratchOffsetAlignment();
 
 			for (uint i = 0; i < m_PendingBLASBuilds.Size(); ++i)
 			{
 				Mesh& mesh = m_Registry.GetMesh(m_PendingBLASBuilds[i]);
-				if (mesh.blas)
+				if (mesh.blas.accelerationStructure)
 				{
 					// Already built (requested more than once)
 					processedCount++;
@@ -207,14 +212,17 @@ namespace tyr
 					break;
 				}
 
-				mesh.blas = m_Ctx.device->CreateAccelerationStructureAt(blasDesc, m_Registry.GetBuffer(m_Resources.blasStorageBuffer).buffer, mesh.blasStorageAllocation.offset);
-				maxScratchSize = maxScratchSize > buildScratchSize ? maxScratchSize : buildScratchSize;
+				mesh.blas.accelerationStructure = m_Ctx.device->CreateAccelerationStructureAt(blasDesc, m_Registry.GetBuffer(m_Resources.blasStorageBuffer).buffer, mesh.blasStorageAllocation.offset);
 
 				BLASBuildRecord& record = renderFrame.blasBuildsToRecord.ExpandOne();
-				record.blas = mesh.blas;
-				// scratchOffset is filled in below, once this frame's scratch capacity (and so
-				// the per-slot byte offset) is finalized - growing blasScratchBuffer mid-batch
-				// would otherwise shift every record's offset that was already computed above it.
+				record.blas = mesh.blas.accelerationStructure;
+				record.blasResource = &mesh.blas;
+				// This tick's own within-batch offset, not yet the final byte offset - the
+				// per-slot base below is only known once this frame's scratch capacity (and so
+				// m_BLASScratchCapacity) is finalized, which depends on every build in the batch
+				// having already been sized first.
+				record.scratchOffset = scratchCursor;
+				scratchCursor = MemoryUtil::Align(scratchCursor + buildScratchSize, scratchAlignment);
 
 				accumulatedBytes += meshBytes;
 				builtAny = true;
@@ -223,16 +231,17 @@ namespace tyr
 
 			m_PendingBLASBuilds.EraseFromFront(processedCount);
 
-			if (maxScratchSize > 0)
+			if (scratchCursor > 0)
 			{
-				// One call for the whole batch, after every BLAS above is created, since growing
-				// mid-batch would shift already-computed offsets.
-				EnsureBLASScratchCapacity(maxScratchSize);
+				// Sized for the sum of this tick's whole batch, not just the largest single build -
+				// every build now needs its own space at once, rather than reusing one shared range
+				// one build at a time.
+				EnsureBLASScratchCapacity(scratchCursor);
 
-				const size_t scratchOffset = (size_t)m_RenderFrameIndex * m_BLASScratchCapacity;
+				const size_t slotBaseOffset = (size_t)m_RenderFrameIndex * m_BLASScratchCapacity;
 				for (BLASBuildRecord& record : renderFrame.blasBuildsToRecord)
 				{
-					record.scratchOffset = scratchOffset;
+					record.scratchOffset += slotBaseOffset;
 				}
 			}
 		}
@@ -733,7 +742,7 @@ namespace tyr
 				{
 					const MeshInstance& instance = registry.GetMeshInstance(handle);
 					const Mesh& mesh = registry.GetMesh(instance.info.mesh);
-					if (!mesh.blas)
+					if (!mesh.blas.accelerationStructure)
 					{
 						continue;
 					}
@@ -755,7 +764,7 @@ namespace tyr
 					out.mask = 0xFF;
 					out.shaderBindingTableRecordOffset = 0;
 					out.flags = 0;
-					out.accelerationStructureReference = m_Ctx.device->GetAccelerationStructureDeviceAddress(mesh.blas);
+					out.accelerationStructureReference = m_Ctx.device->GetAccelerationStructureDeviceAddress(mesh.blas.accelerationStructure);
 				}
 
 				if (tlasInstanceCount > 0)
@@ -918,18 +927,14 @@ namespace tyr
 		const TextureHandle depthBufferHandle = viewportData->depthBuffer;
 		const uint viewportWidth = viewportData->width;
 		const uint viewportHeight = viewportData->height;
-		const bool viewportTextureIsNew = viewportData->isNew;
-		// Consumed once, right here - this worker thread owns this slot exclusively until it
-		// cycles back around.
-		viewportData->isNew = false;
 
 		// EditorViewport hasn't requested a render target size yet (e.g. the very first few
 		// frames, before any ImGui layout has happened) - nothing to render into.
 		if (viewportWidth == 0 || viewportHeight == 0)
 		{
 #if TYR_RENDER_DEBUG
-			TYR_LOG_WARNING("[DBG] RecordGeometryPass: SKIPPED (zero size) renderFrameIndex=%u width=%u height=%u isNew=%d",
-				renderFrameIndex, viewportWidth, viewportHeight, (int)viewportTextureIsNew);
+			TYR_LOG_WARNING("[DBG] RecordGeometryPass: SKIPPED (zero size) renderFrameIndex=%u width=%u height=%u",
+				renderFrameIndex, viewportWidth, viewportHeight);
 #endif
 			return;
 		}
@@ -942,46 +947,6 @@ namespace tyr
 		Viewport viewport;
 		viewport.width = viewportWidth;
 		viewport.height = viewportHeight;
-
-		// Freshly (re)created G-buffer/depth images are undefined until this transition - unlike
-		// the swap chain image, these aren't cycled every frame, so it must only run once per
-		// (re)creation.
-		if (viewportTextureIsNew)
-		{
-			ImageBarrier barriers[4]{};
-
-			barriers[0].image = gbufferAlbedoAO.image;
-			barriers[0].srcAccess = BARRIER_ACCESS_NONE;
-			barriers[0].dstAccess = BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-			barriers[0].srcLayout = IMAGE_LAYOUT_UNKNOWN;
-			barriers[0].dstLayout = gbufferAlbedoAO.imageLayout;
-			barriers[0].subresourceRange.aspect = SUBRESOURCE_ASPECT_COLOUR_BIT;
-			barriers[0].subresourceRange.mipCount = 1;
-			barriers[0].subresourceRange.arrayLayerCount = 1;
-			barriers[0].srcStage = PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-			barriers[0].dstStage = PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-
-			barriers[1] = barriers[0];
-			barriers[1].image = gbufferNormalRoughMetal.image;
-			barriers[1].dstLayout = gbufferNormalRoughMetal.imageLayout;
-
-			barriers[2] = barriers[0];
-			barriers[2].image = gbufferMotion.image;
-			barriers[2].dstLayout = gbufferMotion.imageLayout;
-
-			barriers[3].image = depthBuffer.image;
-			barriers[3].srcAccess = BARRIER_ACCESS_NONE;
-			barriers[3].dstAccess = BARRIER_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-			barriers[3].srcLayout = IMAGE_LAYOUT_UNKNOWN;
-			barriers[3].dstLayout = depthBuffer.imageLayout;
-			barriers[3].subresourceRange.aspect = SUBRESOURCE_ASPECT_DEPTH_BIT;
-			barriers[3].subresourceRange.mipCount = 1;
-			barriers[3].subresourceRange.arrayLayerCount = 1;
-			barriers[3].srcStage = PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-			barriers[3].dstStage = PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-
-			cmdList.AddBarriers(nullptr, 0, barriers, 4);
-		}
 
 		// TODO: Render for all views and create render area for each view by calling GraphicsUtility::CreateRenderArea
 		RenderingInfo renderingInfo{};
@@ -1074,46 +1039,6 @@ namespace tyr
 			return;
 		}
 
-		const Texture& gbufferAlbedoAO = m_Registry.GetTexture(gbufferAlbedoAOHandle);
-		const Texture& gbufferNormalRoughMetal = m_Registry.GetTexture(gbufferNormalRoughMetalHandle);
-		const Texture& depthBuffer = m_Registry.GetTexture(depthBufferHandle);
-		const Texture& outputTexture = m_Registry.GetTexture(viewportColourTextureHandle);
-
-		// GeometryPass wrote these as attachments - make them visible to this pass's shader
-		// reads. Layout stays GENERAL throughout (memory/execution barrier only, no transition).
-		{
-			ImageBarrier barriers[3]{};
-
-			barriers[0].image = gbufferAlbedoAO.image;
-			barriers[0].srcAccess = BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-			barriers[0].dstAccess = BARRIER_ACCESS_SHADER_READ_BIT;
-			barriers[0].srcLayout = gbufferAlbedoAO.imageLayout;
-			barriers[0].dstLayout = gbufferAlbedoAO.imageLayout;
-			barriers[0].subresourceRange.aspect = SUBRESOURCE_ASPECT_COLOUR_BIT;
-			barriers[0].subresourceRange.mipCount = 1;
-			barriers[0].subresourceRange.arrayLayerCount = 1;
-			barriers[0].srcStage = PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-			barriers[0].dstStage = PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-
-			barriers[1] = barriers[0];
-			barriers[1].image = gbufferNormalRoughMetal.image;
-			barriers[1].srcLayout = gbufferNormalRoughMetal.imageLayout;
-			barriers[1].dstLayout = gbufferNormalRoughMetal.imageLayout;
-
-			barriers[2].image = depthBuffer.image;
-			barriers[2].srcAccess = BARRIER_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-			barriers[2].dstAccess = BARRIER_ACCESS_SHADER_READ_BIT;
-			barriers[2].srcLayout = depthBuffer.imageLayout;
-			barriers[2].dstLayout = depthBuffer.imageLayout;
-			barriers[2].subresourceRange.aspect = SUBRESOURCE_ASPECT_DEPTH_BIT;
-			barriers[2].subresourceRange.mipCount = 1;
-			barriers[2].subresourceRange.arrayLayerCount = 1;
-			barriers[2].srcStage = PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-			barriers[2].dstStage = PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-
-			cmdList.AddBarriers(nullptr, 0, barriers, 3);
-		}
-
 		cmdList.BindComputePipeline(m_Resources.lightingPipeline);
 		cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.lightingPipeline);
 
@@ -1129,27 +1054,11 @@ namespace tyr
 		const uint groupCountX = (viewportWidth + 7) / 8;
 		const uint groupCountY = (viewportHeight + 7) / 8;
 		cmdList.Dispatch(groupCountX, groupCountY, 1);
-
-		// This pass's write needs to be visible to GUIPass's later sampled read of the same
-		// texture (ImGui::Image() on the Viewport panel).
-		{
-			ImageBarrier barrier{};
-			barrier.image = outputTexture.image;
-			barrier.srcAccess = BARRIER_ACCESS_SHADER_WRITE_BIT;
-			barrier.dstAccess = BARRIER_ACCESS_SHADER_READ_BIT;
-			barrier.srcLayout = outputTexture.imageLayout;
-			barrier.dstLayout = outputTexture.imageLayout;
-			barrier.subresourceRange.aspect = SUBRESOURCE_ASPECT_COLOUR_BIT;
-			barrier.subresourceRange.mipCount = 1;
-			barrier.subresourceRange.arrayLayerCount = 1;
-			barrier.srcStage = PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-			barrier.dstStage = PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-			cmdList.AddBarriers(nullptr, 0, &barrier, 1);
-		}
 	}
 
-	void Renderer::SetupRayTracingBuildPass(RenderGraphBuilder& builder)
+	void Renderer::SetupBLASBuildPass(RenderGraphBuilder& builder, uint renderFrameIndex)
 	{
+		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
 		const PipelineStage asBuildStage = PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT;
 
 		// This frame's BLAS builds read straight out of the global vertex/index buffers via GPU
@@ -1157,10 +1066,14 @@ namespace tyr
 		// ACCELERATION_STRUCTURE_READ - that access type is for reading an already-built AS.
 		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.vertexBuffer), asBuildStage, BARRIER_ACCESS_SHADER_READ_BIT);
 		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.indexBuffer), asBuildStage, BARRIER_ACCESS_SHADER_READ_BIT);
-		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.tlasInstanceBuffer), asBuildStage, BARRIER_ACCESS_SHADER_READ_BIT);
+
+		for (const BLASBuildRecord& record : renderFrame.blasBuildsToRecord)
+		{
+			builder.WriteAccelerationStructure(*record.blasResource, asBuildStage, BARRIER_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT);
+		}
 	}
 
-	void Renderer::RecordRayTracingBuildPass(CommandList& cmdList, uint renderFrameIndex)
+	void Renderer::RecordBLASBuildPass(CommandList& cmdList, uint renderFrameIndex)
 	{
 		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
 
@@ -1176,22 +1089,33 @@ namespace tyr
 			buildInfo.scratchBuffer = blasScratchBuffer;
 			buildInfo.scratchOffset = record.scratchOffset;
 			cmdList.BuildAccelerationStructures(&buildInfo, 1);
-
-			// Every build in this frame's batch reuses this same slot's scratch range
-			// sequentially, and the TLAS build below may reference any BLAS built here, which
-			// Vulkan requires to have completed construction first - one barrier serves both needs.
-			PipelineBarrier barrier{};
-			barrier.srcAccess = BARRIER_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT;
-			barrier.dstAccess = static_cast<BarrierAccess>(BARRIER_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT | BARRIER_ACCESS_ACCELERATION_STRUCTURE_READ_BIT);
-			barrier.srcStage = PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT;
-			barrier.dstStage = PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT;
-			cmdList.AddBarriers(nullptr, 0, nullptr, 0, &barrier, 1);
 		}
+	}
 
+	void Renderer::SetupTLASBuildPass(RenderGraphBuilder& builder, uint renderFrameIndex)
+	{
+		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
+		const PipelineStage asBuildStage = PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT;
+
+		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.tlasInstanceBuffer), asBuildStage, BARRIER_ACCESS_SHADER_READ_BIT);
+
+		// Every BLAS this tick's build batch touched must be visible before the TLAS build below
+		// reads it - declared here (rather than a manual barrier) so a future pass (e.g. a
+		// shadow/reflection pass reading the TLAS) just adds its own ReadAccelerationStructure
+		// the same way, with no barrier bookkeeping of its own to get right.
+		for (const BLASBuildRecord& record : renderFrame.blasBuildsToRecord)
+		{
+			builder.ReadAccelerationStructure(*record.blasResource, asBuildStage, BARRIER_ACCESS_ACCELERATION_STRUCTURE_READ_BIT);
+		}
+		builder.WriteAccelerationStructure(m_Resources.tlas[renderFrameIndex], asBuildStage, BARRIER_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT);
+	}
+
+	void Renderer::RecordTLASBuildPass(CommandList& cmdList, uint renderFrameIndex)
+	{
 		// Full rebuild every frame - refitting (only valid for topology-unchanged, transform-only
 		// updates) is a possible later optimization, not needed for correctness now.
 		AccelerationStructureBuildInfo tlasBuildInfo;
-		tlasBuildInfo.accelerationStructure = m_Resources.tlas[renderFrameIndex];
+		tlasBuildInfo.accelerationStructure = m_Resources.tlas[renderFrameIndex].accelerationStructure;
 		tlasBuildInfo.instanceBuffer = m_Registry.GetBuffer(m_Resources.tlasInstanceBuffer).buffer;
 		tlasBuildInfo.instanceBufferOffset = (size_t)renderFrameIndex * RenderConstants::c_TLASInstanceBufferSize;
 		tlasBuildInfo.instanceCount = m_TLASInstanceCount;
@@ -1211,17 +1135,6 @@ namespace tyr
 		Viewport viewport;
 		viewport.width = windowWidth;
 		viewport.height = windowHeight;
-
-		const ImageHandle swapChainImage = window.swapChain->GetImages()[window.swapChainImageIndex];
-
-		// A newly acquired swap chain image's layout is undefined - transition it to whatever
-		// layout rendering needs before using it as a colour attachment below. This is the only
-		// pass touching the swap chain image each frame.
-		{
-			ImageBarrier barrier{};
-			window.swapChain->CreateRenderingImageBarrier(barrier, swapChainImage);
-			cmdList.AddBarriers(nullptr, 0, &barrier, 1);
-		}
 
 		RenderingInfo renderingInfo{};
 		renderingInfo.renderArea.offset = { 0, 0 };
@@ -1247,14 +1160,6 @@ namespace tyr
 		cmdList.SetScissor(&renderingInfo.renderArea, 1);
 		m_GUIPass->Execute(cmdList, m_RenderFrames[renderFrameIndex], renderFrameIndex);
 		cmdList.EndRendering();
-
-		// Presenting requires the image to be in the present-source layout, not whatever
-		// rendering left it in - GUI is always the last thing drawn into this image each frame.
-		{
-			ImageBarrier barrier{};
-			window.swapChain->CreatePresentingImageBarrier(barrier, swapChainImage);
-			cmdList.AddBarriers(nullptr, 0, &barrier, 1);
-		}
 	}
 
 	void Renderer::BuildAndExecuteRenderGraph(uint renderFrameIndex, uint64 frameNumber, bool hasActiveScene, bool hasValidSwapChainImage)
@@ -1338,8 +1243,18 @@ namespace tyr
 			graph.RegisterBuffer(&m_Registry.GetBuffer(guiGraphBuffers[i]));
 		}
 
+		// Every texture in this tick's upload requests is freshly created and going through
+		// this path for the first time - force UNKNOWN so the graph's first-touch logic below
+		// produces the real UNDEFINED->GENERAL transition instead of a same-layout no-op.
+		for (const TextureUploadRequest& request : renderFrame.textureUploadRequests)
+		{
+			Texture& uploadTexture = m_Registry.GetTexture(request.dstTexture);
+			uploadTexture.imageLayout = IMAGE_LAYOUT_UNKNOWN;
+			graph.RegisterTexture(&uploadTexture);
+		}
+
 		graph.AddPass("Transfer",
-			[this](RenderGraphBuilder& builder) { m_TransferPass->Setup(builder); },
+			[this, &renderFrame](RenderGraphBuilder& builder) { m_TransferPass->Setup(builder, renderFrame); },
 			[this, renderFrameIndex](CommandList& cl) { RecordTransferPass(cl, renderFrameIndex); },
 			RenderGraphPhase::Transfer, CommandQueueType::CQ_GRAPHICS);
 
@@ -1347,6 +1262,57 @@ namespace tyr
 		// above still runs regardless, since it's not tied to the window.
 		if (hasValidSwapChainImage)
 		{
+			// Resolved once here and reused for registration below and for the pass setup
+			// lambdas further down - null or zero-sized exactly when RecordGeometryPass/
+			// RecordLightingPass would themselves skip (no RenderViewport yet, or not sized).
+			RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
+			const bool hasViewportTextures = viewportData && viewportData->width != 0 && viewportData->height != 0;
+
+			Texture* gbufferAlbedoAO = nullptr;
+			Texture* gbufferNormalRoughMetal = nullptr;
+			Texture* gbufferMotion = nullptr;
+			Texture* depthBuffer = nullptr;
+			Texture* colourTexture = nullptr;
+
+			if (hasViewportTextures)
+			{
+				gbufferAlbedoAO = &m_Registry.GetTexture(viewportData->gbufferAlbedoAO);
+				gbufferNormalRoughMetal = &m_Registry.GetTexture(viewportData->gbufferNormalRoughMetal);
+				gbufferMotion = &m_Registry.GetTexture(viewportData->gbufferMotion);
+				depthBuffer = &m_Registry.GetTexture(viewportData->depthBuffer);
+				colourTexture = &m_Registry.GetTexture(viewportData->colourTexture);
+
+				// A freshly (re)created texture's imageLayout is pre-set to its steady-state
+				// value, not UNKNOWN, even though the real image always starts life as
+				// UNDEFINED - force it to UNKNOWN here, once, so the render graph's own
+				// first-touch logic below produces the real transition instead of a same-layout
+				// no-op. Every later tick is unaffected, since the graph's own persisted state
+				// is correct from here on.
+				if (viewportData->isNew)
+				{
+					gbufferAlbedoAO->imageLayout = IMAGE_LAYOUT_UNKNOWN;
+					gbufferNormalRoughMetal->imageLayout = IMAGE_LAYOUT_UNKNOWN;
+					gbufferMotion->imageLayout = IMAGE_LAYOUT_UNKNOWN;
+					depthBuffer->imageLayout = IMAGE_LAYOUT_UNKNOWN;
+					colourTexture->imageLayout = IMAGE_LAYOUT_UNKNOWN;
+					viewportData->isNew = false;
+				}
+
+				graph.RegisterTexture(gbufferAlbedoAO);
+				graph.RegisterTexture(gbufferNormalRoughMetal);
+				graph.RegisterTexture(gbufferMotion);
+				graph.RegisterTexture(depthBuffer);
+				graph.RegisterTexture(colourTexture);
+			}
+
+			Texture& swapChainImageProxy = window->swapChainImageProxies[window->swapChainImageIndex];
+			swapChainImageProxy.Reset();
+			swapChainImageProxy.imageLayout = IMAGE_LAYOUT_UNKNOWN;
+			swapChainImageProxy.image = window->swapChain->GetImages()[window->swapChainImageIndex];
+			swapChainImageProxy.info.mipCount = 1;
+			swapChainImageProxy.info.arrayLayerCount = 1;
+			graph.RegisterTexture(&swapChainImageProxy);
+
 			// Same phase as "Geometry" below and added first, so this always executes (and has
 			// its buffer usages recorded) before GeometryPass's own indirect draw reads what this
 			// pass wrote.
@@ -1356,31 +1322,82 @@ namespace tyr
 				RenderGraphPhase::Geometry, CommandQueueType::CQ_GRAPHICS);
 
 			graph.AddPass("Geometry",
-				[this](RenderGraphBuilder& builder) { m_GeometryPass->Setup(builder); },
+				[this, gbufferAlbedoAO, gbufferNormalRoughMetal, gbufferMotion, depthBuffer](RenderGraphBuilder& builder)
+				{
+					m_GeometryPass->Setup(builder);
+					if (!gbufferAlbedoAO)
+						return;
+					builder.WriteTexture(*gbufferAlbedoAO, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
+					builder.WriteTexture(*gbufferNormalRoughMetal, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
+					builder.WriteTexture(*gbufferMotion, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
+					builder.WriteTexture(*depthBuffer, PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, BARRIER_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
+				},
 				[this, renderFrameIndex](CommandList& cl) { RecordGeometryPass(cl, renderFrameIndex); },
 				RenderGraphPhase::Geometry, CommandQueueType::CQ_GRAPHICS);
 
-			// Builds at most one pending mesh's BLAS, then rebuilds the TLAS from this frame's
-			// active instances. Nothing reads the TLAS yet - this just keeps it current for when
-			// a later pass does.
-			graph.AddPass("RayTracingBuild",
-				[this](RenderGraphBuilder& builder) { SetupRayTracingBuildPass(builder); },
-				[this, renderFrameIndex](CommandList& cl) { RecordRayTracingBuildPass(cl, renderFrameIndex); },
+			// Every BLAS this tick's build batch will touch, plus the TLAS rebuilt every tick -
+			// registered here so both passes' usage declarations below have a valid index.
+			// Nothing reads the TLAS yet - a future shadow/reflection pass just adds its own
+			// ReadAccelerationStructure the same way these two passes already do.
+			for (const BLASBuildRecord& record : renderFrame.blasBuildsToRecord)
+			{
+				graph.RegisterAccelerationStructure(record.blasResource);
+			}
+			graph.RegisterAccelerationStructure(&m_Resources.tlas[renderFrameIndex]);
+
+			// Builds at most one pending mesh's BLAS.
+			graph.AddPass("BLASBuild",
+				[this, renderFrameIndex](RenderGraphBuilder& builder) { SetupBLASBuildPass(builder, renderFrameIndex); },
+				[this, renderFrameIndex](CommandList& cl) { RecordBLASBuildPass(cl, renderFrameIndex); },
+				RenderGraphPhase::RayTracing, CommandQueueType::CQ_GRAPHICS);
+
+			// Rebuilds the TLAS from this frame's active instances - registered after "BLASBuild"
+			// in the same phase, so the render graph's own barrier for any BLAS built above lands
+			// before this pass runs.
+			graph.AddPass("TLASBuild",
+				[this, renderFrameIndex](RenderGraphBuilder& builder) { SetupTLASBuildPass(builder, renderFrameIndex); },
+				[this, renderFrameIndex](CommandList& cl) { RecordTLASBuildPass(cl, renderFrameIndex); },
 				RenderGraphPhase::RayTracing, CommandQueueType::CQ_GRAPHICS);
 
 			// Reads the G-buffer/depth GeometryPass just wrote and writes the shaded result into
 			// the viewport colour texture. No new buffer barrier needed for the read-after-read
 			// on scene-info/lights.
 			graph.AddPass("Lighting",
-				[](RenderGraphBuilder&) {},
+				[gbufferAlbedoAO, gbufferNormalRoughMetal, depthBuffer, colourTexture](RenderGraphBuilder& builder)
+				{
+					if (!gbufferAlbedoAO)
+						return;
+					builder.ReadTexture(*gbufferAlbedoAO, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+					builder.ReadTexture(*gbufferNormalRoughMetal, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+					builder.ReadTexture(*depthBuffer, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+					builder.WriteTexture(*colourTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
+				},
 				[this, renderFrameIndex](CommandList& cl) { RecordLightingPass(cl, renderFrameIndex); },
 				RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
 
-			// Always added, even on a frame with nothing to draw - it's what transitions the
-			// swap chain image to the present-source layout.
+			// Always added, even on a frame with nothing to draw - this is the only pass that
+			// touches the swap chain image.
 			graph.AddPass("GUI",
-				[this](RenderGraphBuilder& builder) { m_GUIPass->Setup(builder); },
+				[this, colourTexture, &swapChainImageProxy, window](RenderGraphBuilder& builder)
+				{
+					m_GUIPass->Setup(builder);
+					if (colourTexture)
+						builder.ReadTexture(*colourTexture, PIPELINE_STAGE_FRAGMENT_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+					builder.WriteTexture(swapChainImageProxy, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, window->swapChain->GetRenderingWriteAccess(), window->swapChain->GetRenderingLayout());
+				},
 				[this, renderFrameIndex](CommandList& cl) { RecordGUIPass(cl, renderFrameIndex); },
+				RenderGraphPhase::Output, CommandQueueType::CQ_GRAPHICS);
+
+			// Otherwise-empty - its only purpose is declaring the swap chain image's final
+			// per-tick layout, so the render graph transitions it to present-source the same way
+			// it would any other resource. Registered right after "GUI" in the same phase, which
+			// executes in registration order, so this always runs last.
+			graph.AddPass("Present",
+				[&swapChainImageProxy](RenderGraphBuilder& builder)
+				{
+					builder.WriteTexture(swapChainImageProxy, PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, BARRIER_ACCESS_NONE, IMAGE_LAYOUT_PRESENT_SRC);
+				},
+				[](CommandList&) {},
 				RenderGraphPhase::Output, CommandQueueType::CQ_GRAPHICS);
 		}
 
@@ -1539,9 +1556,9 @@ namespace tyr
 			// A mesh whose one-time BLAS build already ran owns an acceleration structure backed
 			// by a range of the shared storage buffer - both must be freed here, or the
 			// acceleration structure leaks and its storage range is never reclaimed.
-			if (mesh.blas)
+			if (mesh.blas.accelerationStructure)
 			{
-				m_Ctx.device->DeleteAccelerationStructure(mesh.blas);
+				m_Ctx.device->DeleteAccelerationStructure(mesh.blas.accelerationStructure);
 				m_AllocManager.FreeBLASStorageAllocation(mesh.blasStorageAllocation);
 			}
 			m_Registry.DeleteMesh(handle);
@@ -2518,10 +2535,9 @@ namespace tyr
 
 	void Renderer::CreateAccelerationStructures()
 	{
-		// One TLAS per buffered RenderFrame slot - see RenderResources::tlas's own comment. Sized
-		// once for the worst case (every active mesh instance visible); the TLAS itself is never
-		// recreated, only rebuilt (see RecordRayTracingBuildPass). m_Resources.blasScratchBuffer
-		// is the one that grows on demand, since a mesh's triangle count isn't known up front.
+		// One TLAS per buffered RenderFrame slot, sized once for the worst case (every active
+		// mesh instance visible) - never recreated, only rebuilt. The scratch buffer is the one
+		// that grows on demand, since a mesh's triangle count isn't known up front.
 		AccelerationStructureDesc tlasDesc;
 		tlasDesc.debugName = "TLAS";
 		tlasDesc.type = AccelerationStructureType::TopLevel;
@@ -2529,16 +2545,15 @@ namespace tyr
 
 		for (uint i = 0; i < RenderConstants::c_BufferedFrameCount; ++i)
 		{
-			m_Resources.tlas[i] = m_Ctx.device->CreateAccelerationStructure(tlasDesc);
+			m_Resources.tlas[i].accelerationStructure = m_Ctx.device->CreateAccelerationStructure(tlasDesc);
 			// Every slot's TLAS shares the same desc, so the same scratch size - just keep
 			// whichever came back, they're all identical.
-			m_TLASScratchPerSlotSize = m_Ctx.device->GetAccelerationStructureBuildScratchSize(m_Resources.tlas[i]);
+			m_TLASScratchPerSlotSize = m_Ctx.device->GetAccelerationStructureBuildScratchSize(m_Resources.tlas[i].accelerationStructure);
 		}
 
 		RenderBufferDesc scratchDesc;
 		scratchDesc.debugName = "TLAS Scratch Buffer";
-		// One c_BufferedFrameCount-th per buffered RenderFrame slot - see
-		// RenderResources::tlasScratchBuffer's own comment.
+		// One c_BufferedFrameCount-th per buffered RenderFrame slot.
 		scratchDesc.size = m_TLASScratchPerSlotSize * RenderConstants::c_BufferedFrameCount;
 		scratchDesc.usage = RenderBufferUsage::RayTracing;
 		m_Resources.tlasScratchBuffer = m_Registry.CreateBuffer(scratchDesc);
@@ -2548,7 +2563,7 @@ namespace tyr
 	{
 		for (uint i = 0; i < RenderConstants::c_BufferedFrameCount; ++i)
 		{
-			m_Ctx.device->DeleteAccelerationStructure(m_Resources.tlas[i]);
+			m_Ctx.device->DeleteAccelerationStructure(m_Resources.tlas[i].accelerationStructure);
 		}
 		m_Registry.DeleteBuffer(m_Resources.tlasScratchBuffer);
 		if (m_Resources.blasScratchBuffer)
@@ -2559,8 +2574,8 @@ namespace tyr
 
 	void Renderer::EnsureBLASScratchCapacity(size_t requiredPerSlotSize)
 	{
-		// m_BLASScratchCapacity is a PER-SLOT size (see RenderResources::blasScratchBuffer's own
-		// comment) - the buffer itself is c_BufferedFrameCount times this.
+		// m_BLASScratchCapacity is a per-slot size - the buffer itself is c_BufferedFrameCount
+		// times this.
 		if (requiredPerSlotSize <= m_BLASScratchCapacity)
 		{
 			return;

@@ -88,40 +88,9 @@ namespace tyr
 	{
         RenderRegistry& registry = *RenderRegistry::Instance();
 
-		// Every one of these textures was just created (Device::CreateImage can only legally
-		// set VkImageCreateInfo::initialLayout to UNDEFINED, never straight to the texture's
-		// intended steady-state layout - see its own comment), so each one still needs an
-		// actual transition out of UNDEFINED before it can be a valid copy destination. This
-		// assumes each texture only ever goes through UploadToTextures once, right after
-		// creation - a genuine re-upload later would need to preserve existing content instead
-		// of transitioning from UNDEFINED (which permits the driver to discard it).
-		{
-			LocalArray<ImageBarrier, RenderConstants::c_MaxTextures> initialBarriers;
-			for (uint i = 0; i < count; ++i)
-			{
-				const Texture& dstTexture = registry.GetTexture(requests[i].dstTexture);
-
-				ImageBarrier& barrier = initialBarriers.ExpandOne();
-				barrier.image = dstTexture.image;
-				barrier.srcAccess = BARRIER_ACCESS_NONE;
-				barrier.dstAccess = BARRIER_ACCESS_TRANSFER_WRITE_BIT;
-				barrier.srcLayout = IMAGE_LAYOUT_UNKNOWN;
-				barrier.dstLayout = dstTexture.imageLayout;
-				barrier.srcStage = PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-				barrier.dstStage = PIPELINE_STAGE_TRANSFER_BIT;
-				barrier.subresourceRange.aspect = SUBRESOURCE_ASPECT_COLOUR_BIT;
-				barrier.subresourceRange.baseMipLevel = 0;
-				barrier.subresourceRange.mipCount = dstTexture.info.mipCount;
-				barrier.subresourceRange.baseArrayLayer = 0;
-				barrier.subresourceRange.arrayLayerCount = dstTexture.info.arrayLayerCount;
-			}
-
-			if (!initialBarriers.IsEmpty())
-			{
-				commandList.AddBarriers(nullptr, 0, initialBarriers.Data(), initialBarriers.Size());
-			}
-		}
-
+		// The UNDEFINED->GENERAL transition into a valid copy destination is declared by
+		// TransferPass::Setup via the render graph, which runs this pass - nothing further
+		// needed here before the copy itself.
 		LocalArray<BufferImageCopyInfo, RenderConstants::c_MaxMips> copyInfos;
 		for (uint i = 0; i < count; ++i)
 		{
@@ -132,13 +101,11 @@ namespace tyr
 			copyInfos.Clear();
 		}
 
-		// Unlike the shared buffers (mesh/vertex/index/etc, tracked and barriered by the render
-		// graph - see Renderer::BuildAndExecuteRenderGraph), individual textures aren't
-		// registered with it at all, so nothing else ever synchronizes this copy against
-		// MeshPS.hlsl's later Sample() of the same image within the same command buffer. Without
-		// this, the two have no ordering guarantee - the shader read is free to happen before the
-		// copy's writes are visible, which reads back as all-zero/black regardless of how correct
-		// the actual texture data is.
+		// Deliberately kept manual rather than declared through the render graph: these textures
+		// are sampled through the bindless array at an index resolved entirely on the GPU, so
+		// there's no CPU-known "consumer pass" to pin a graph read declaration to. This barrier
+		// is the only thing making the upload visible to any later shader read - do not remove
+		// it without replacing it with something equivalent.
 		if (count > 0)
 		{
 			LocalArray<ImageBarrier, RenderConstants::c_MaxTextures> barriers;

@@ -97,6 +97,10 @@ namespace tyr
 		// the structure was created with ACCELERATION_STRUCTURE_BUILD_ALLOW_UPDATE_BIT.
 		size_t GetAccelerationStructureBuildScratchSize(AccelerationStructureHandle handle) const;
 		size_t GetAccelerationStructureUpdateScratchSize(AccelerationStructureHandle handle) const;
+		// Every scratch buffer offset passed to BuildAccelerationStructures must be a multiple of
+		// this - implementation-defined, not a fixed spec constant like acceleration structure
+		// storage's own 256-byte offset alignment.
+		size_t GetAccelerationStructureScratchOffsetAlignment() const;
 		DescriptorPoolHandle CreateDescriptorPool(const DescriptorPoolDesc& desc);
 		void DeleteDescriptorPool(DescriptorPoolHandle handle);
 		DescriptorSetLayoutHandle CreateDescriptorSetLayout(const DescriptorSetLayoutDesc& desc);

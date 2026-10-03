@@ -4,6 +4,7 @@
 #include "RenderAPI/Sync.h"
 #include "RenderAPI/SwapChain.h"
 #include "RenderBase/RenderHandles.h"
+#include "RenderResource/Texture.h"
 
 namespace tyr
 {
@@ -31,6 +32,12 @@ namespace tyr
 		// this by renderFrameIndex could reuse a given semaphore for a *different* image than
 		// the one whose previous Present() actually retired it.
 		SemaphoreHandle executeCompleteSemaphores[SwapChain::c_MaxImages]{};
+		// A lightweight per-slot stand-in so the render graph can track and barrier the swap
+		// chain image it doesn't itself own - repointed at whichever image was just acquired
+		// and force-reset every tick, since a newly-acquired image's true prior state is
+		// indeterminate (it's one of several physical images, last touched an unknown number of
+		// frames ago).
+		Texture swapChainImageProxies[SwapChain::c_MaxImages]{};
 	};
 
 	// A RemoveWindow request queued for deferred processing (see RemoveWindow's own comment).

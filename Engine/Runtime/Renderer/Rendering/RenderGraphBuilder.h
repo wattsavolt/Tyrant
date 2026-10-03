@@ -17,6 +17,9 @@ namespace tyr
         void ReadTexture(const Texture& texture, PipelineStage stage, BarrierAccess access, ImageLayout layout = IMAGE_LAYOUT_GENERAL);
         void WriteTexture(const Texture& texture, PipelineStage stage, BarrierAccess access, ImageLayout layout = IMAGE_LAYOUT_GENERAL);
 
+        void ReadAccelerationStructure(const RenderAccelerationStructure& accelerationStructure, PipelineStage stage, BarrierAccess access);
+        void WriteAccelerationStructure(const RenderAccelerationStructure& accelerationStructure, PipelineStage stage, BarrierAccess access);
+
     private:
         RenderGraph& m_Graph;
         uint m_PassIndex;

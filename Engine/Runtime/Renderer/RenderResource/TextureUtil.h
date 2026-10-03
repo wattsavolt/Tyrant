@@ -11,6 +11,12 @@ namespace tyr
 		// Returns the pixel size for the specified format in bytes
 		static uint CalculateTexelFormatSize(PixelFormat format);
 
+		static constexpr bool IsDepthFormat(PixelFormat format)
+		{
+			return format == PF_D16_UNORM || format == PF_D24_UNORM_S8_UINT
+				|| format == PF_D32_SFLOAT || format == PF_D32_FLOAT_S8_UINT;
+		}
+
 		static float SRGBToLinear(float f);
 
 		static float LinearToSRGB(float f);

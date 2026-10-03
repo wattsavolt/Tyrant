@@ -11,6 +11,7 @@ namespace tyr
     class CommandList;
     struct RenderBuffer;
     struct Texture;
+    struct RenderAccelerationStructure;
 
     using RenderGraphPassExecuteFn = Function<void(CommandList&)>;
 
@@ -54,6 +55,14 @@ namespace tyr
         RGArray<RenderGraphResourceUsage> usages;
     };
 
+    // No layout concept, same as buffers - an acceleration-structure barrier is a plain memory
+    // barrier (access/stage only), not a resource-specific transition.
+    struct RenderGraphAccelerationStructureNode
+    {
+        RenderAccelerationStructure* accelerationStructure;
+        RGArray<RenderGraphResourceUsage> usages;
+    };
+
     // Pipeline phases for deterministic ordering
     enum class RenderGraphPhase : uint8
     {
@@ -77,6 +86,7 @@ namespace tyr
         // further copying or grouping.
         RGArray<BufferBarrier> bufferBarriers;
         RGArray<ImageBarrier> textureBarriers;
+        RGArray<PipelineBarrier> accelerationStructureBarriers;
     };
 
 }

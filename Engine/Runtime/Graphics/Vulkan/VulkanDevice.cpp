@@ -188,13 +188,23 @@ namespace tyr
 		physDevFeatures.pNext = &vulkanPhysicalDeviceAccelerationStructureFeatures;
 		vkGetPhysicalDeviceFeatures2(device, &physDevFeatures);
 
+		VkPhysicalDeviceAccelerationStructurePropertiesKHR accelerationStructureProperties{};
+		accelerationStructureProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
+
 		VkPhysicalDeviceRayTracingPipelinePropertiesKHR rayTracingPipelineProperties{};
 		rayTracingPipelineProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+		rayTracingPipelineProperties.pNext = &accelerationStructureProperties;
 		VkPhysicalDeviceProperties2 deviceProperties2{};
 		deviceProperties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
 		deviceProperties2.pNext = &rayTracingPipelineProperties;
 		vkGetPhysicalDeviceProperties2(device, &deviceProperties2);
 		m_RayTracingPipelineProperties = rayTracingPipelineProperties;
+		m_AccelerationStructureProperties = accelerationStructureProperties;
+		// Both pNext chain pointers above point at locals that are about to go out of scope -
+		// clear them now that the values themselves have been copied out, so these long-lived
+		// copies never carry a dangling pointer.
+		m_RayTracingPipelineProperties.pNext = nullptr;
+		m_AccelerationStructureProperties.pNext = nullptr;
 
 		if (!vulkanPhysicalDevice12Features.descriptorIndexing)
 		{

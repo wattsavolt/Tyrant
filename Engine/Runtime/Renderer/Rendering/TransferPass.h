@@ -30,14 +30,13 @@ namespace tyr
 
 		void Recreate(const TransferPassArgs& args);
 
-		void Setup(RenderGraphBuilder& builder);
-		// renderFrame/data are taken here as parameters, not stored on this object - see
-		// GUIPass::Execute's own comment on why a single long-lived instance reused every tick
-		// must not cache per-tick state like this across a Recreate()/Execute() pair: nothing
-		// guarantees a later tick's Recreate() can't run before this tick's own Execute() does,
-		// and unlike GUIPass's symptom (a wrong vertex/index base), the equivalent bug here would
-		// have this pass upload a completely different (and possibly not-yet-populated) tick's
-		// data into this tick's destination buffers, or skip this tick's own uploads entirely.
+		// renderFrame is taken as a parameter rather than stored, for the same reason Execute's
+		// own parameters are - declares a WriteTexture for each of this tick's texture upload
+		// requests, so the render graph inserts their UNDEFINED->GENERAL transition.
+		void Setup(RenderGraphBuilder& builder, const RenderFrame& renderFrame);
+		// renderFrame/data are taken here as parameters, not stored on this object - a reused
+		// long-lived instance must not cache per-tick state, since a later tick's Recreate()
+		// could run before this tick's own Execute() does.
 		void Execute(CommandList& cmdList, RenderFrame& renderFrame, RenderData& data);
 
 	private:

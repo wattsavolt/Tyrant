@@ -48,21 +48,16 @@ namespace tyr
 		Scene& scene = data.scenePool[handle.h];
 		scene.name = name;
 		scene.id = nextID++;
-		// Covers pool-slot reuse - see ImmediateSceneData's own comment.
+		// Covers pool-slot reuse.
 		m_Renderer.GetImmediateSceneData(handle).Reset();
 		return handle;
 	}
 
 	void RendererAPI::RemoveScene(SceneHandle handle)
 	{
-		// The scene's data can't be reset right here - RenderAsync might still be reading/
-		// writing it from up to c_BufferedFrameCount frames ago. Stopping it being assigned as
-		// the active scene from this point on (below) means no *new* task will ever be created
-		// that still references it, so every task that could still be using it is one of the
-		// (at most c_BufferedFrameCount) already created - and since tasks are strictly
-		// serialized, all of those are guaranteed done once this cycles back around, the same
-		// bound RemoveWindow's deferred deletion relies on. PrepareForNextFrame processes this
-		// list once that's confirmed, or the destructor force-flushes it at shutdown.
+		// The scene's data can't be reset right here - RenderAsync might still be reading/writing
+		// it from frames ago. Clearing it as the active scene means no new task will reference
+		// it, so every existing reference is guaranteed done once this cycles back around.
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		if (renderFrame.activeScene == handle)
 		{
@@ -119,13 +114,12 @@ namespace tyr
 		ImageBindingInfo imageInfo;
 		imageInfo.imageView = texture.imageView;
 		imageInfo.hasSampler = false;
-		// Must match whatever layout this texture is actually kept in (see UploadToTextures'
-		// barrier, which transitions to and leaves it at texture.imageLayout) - a mismatch here
-		// is invalid descriptor usage and reads back as garbage/black regardless of how correct
-		// the underlying image data is.
+		// Must match whatever layout this texture is actually kept in - a mismatch here is
+		// invalid descriptor usage and reads back as garbage/black regardless of how correct the
+		// underlying image data is.
 		imageInfo.layout = texture.imageLayout;
 
-		// Queued rather than written immediately - see PendingDescriptorUpdates' own comment.
+		// Queued rather than written immediately.
 		m_Renderer.QueueImageBindingUpdate(TYR_BINDING_TEXTURES, handle.h.index, imageInfo);
 
 		return handle;
@@ -147,11 +141,9 @@ namespace tyr
 		LocalObjectPool<RenderViewport, RenderConstants::c_MaxScenes>& pool = m_Renderer.GetRenderViewportPool();
 		RenderViewport& rv = pool[viewport.h];
 
-		// Only ever (re)creates this tick's own slot's targets - the other c_BufferedFrameCount-1
-		// slots keep whatever they already have until their own turn comes back around (stable for
-		// the whole tick - see GetRenderFrameIndex's own comment). Main thread only, like every
-		// RendererAPI Create*/Delete* call - RecordGeometryPass/RecordLightingPass (a worker thread)
-		// only ever read their own tick's slot, so nothing else touches it concurrently here.
+		// Only ever (re)creates this tick's own slot's targets - the other slots keep whatever
+		// they already have until their own turn comes back around. Main thread only, like every
+		// RendererAPI Create*/Delete* call.
 		const uint renderFrameIndex = m_Renderer.GetRenderFrameIndex();
 		const RenderViewportTextureData& current = rv.textureData[renderFrameIndex];
 		if (!current.colourTexture || current.width != width || current.height != height)
@@ -160,7 +152,7 @@ namespace tyr
 		}
 
 		// Record the latest requested size and flag the other two buffered slots to pick it up on
-		// their own next turn - see RenderViewport's own comment on resize propagation.
+		// their own next turn.
 		rv.requestedWidth = width;
 		rv.requestedHeight = height;
 		for (uint i = 1; i < RenderConstants::c_BufferedFrameCount; ++i)
@@ -597,11 +589,8 @@ namespace tyr
 		}
 
 #if TYR_RENDER_DEBUG
-		// TEMP DEBUG - flicker investigation. Checks the final CPU-side vertex array - common to
-		// both the ImGui and Nuklear submission paths - immediately before anything in the
-		// upload/GPU pipeline touches it. If this ever fires, the NaN is already present on the
-		// CPU before WriteUploadBuffer/FrameUploadAllocator/TransferPass get involved at all,
-		// ruling all of that out in one shot. Revert after.
+		// Checks the final CPU-side vertex array, common to both the ImGui and Nuklear
+		// submission paths, before anything in the upload/GPU pipeline touches it.
 		for (uint v = 0; v < data.vertices.Size(); ++v)
 		{
 			const GUIVertex& vertex = data.vertices[v];
@@ -613,10 +602,8 @@ namespace tyr
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		RenderResources& resources = m_Renderer.GetRenderResources();
 		// guiVertexBuffer/guiIndexBuffer are each one physical buffer, c_BufferedFrameCount slots
-		// big - this slot's own writes/reads are confined to its own c_BufferedFrameCount-th of it
-		// (see RenderConstants::c_GUIVertexBufferSize's own comment on why), at this fixed byte
-		// base. GUIPass::Execute applies the matching base on the read side (BindIndexBuffer's
-		// offset, DrawIndexed's vertexOffset).
+		// big - this slot's own writes/reads are confined to its own slot, at this fixed byte
+		// base.
 		const uint renderFrameIndex = m_Renderer.GetRenderFrameIndex();
 		const size_t vertexBase = renderFrameIndex * RenderConstants::c_GUIVertexBufferSize;
 		const size_t indexBase = renderFrameIndex * RenderConstants::c_GUIIndexBufferSize;

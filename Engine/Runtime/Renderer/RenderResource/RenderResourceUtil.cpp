@@ -4,6 +4,7 @@
 #include "RenderAPI/CommandList.h"
 #include "RenderResource/RenderBuffer.h"
 #include "RenderResource/Texture.h"
+#include "RenderResource/TextureUtil.h"
 #include "Rendering/RenderGraphTypes.h"
 
 namespace tyr
@@ -174,8 +175,7 @@ namespace tyr
 
 		texture.imageLayout = desc.layout;
 
-		const bool isDepthTexture = desc.info.format == PF_D16_UNORM || desc.info.format == PF_D24_UNORM_S8_UINT
-			|| desc.info.format == PF_D32_SFLOAT || desc.info.format == PF_D32_FLOAT_S8_UINT;
+		const bool isDepthTexture = TextureUtil::IsDepthFormat(desc.info.format);
 
 		ImageViewDesc viewDesc;
 #if !TYR_FINAL

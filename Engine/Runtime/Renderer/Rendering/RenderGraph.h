@@ -25,6 +25,7 @@ namespace tyr
 
         void RegisterBuffer(RenderBuffer* buffer);
         void RegisterTexture(Texture* texture);
+        void RegisterAccelerationStructure(RenderAccelerationStructure* accelerationStructure);
 
     private:
         friend class RenderGraphBuilder;
@@ -35,6 +36,7 @@ namespace tyr
         RGArray<RenderGraphPassNode> m_PassNodes;
         RGArray<RenderGraphBufferNode> m_BufferNodes;
         RGArray<RenderGraphTextureNode> m_TextureNodes;
+        RGArray<RenderGraphAccelerationStructureNode> m_AccelerationStructureNodes;
 
         // Pass indices bucketed by phase, in registration order - gives Execute() deterministic
         // phase ordering without ever physically reordering m_PassNodes, which must stay

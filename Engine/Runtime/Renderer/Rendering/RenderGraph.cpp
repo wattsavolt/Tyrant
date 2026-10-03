@@ -4,6 +4,8 @@
 #include "RenderAPI/CommandList.h"
 #include "RenderResource/RenderBuffer.h"
 #include "RenderResource/Texture.h"
+#include "RenderResource/TextureUtil.h"
+#include "RenderResource/RenderAccelerationStructure.h"
 
 namespace tyr
 {
@@ -20,6 +22,12 @@ namespace tyr
     {
         texture->renderGraphIndex = m_TextureNodes.Size();
         m_TextureNodes.Add({ texture });
+    }
+
+    void RenderGraph::RegisterAccelerationStructure(RenderAccelerationStructure* accelerationStructure)
+    {
+        accelerationStructure->renderGraphIndex = m_AccelerationStructureNodes.Size();
+        m_AccelerationStructureNodes.Add({ accelerationStructure });
     }
 
     // ----------------------------------------------------------------
@@ -156,6 +164,12 @@ namespace tyr
                 barrier.dstStage = usage.stage;
                 barrier.dstAccess = usage.access;
                 barrier.dstLayout = usage.layout;
+                barrier.subresourceRange.aspect = TextureUtil::IsDepthFormat(node.texture->info.format)
+                    ? SUBRESOURCE_ASPECT_DEPTH_BIT : SUBRESOURCE_ASPECT_COLOUR_BIT;
+                barrier.subresourceRange.baseMipLevel = 0;
+                barrier.subresourceRange.mipCount = node.texture->info.mipCount;
+                barrier.subresourceRange.baseArrayLayer = 0;
+                barrier.subresourceRange.arrayLayerCount = node.texture->info.arrayLayerCount;
 
                 pass.textureBarriers.Add(barrier);
 
@@ -175,6 +189,59 @@ namespace tyr
             node.texture->queueTypeState = currentQueueType;
             node.texture->lastAccessType = currentAccessType;
             node.texture->lastStageMask = currentStageMask;
+        }
+
+        // ------------------------------------------------------------
+        // Acceleration structures - same reasoning as buffers above, no layout concept.
+        // ------------------------------------------------------------
+        for (uint i = 0; i < m_AccelerationStructureNodes.Size(); ++i)
+        {
+            RenderGraphAccelerationStructureNode& node = m_AccelerationStructureNodes[i];
+
+            BarrierAccess currentAccess = node.accelerationStructure->accessState;
+            CommandQueueType currentQueueType = node.accelerationStructure->queueTypeState;
+            RenderGraphAccessType currentAccessType = node.accelerationStructure->lastAccessType;
+            PipelineStage currentStageMask = node.accelerationStructure->lastStageMask;
+
+            for (const RenderGraphResourceUsage& usage : node.usages)
+            {
+                RenderGraphPassNode& pass = m_PassNodes[usage.passIndex];
+
+                if (currentQueueType != pass.queueType)
+                {
+                    currentAccess = usage.access;
+                    currentAccessType = usage.accessType;
+                    currentStageMask = usage.stage;
+                    currentQueueType = pass.queueType;
+                    continue;
+                }
+
+                const bool stageAlreadyCovered = (currentStageMask & usage.stage) == usage.stage;
+                const bool bothReads = currentAccessType == RenderGraphAccessType::Read
+                    && usage.accessType == RenderGraphAccessType::Read;
+                if (bothReads && stageAlreadyCovered)
+                    continue;
+
+                PipelineBarrier barrier{};
+                barrier.srcStage = PIPELINE_STAGE_ALL_COMMANDS_BIT;
+                barrier.srcAccess = currentAccess;
+                barrier.dstStage = usage.stage;
+                barrier.dstAccess = usage.access;
+
+                pass.accelerationStructureBarriers.Add(barrier);
+
+                currentStageMask = bothReads
+                    ? static_cast<PipelineStage>(currentStageMask | usage.stage)
+                    : usage.stage;
+                currentAccess = usage.access;
+                currentAccessType = usage.accessType;
+            }
+
+            // Persist final state for next frame
+            node.accelerationStructure->accessState = currentAccess;
+            node.accelerationStructure->queueTypeState = currentQueueType;
+            node.accelerationStructure->lastAccessType = currentAccessType;
+            node.accelerationStructure->lastStageMask = currentStageMask;
         }
     }
 
@@ -199,13 +266,15 @@ namespace tyr
 
                 CommandList& cmdList = *cmdLists[pass.queueType];
 
-                if (!pass.bufferBarriers.IsEmpty() || !pass.textureBarriers.IsEmpty())
+                if (!pass.bufferBarriers.IsEmpty() || !pass.textureBarriers.IsEmpty() || !pass.accelerationStructureBarriers.IsEmpty())
                 {
                     cmdList.AddBarriers(
                         pass.bufferBarriers.IsEmpty() ? nullptr : pass.bufferBarriers.Data(),
                         pass.bufferBarriers.Size(),
                         pass.textureBarriers.IsEmpty() ? nullptr : pass.textureBarriers.Data(),
-                        pass.textureBarriers.Size()
+                        pass.textureBarriers.Size(),
+                        pass.accelerationStructureBarriers.IsEmpty() ? nullptr : pass.accelerationStructureBarriers.Data(),
+                        pass.accelerationStructureBarriers.Size()
                     );
                 }
 

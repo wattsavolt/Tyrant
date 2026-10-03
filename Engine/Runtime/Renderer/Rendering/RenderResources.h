@@ -7,6 +7,7 @@
 #include "RenderAPI/AccelerationStructure.h"
 #include "RenderBase/RenderHandles.h"
 #include "RenderConstants.h"
+#include "RenderResource/RenderAccelerationStructure.h"
 
 namespace tyr
 {
@@ -81,7 +82,7 @@ namespace tyr
 		// Ray-traced shadows - one top-level acceleration structure per buffered RenderFrame
 		// slot, rebuilt every frame from the active scene's mesh instances. Per-mesh bottom-level
 		// structures live on Mesh::blas instead.
-		AccelerationStructureHandle tlas[RenderConstants::c_BufferedFrameCount];
+		RenderAccelerationStructure tlas[RenderConstants::c_BufferedFrameCount];
 		// This frame's AccelerationStructureInstance entries, uploaded from CPU then read
 		// directly by the TLAS build (not bound in the bindless descriptor set). One physical
 		// buffer, each buffered slot confined to its own byte range.
@@ -89,9 +90,8 @@ namespace tyr
 		// Sized once at startup from the TLAS build's scratch-size requirement (every slot needs
 		// the same amount) - one physical buffer, each slot confined to its own byte range.
 		RenderBufferHandle tlasScratchBuffer;
-		// Grown on demand to fit the largest single BLAS build seen so far, reused across every
-		// mesh's build in a slot's batch rather than sized per-mesh or per-build. Builds within
-		// one frame's batch reuse this range sequentially, not concurrently.
+		// Grown on demand to fit the sum of one tick's whole BLAS build batch - each build gets
+		// its own aligned sub-range within it, not a range shared/reused across builds.
 		RenderBufferHandle blasScratchBuffer;
 		// One shared buffer every mesh's BLAS is suballocated into, instead of each mesh getting
 		// its own dedicated allocation. Not a per-slot/per-frame resource - a BLAS is built once

@@ -5,6 +5,8 @@
 #include "Rendering/RenderFrame.h"
 #include "Rendering/RenderData.h"
 #include "RenderTransfer/GpuTransferUtil.h"
+#include "RenderTransfer/UploadRequest.h"
+#include "RenderResource/Texture.h"
 
 namespace tyr
 {
@@ -25,7 +27,7 @@ namespace tyr
 		m_Resources = args.resources;
 	}
 
-	void TransferPass::Setup(RenderGraphBuilder& builder)
+	void TransferPass::Setup(RenderGraphBuilder& builder, const RenderFrame& renderFrame)
 	{
 		const RenderBufferHandle buffers[] = {
 			m_Resources->meshBuffer, m_Resources->meshLODBuffer, m_Resources->meshletBuffer,
@@ -34,10 +36,9 @@ namespace tyr
 			m_Resources->spotLightBuffer, m_Resources->sceneInfoBuffer,
 			m_Resources->guiVertexBuffer, m_Resources->guiIndexBuffer,
 			// GPU-driven instance culling - this frame's active instance list and the atomic
-			// draw counter's reset-to-zero, both uploaded from RenderAsync's merge step. See
-			// RecordCullingPass/RenderResources.h.
+			// draw counter's reset-to-zero, both uploaded from RenderAsync's merge step.
 			m_Resources->activeMeshInstanceIndexBuffer, m_Resources->drawCountBuffer,
-			// Same merge step, for the TLAS build's instance data - see SetupRayTracingBuildPass.
+			// Same merge step, for the TLAS build's instance data.
 			m_Resources->tlasInstanceBuffer
 		};
 
@@ -45,15 +46,18 @@ namespace tyr
 		{
 			builder.WriteBuffer(m_Registry->GetBuffer(buffer), PIPELINE_STAGE_TRANSFER_BIT, BARRIER_ACCESS_TRANSFER_WRITE_BIT);
 		}
+
+		for (const TextureUploadRequest& request : renderFrame.textureUploadRequests)
+		{
+			builder.WriteTexture(m_Registry->GetTexture(request.dstTexture), PIPELINE_STAGE_TRANSFER_BIT, BARRIER_ACCESS_TRANSFER_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
+		}
 	}
 
 	void TransferPass::Execute(CommandList& cmdList, RenderFrame& renderFrame, RenderData& data)
 	{
-		// Read straight off RenderFrame, not a RenderData-owned copy: RenderAsync's own wait (see
-		// its own comment - PrepareForNextFrame already waits for this slot's previous task before
-		// it's reused) already guarantees nothing else touches this slot's RenderFrame while this
-		// runs, so a plain read here is just as safe as reading a copy would be, without the
-		// pointless per-frame duplication a copy would add.
+		// Read straight off RenderFrame, not a RenderData-owned copy - nothing else touches this
+		// slot's RenderFrame while this runs, so a plain read is just as safe as a copy without
+		// the pointless duplication.
 		if (!renderFrame.assetBufferUploadRequests.IsEmpty())
 		{
 			GpuTransferUtil::UploadToBuffers(cmdList, renderFrame.assetBufferUploadRequests.Data(), renderFrame.assetBufferUploadRequests.Size());
@@ -69,7 +73,7 @@ namespace tyr
 			GpuTransferUtil::UploadToTextures(cmdList, renderFrame.textureUploadRequests.Data(), renderFrame.textureUploadRequests.Size());
 		}
 
-		// Worker-owned, not RenderFrame - see RenderData::workerUploadRequests' own comment.
+		// Worker-owned, not RenderFrame.
 		if (!data.workerUploadRequests.IsEmpty())
 		{
 			GpuTransferUtil::UploadToBuffers(cmdList, data.workerUploadRequests.Data(), data.workerUploadRequests.Size());

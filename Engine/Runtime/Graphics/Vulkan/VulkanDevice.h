@@ -45,6 +45,9 @@ namespace tyr
 		/// tracing pipeline's shader binding table.
 		const VkPhysicalDeviceRayTracingPipelinePropertiesKHR& GetRayTracingPipelineProperties() const { return m_RayTracingPipelineProperties; }
 
+		/// Alignment requirements for acceleration structure scratch buffer addresses and offsets.
+		const VkPhysicalDeviceAccelerationStructurePropertiesKHR& GetAccelerationStructureProperties() const { return m_AccelerationStructureProperties; }
+
 		/// Returns a set of features that the application can use to check if a specific feature is supported. 
 		const VkPhysicalDeviceFeatures& GetDeviceFeatures() const { return m_VulkanDeviceFeatures; }
 
@@ -94,6 +97,7 @@ namespace tyr
 		VkPhysicalDeviceFeatures m_VulkanDeviceFeatures;
 		VkPhysicalDeviceMemoryProperties m_VulkanMemoryProperties;
 		VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_RayTracingPipelineProperties{};
+		VkPhysicalDeviceAccelerationStructurePropertiesKHR m_AccelerationStructureProperties{};
 
 		VulkanQueueGroup m_QueueGroups[c_QueueGroupCount];
 

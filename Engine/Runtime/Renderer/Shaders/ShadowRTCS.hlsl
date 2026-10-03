@@ -45,7 +45,9 @@ struct PushConstants
 };
 [[vk::push_constant]] PushConstants g_PushConstants;
 
+// Matches ShadowRTPass.h's c_ShadowLightType* constants exactly.
 static const uint c_LightTypeDirectional = 0;
+static const uint c_LightTypeNone = 3;
 
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID)
@@ -56,6 +58,15 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 	}
 
 	const uint3 outputCoord = uint3(dispatchThreadId.xy, g_PushConstants.outputSlot);
+
+	// No shadow-casting light at this slot this tick - write fully lit and skip the trace
+	// entirely, so a slot not currently used by any light never holds stale data from whatever
+	// light last occupied it.
+	if (g_PushConstants.lightType == c_LightTypeNone)
+	{
+		shadowMasksRaw[g_PushConstants.renderFrameIndex][outputCoord] = float2(1.0f, 0.0f);
+		return;
+	}
 
 	const int3 pixelCoord = int3(dispatchThreadId.xy, 0);
 	const float deviceDepth = textures[g_PushConstants.depthIndex].Load(pixelCoord).r;

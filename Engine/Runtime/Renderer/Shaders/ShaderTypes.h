@@ -36,10 +36,18 @@
 // sampled/filtered, so a single storage-image binding covers every pass that touches them.
 #define TYR_BINDING_SHADOW_MASKS_RAW 20
 #define TYR_BINDING_SHADOW_MASKS 21
+// DeferredLightingCS's light-index -> shadow-slot lookup for point/spot lights, rebuilt and
+// re-uploaded every tick. Point entries first, then spot - see
+// RenderConstants::c_ShadowLightSlotMapEntryCount.
+#define TYR_BINDING_SHADOW_LIGHT_SLOT_MAP 22
 
 // How many copies of the per-frame render targets TYR_BINDING_LIGHTING_OUTPUT holds, one
 // per buffered frame slot - kept in sync with the matching C++ constant.
 #define TYR_BUFFERED_FRAME_COUNT 3
+
+// Where spot-light entries start in TYR_BINDING_SHADOW_LIGHT_SLOT_MAP (point entries come
+// first) - kept in sync with RenderConstants::c_MaxPointLights.
+#define TYR_MAX_POINT_LIGHTS 16
 
 // Must match ModelImporter's meshlet build limits.
 #define TYR_MAX_MESHLET_VERTICES 64

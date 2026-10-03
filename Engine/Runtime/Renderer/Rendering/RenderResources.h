@@ -83,6 +83,14 @@ namespace tyr
 		// active viewport slot's shadowMasksRaw array (see RenderViewportTextureData).
 		ComputePipelineHandle shadowRTPipeline;
 		ShaderModuleHandle shadowRTComputeShader;
+		// Spatial + temporal denoise of shadowRTPipeline's raw output, one dispatch per active
+		// shadow slot.
+		ComputePipelineHandle shadowDenoisePipeline;
+		ShaderModuleHandle shadowDenoiseComputeShader;
+		// DeferredLightingCS's light-index -> shadow-slot lookup, CPU-built and re-uploaded every
+		// tick (not buffered per RenderFrame slot - written and consumed within the same tick, no
+		// different than activeMeshInstanceIndexBuffer).
+		RenderBufferHandle shadowLightSlotMapBuffer;
 
 		// Ray-traced shadows - one top-level acceleration structure per buffered RenderFrame
 		// slot, rebuilt every frame from the active scene's mesh instances. Per-mesh bottom-level

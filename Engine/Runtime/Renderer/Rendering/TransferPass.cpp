@@ -39,7 +39,10 @@ namespace tyr
 			// draw counter's reset-to-zero, both uploaded from RenderAsync's merge step.
 			m_Resources->activeMeshInstanceIndexBuffer, m_Resources->drawCountBuffer,
 			// Same merge step, for the TLAS build's instance data.
-			m_Resources->tlasInstanceBuffer
+			m_Resources->tlasInstanceBuffer,
+			// This tick's light-index -> shadow-slot lookup, built once ShadowRTPass's selection
+			// is known.
+			m_Resources->shadowLightSlotMapBuffer
 		};
 
 		for (RenderBufferHandle buffer : buffers)

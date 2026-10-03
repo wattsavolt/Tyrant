@@ -32,14 +32,22 @@ namespace tyr
 		m_DepthBuffer = depthBuffer;
 		m_GBufferNormalRoughMetal = gbufferNormalRoughMetal;
 		m_SelectedLocalLights.Clear();
+		m_ActiveSlots.Clear();
+		m_PresentDirLightSlots.Clear();
 
 		for (uint i = 0; i < RenderConstants::c_MaxDirLights; ++i)
 		{
 			m_ActiveDirLights[i] = {};
 		}
 
+		// Only slots with an actual directional light get dispatched (a real trace if it casts
+		// shadows, a cheap "fully lit" fallback if not) - this still keeps every slot
+		// DeferredLightingCS's dirLightCount-bounded loop could ever read fresh, without wasting
+		// dispatches on pool slots with no light in them at all.
 		for (DirLightHandle handle : scene.content.dirLights)
 		{
+			m_PresentDirLightSlots.Add(handle.h.index);
+			m_ActiveSlots.Add(handle.h.index);
 			if (m_Registry->GetDirectionalLight(handle).info.castsShadow)
 			{
 				m_ActiveDirLights[handle.h.index] = handle;
@@ -111,6 +119,7 @@ namespace tyr
 			selected.spotHandle = candidates[pass].spotHandle;
 			selected.lightIndex = candidates[pass].lightIndex;
 			selected.slot = RenderConstants::c_MaxDirLights + pass;
+			m_ActiveSlots.Add(selected.slot);
 		}
 
 		const PipelineStage computeStage = PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -122,19 +131,6 @@ namespace tyr
 
 	void ShadowRTPass::Execute(CommandList& cmdList, uint renderFrameIndex, uint width, uint height)
 	{
-		if (m_SelectedLocalLights.IsEmpty())
-		{
-			bool anyDirActive = false;
-			for (uint i = 0; i < RenderConstants::c_MaxDirLights; ++i)
-			{
-				anyDirActive |= (bool)m_ActiveDirLights[i];
-			}
-			if (!anyDirActive)
-			{
-				return;
-			}
-		}
-
 		cmdList.BindComputePipeline(m_Pipeline);
 		cmdList.BindDescriptorSet(m_Resources->descriptorSet, m_Pipeline);
 
@@ -148,21 +144,27 @@ namespace tyr
 		pushConstants.height = height;
 		pushConstants.renderFrameIndex = renderFrameIndex;
 
-		for (uint i = 0; i < RenderConstants::c_MaxDirLights; ++i)
+		for (uint i : m_PresentDirLightSlots)
 		{
-			if (!m_ActiveDirLights[i])
-			{
-				continue;
-			}
-
-			const DirectionalLightInfo& info = m_Registry->GetDirectionalLight(m_ActiveDirLights[i]).info;
-			pushConstants.lightType = 0;
 			pushConstants.outputSlot = i;
 			pushConstants.raysPerPixel = 1;
-			pushConstants.lightX = info.direction.x;
-			pushConstants.lightY = info.direction.y;
-			pushConstants.lightZ = info.direction.z;
-			pushConstants.range = 0.0f;
+
+			if (m_ActiveDirLights[i])
+			{
+				const DirectionalLightInfo& info = m_Registry->GetDirectionalLight(m_ActiveDirLights[i]).info;
+				pushConstants.lightType = c_ShadowLightTypeDirectional;
+				pushConstants.lightX = info.direction.x;
+				pushConstants.lightY = info.direction.y;
+				pushConstants.lightZ = info.direction.z;
+				pushConstants.range = 0.0f;
+			}
+			else
+			{
+				// A light is present at this slot but doesn't cast shadows - the shader writes a
+				// trivial "fully lit" result and returns immediately, so this slot never holds
+				// stale data from whatever light last occupied it.
+				pushConstants.lightType = c_ShadowLightTypeNone;
+			}
 
 			cmdList.PushConstants(m_Pipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(ShadowRTPushConstants), &pushConstants);
 			cmdList.Dispatch(groupsX, groupsY, 1);
@@ -176,7 +178,7 @@ namespace tyr
 			if (selected.isSpot)
 			{
 				const SpotLightInfo& info = m_Registry->GetSpotLight(selected.spotHandle).info;
-				pushConstants.lightType = 2;
+				pushConstants.lightType = c_ShadowLightTypeSpot;
 				pushConstants.lightX = info.position.x;
 				pushConstants.lightY = info.position.y;
 				pushConstants.lightZ = info.position.z;
@@ -189,7 +191,7 @@ namespace tyr
 			else
 			{
 				const PointLightInfo& info = m_Registry->GetPointLight(selected.pointHandle).info;
-				pushConstants.lightType = 1;
+				pushConstants.lightType = c_ShadowLightTypePoint;
 				pushConstants.lightX = info.position.x;
 				pushConstants.lightY = info.position.y;
 				pushConstants.lightZ = info.position.z;

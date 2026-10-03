@@ -30,6 +30,7 @@ namespace tyr
 	class GeometryPass;
 	class GUIPass;
 	class ShadowRTPass;
+	class ShadowDenoisePass;
 	class RenderSubmissionThread;
 	class RenderGraphBuilder;
 	struct BufferBindingUpdate;
@@ -248,6 +249,7 @@ namespace tyr
 		GeometryPass* m_GeometryPass = nullptr;
 		GUIPass* m_GUIPass = nullptr;
 		ShadowRTPass* m_ShadowRTPass = nullptr;
+		ShadowDenoisePass* m_ShadowDenoisePass = nullptr;
 		uint m_RenderFrameIndex = 0;
 		// Starts true so the very first Render() call runs the one-time descriptor binding block.
 		bool m_FirstRender = true;

@@ -23,13 +23,20 @@ namespace tyr
 		ComputePipelineHandle pipeline;
 	};
 
+	// Matches ShadowRTCS.hlsl's own light-type constants exactly.
+	static constexpr uint c_ShadowLightTypeDirectional = 0;
+	static constexpr uint c_ShadowLightTypePoint = 1;
+	static constexpr uint c_ShadowLightTypeSpot = 2;
+	// No shadow-casting light occupies this slot right now - the shader writes a trivial "fully
+	// lit" result and returns immediately, rather than leaving stale data from whatever light
+	// last used this slot.
+	static constexpr uint c_ShadowLightTypeNone = 3;
+
 	// Matches PushConstants in ShadowRTCS.hlsl byte for byte. Declared here (not local to
 	// ShadowRTPass.cpp) since Renderer::CreatePipelines also needs its exact size for the
 	// pipeline's push-constant range.
 	struct ShadowRTPushConstants
 	{
-		// 0 = Directional, 1 = Point, 2 = Spot - matches ShadowRTCS.hlsl's own light-type
-		// constants.
 		uint lightType;
 		uint depthIndex;
 		uint normalRoughMetalIndex;
@@ -92,6 +99,10 @@ namespace tyr
 			return m_SelectedLocalLights;
 		}
 		bool IsDirLightActive(uint dirLightIndex) const { return (bool)m_ActiveDirLights[dirLightIndex]; }
+		// Flat union of active directional slots (by pool index) and selected local-light slots -
+		// every layer ShadowDenoisePass needs to process this tick, with no need for it to repeat
+		// the same directional/local iteration logic.
+		const LocalArray<uint, RenderConstants::c_MaxShadowSlots>& GetActiveSlots() const { return m_ActiveSlots; }
 
 	private:
 		RenderRegistry* m_Registry;
@@ -105,6 +116,12 @@ namespace tyr
 		// Execute's registry lookup goes through the normal generation check) when that slot's
 		// directional light is active and shadow-casting this tick.
 		DirLightHandle m_ActiveDirLights[RenderConstants::c_MaxDirLights] = {};
+		// Every pool slot with a directional light present this tick, shadow-casting or not -
+		// Execute only ever dispatches for these (a real trace, or a cheap "fully lit" fallback),
+		// never for a slot with no light at all, since DeferredLightingCS's dirLightCount-bounded
+		// loop will never read a slot beyond the active light count anyway.
+		LocalArray<uint, RenderConstants::c_MaxDirLights> m_PresentDirLightSlots;
+		LocalArray<uint, RenderConstants::c_MaxShadowSlots> m_ActiveSlots;
 		TextureHandle m_DepthBuffer;
 		TextureHandle m_GBufferNormalRoughMetal;
 	};

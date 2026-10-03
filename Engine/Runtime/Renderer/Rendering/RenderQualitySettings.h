@@ -44,7 +44,7 @@ namespace tyr
 			break;
 		case QualityLevel::Medium:
 			settings.shadowRaysPerPixel = 1;
-			settings.maxShadowCastingLocalLights = 2;
+			settings.maxShadowCastingLocalLights = 4;
 			settings.denoiserSpatialRadius = 1;
 			settings.taaEnabled = true;
 			settings.taaHistoryBlendWeight = 0.9f;
@@ -52,7 +52,7 @@ namespace tyr
 			break;
 		case QualityLevel::High:
 			settings.shadowRaysPerPixel = 2;
-			settings.maxShadowCastingLocalLights = 4;
+			settings.maxShadowCastingLocalLights = 8;
 			settings.denoiserSpatialRadius = 2;
 			settings.taaEnabled = true;
 			settings.taaHistoryBlendWeight = 0.92f;
@@ -60,7 +60,7 @@ namespace tyr
 			break;
 		case QualityLevel::Ultra:
 			settings.shadowRaysPerPixel = 4;
-			settings.maxShadowCastingLocalLights = 8;
+			settings.maxShadowCastingLocalLights = 16;
 			settings.denoiserSpatialRadius = 2;
 			settings.taaEnabled = true;
 			settings.taaHistoryBlendWeight = 0.95f;

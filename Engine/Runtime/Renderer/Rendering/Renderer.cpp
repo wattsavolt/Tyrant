@@ -23,6 +23,7 @@
 #include "GeometryPass.h"
 #include "GUIPass.h"
 #include "ShadowRTPass.h"
+#include "ShadowDenoisePass.h"
 #include "RenderGraph.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphAllocation.h"
@@ -35,7 +36,10 @@ namespace tyr
 		constexpr size_t c_ActiveInstanceIndicesBytes = sizeof(uint) * RenderConstants::c_MaxMeshInstances;
 		constexpr size_t c_DrawCountResetBytes = sizeof(uint);
 		constexpr size_t c_TlasInstancesBytes = RenderConstants::c_TLASInstanceBufferSize;
-		constexpr size_t c_RTCullingStagingSlotSize = c_ActiveInstanceIndicesBytes + c_DrawCountResetBytes + c_TlasInstancesBytes;
+		// Also built and uploaded from the worker thread (once ShadowRTPass's selection is known),
+		// so it shares this same staging buffer rather than needing one of its own.
+		constexpr size_t c_ShadowLightSlotMapBytes = sizeof(uint) * RenderConstants::c_ShadowLightSlotMapEntryCount;
+		constexpr size_t c_RTCullingStagingSlotSize = c_ActiveInstanceIndicesBytes + c_DrawCountResetBytes + c_TlasInstancesBytes + c_ShadowLightSlotMapBytes;
 	}
 
 	bool Renderer::s_Instantiated = false;
@@ -411,7 +415,7 @@ namespace tyr
 
 		if (m_FirstRender)
 		{
-			constexpr uint bindingCount = 16;
+			constexpr uint bindingCount = 17;
 			BufferBindingInfo bindingInfos[bindingCount];
 			BufferBindingUpdate bindingUpdates[bindingCount];
 
@@ -439,6 +443,7 @@ namespace tyr
 			SetBinding(13, TYR_BINDING_VISIBLE_INSTANCE_INDICES, m_Resources.visibleInstanceIndexBuffer);
 			SetBinding(14, TYR_BINDING_INDIRECT_DRAW_COMMANDS, m_Resources.indirectDrawCommandBuffer);
 			SetBinding(15, TYR_BINDING_DRAW_COUNT, m_Resources.drawCountBuffer);
+			SetBinding(16, TYR_BINDING_SHADOW_LIGHT_SLOT_MAP, m_Resources.shadowLightSlotMapBuffer);
 
 			m_Ctx.device->UpdateDescriptorSet(m_Resources.descriptorSet, bindingUpdates, bindingCount);
 
@@ -1231,7 +1236,7 @@ namespace tyr
 			m_Resources.spotLightBuffer, m_Resources.sceneInfoBuffer,
 			m_Resources.activeMeshInstanceIndexBuffer, m_Resources.visibleInstanceIndexBuffer,
 			m_Resources.indirectDrawCommandBuffer, m_Resources.drawCountBuffer,
-			m_Resources.tlasInstanceBuffer
+			m_Resources.tlasInstanceBuffer, m_Resources.shadowLightSlotMapBuffer
 		};
 		constexpr uint bufferCount = (uint)(sizeof(graphBuffers) / sizeof(graphBuffers[0]));
 
@@ -1374,6 +1379,18 @@ namespace tyr
 				[this, renderFrameIndex](CommandList& cl) { RecordTLASBuildPass(cl, renderFrameIndex); },
 				RenderGraphPhase::RayTracing, CommandQueueType::CQ_GRAPHICS);
 
+			// DeferredLightingCS's light-index -> shadow-slot lookup for this tick - defaults to
+			// "nothing is shadowed" (c_ShadowSlotNone), filled in below once ShadowRTPass's
+			// selection is known. Uploaded unconditionally after, including the all-default case
+			// (e.g. no active viewport this tick), so a stale assignment from an earlier tick
+			// never lingers.
+			constexpr uint c_ShadowSlotNone = 0xFFFFFFFFu;
+			uint shadowLightSlotMap[RenderConstants::c_ShadowLightSlotMapEntryCount];
+			for (uint& slot : shadowLightSlotMap)
+			{
+				slot = c_ShadowSlotNone;
+			}
+
 			// Ray-traced shadow visibility for this tick's shadow-casting lights - registered
 			// after "TLASBuild" in the same phase, so the render graph's barrier for this tick's
 			// TLAS rebuild lands before this pass's own ReadAccelerationStructure runs.
@@ -1398,13 +1415,72 @@ namespace tyr
 						m_ShadowRTPass->Execute(cl, renderFrameIndex, shadowViewportWidth, shadowViewportHeight);
 					},
 					RenderGraphPhase::RayTracing, CommandQueueType::CQ_GRAPHICS);
+
+				// Denoise of this tick's raw shadow trace - registered right after "ShadowRT" in
+				// the same phase, so the render graph's barrier for its writes lands before this
+				// pass's reads. The previous buffered viewport slot's own shadowMasks texture (a
+				// distinct resource from this tick's) is this tick's temporal history, the same
+				// cross-slot-reuse pattern planned for TAA's own colour history.
+				const RenderViewport& parentViewport = m_RenderViewportPool[shadowScene.renderViewport.h];
+				const uint prevRenderFrameIndex = (renderFrameIndex + RenderConstants::c_BufferedFrameCount - 1) % RenderConstants::c_BufferedFrameCount;
+				const RenderViewportTextureData& prevViewportData = parentViewport.textureData[prevRenderFrameIndex];
+				const bool shadowHasHistory = prevViewportData.shadowMasks &&
+					prevViewportData.width == shadowViewportWidth && prevViewportData.height == shadowViewportHeight;
+				const TextureHandle shadowGBufferMotion = viewportData->gbufferMotion;
+				const TextureHandle shadowMasksHandle = viewportData->shadowMasks;
+				const TextureHandle prevShadowMasksHandle = prevViewportData.shadowMasks;
+
+				// A different buffered slot's own texture - never registered with this tick's
+				// graph otherwise, since nothing else here reads or writes it.
+				if (shadowHasHistory)
+				{
+					graph.RegisterTexture(&m_Registry.GetTexture(prevShadowMasksHandle));
+				}
+
+				graph.AddPass("ShadowDenoise",
+					[this, shadowDepthBuffer, shadowGBufferMotion, shadowMasksRawHandle, shadowMasksHandle, prevShadowMasksHandle, shadowHasHistory](RenderGraphBuilder& builder)
+					{
+						m_ShadowDenoisePass->Setup(builder, shadowDepthBuffer, shadowGBufferMotion,
+							shadowMasksRawHandle, shadowMasksHandle, prevShadowMasksHandle, shadowHasHistory);
+					},
+					[this, renderFrameIndex, prevRenderFrameIndex, shadowHasHistory, shadowViewportWidth, shadowViewportHeight](CommandList& cl)
+					{
+						m_ShadowDenoisePass->Execute(cl, m_ShadowRTPass->GetActiveSlots(), renderFrameIndex, prevRenderFrameIndex,
+							shadowHasHistory, shadowViewportWidth, shadowViewportHeight, m_QualitySettings.denoiserSpatialRadius);
+					},
+					RenderGraphPhase::RayTracing, CommandQueueType::CQ_GRAPHICS);
+
+				// Directional lights need no entry here - a directional light's own pool index
+				// already is its shadow slot (see ShadowRTPass), so only point/spot need a real
+				// lookup.
+				for (const ShadowRTPass::SelectedLocalLight& selected : m_ShadowRTPass->GetSelectedLocalLights())
+				{
+					const uint mapIndex = selected.isSpot ? (RenderConstants::c_MaxPointLights + selected.lightIndex) : selected.lightIndex;
+					shadowLightSlotMap[mapIndex] = selected.slot;
+				}
+			}
+
+			{
+				// Worker-thread-built, same staging mechanism the GPU-driven-culling data above
+				// uses (RendererAPI's shared upload allocator is main-thread-only).
+				const size_t stagingSlotBase = (size_t)renderFrameIndex * c_RTCullingStagingSlotSize;
+				const size_t shadowSlotMapOffset = stagingSlotBase + c_ActiveInstanceIndicesBytes + c_DrawCountResetBytes + c_TlasInstancesBytes;
+				RenderBuffer& stagingBuffer = m_Registry.GetBuffer(m_Resources.rtCullingStagingBuffer);
+				RenderResourceUtil::WriteUploadBuffer(stagingBuffer, *m_Ctx.device, shadowSlotMapOffset, shadowLightSlotMap, sizeof(shadowLightSlotMap));
+
+				BufferUploadRequest& request = m_Data.workerUploadRequests.ExpandOne();
+				request.srcBuffer = m_Resources.rtCullingStagingBuffer;
+				request.srcOffset = shadowSlotMapOffset;
+				request.dstBuffer = m_Resources.shadowLightSlotMapBuffer;
+				request.dstOffset = 0;
+				request.size = sizeof(shadowLightSlotMap);
 			}
 
 			// Reads the G-buffer/depth GeometryPass just wrote and writes the shaded result into
 			// the viewport colour texture. No new buffer barrier needed for the read-after-read
 			// on scene-info/lights.
 			graph.AddPass("Lighting",
-				[gbufferAlbedoAO, gbufferNormalRoughMetal, depthBuffer, colourTexture](RenderGraphBuilder& builder)
+				[this, gbufferAlbedoAO, gbufferNormalRoughMetal, depthBuffer, colourTexture, shadowMasks](RenderGraphBuilder& builder)
 				{
 					if (!gbufferAlbedoAO)
 						return;
@@ -1412,6 +1488,13 @@ namespace tyr
 					builder.ReadTexture(*gbufferNormalRoughMetal, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
 					builder.ReadTexture(*depthBuffer, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
 					builder.WriteTexture(*colourTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
+					if (shadowMasks)
+					{
+						// Written by "ShadowDenoise" above - this is what makes the shadow result
+						// actually visible to this pass's reads, not just computed.
+						builder.ReadTexture(*shadowMasks, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+					}
+					builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.shadowLightSlotMapBuffer), PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT);
 				},
 				[this, renderFrameIndex](CommandList& cl) { RecordLightingPass(cl, renderFrameIndex); },
 				RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
@@ -2036,6 +2119,14 @@ namespace tyr
 		{
 			ShaderDesc desc;
 			desc.entryPoint = "main";
+			desc.fileName = "ShadowDenoiseCS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_COMPUTE_BIT;
+			m_Resources.shadowDenoiseComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
 			desc.fileName = "GUIVS";
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_VERTEX_BIT;
@@ -2059,6 +2150,7 @@ namespace tyr
 		m_Ctx.device->DeleteShaderModule(m_Resources.lightingComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.cullingComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.shadowRTComputeShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.shadowDenoiseComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.guiVertexShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.guiPixelShader);
 		ShaderCreator::UnloadCompilerLibs();
@@ -2163,9 +2255,10 @@ namespace tyr
 			{
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
 				poolSize.descriptorType = DescriptorType::StorageBuffer;
-				// 11 existing + activeMeshInstanceIndexBuffer/visibleInstanceIndexBuffer/
-				// indirectDrawCommandBuffer/drawCountBuffer for GPU-driven instance culling.
-				poolSize.descriptorCount = 15;
+				// 11 original + activeMeshInstanceIndexBuffer/visibleInstanceIndexBuffer/
+				// indirectDrawCommandBuffer/drawCountBuffer for GPU-driven instance culling +
+				// shadowLightSlotMapBuffer for ray-traced shadows.
+				poolSize.descriptorCount = 16;
 			}
 			{
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
@@ -2265,6 +2358,7 @@ namespace tyr
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 			AddBinding(TYR_BINDING_SHADOW_MASKS, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
+			AddBinding(TYR_BINDING_SHADOW_LIGHT_SLOT_MAP, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 
 			m_Resources.descriptorSetLayout = m_Ctx.device->CreateDescriptorSetLayout(layoutDesc);
 
@@ -2452,6 +2546,19 @@ namespace tyr
 		shadowRTDesc.shader = m_Resources.shadowRTComputeShader;
 
 		m_Resources.shadowRTPipeline = m_Ctx.device->CreateComputePipeline(shadowRTDesc);
+
+		// Denoise of shadowRTPipeline's raw output.
+		ComputePipelineDesc shadowDenoiseDesc;
+		shadowDenoiseDesc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
+
+		PushConstantRange& shadowDenoisePushConstantRange = shadowDenoiseDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
+		shadowDenoisePushConstantRange.stageFlags = SHADER_STAGE_COMPUTE_BIT;
+		shadowDenoisePushConstantRange.offset = 0;
+		shadowDenoisePushConstantRange.size = sizeof(ShadowDenoisePushConstants);
+
+		shadowDenoiseDesc.shader = m_Resources.shadowDenoiseComputeShader;
+
+		m_Resources.shadowDenoisePipeline = m_Ctx.device->CreateComputePipeline(shadowDenoiseDesc);
 	}
 
 	void Renderer::DeletePipelines()
@@ -2461,6 +2568,7 @@ namespace tyr
 		m_Ctx.device->DeleteComputePipeline(m_Resources.lightingPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.cullingPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.shadowRTPipeline);
+		m_Ctx.device->DeleteComputePipeline(m_Resources.shadowDenoisePipeline);
 		m_Ctx.device->DeleteDescriptorSet(m_Resources.descriptorSet);
 		m_Ctx.device->DeleteDescriptorSetLayout(m_Resources.descriptorSetLayout);
 		m_Ctx.device->DeleteDescriptorPool(m_Resources.descriptorPool);
@@ -2597,6 +2705,13 @@ namespace tyr
 		}
 		{
 			RenderBufferDesc desc;
+			desc.debugName = "Shadow Light Slot Map Buffer";
+			desc.size = sizeof(uint) * RenderConstants::c_ShadowLightSlotMapEntryCount;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.shadowLightSlotMapBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
 			desc.debugName = "TLAS Instance Buffer";
 			// One c_BufferedFrameCount-th per buffered RenderFrame slot.
 			desc.size = RenderConstants::c_TLASInstanceBufferSize * RenderConstants::c_BufferedFrameCount;
@@ -2640,6 +2755,7 @@ namespace tyr
 		m_Registry.DeleteBuffer(m_Resources.visibleInstanceIndexBuffer);
 		m_Registry.DeleteBuffer(m_Resources.indirectDrawCommandBuffer);
 		m_Registry.DeleteBuffer(m_Resources.drawCountBuffer);
+		m_Registry.DeleteBuffer(m_Resources.shadowLightSlotMapBuffer);
 		m_Registry.DeleteBuffer(m_Resources.tlasInstanceBuffer);
 		m_Registry.DeleteBuffer(m_Resources.rtCullingStagingBuffer);
 		m_Registry.DeleteBuffer(m_Resources.blasStorageBuffer);
@@ -2773,6 +2889,12 @@ namespace tyr
 		shadowRTArgs.resources = &m_Resources;
 		shadowRTArgs.pipeline = m_Resources.shadowRTPipeline;
 		m_ShadowRTPass = new ShadowRTPass(shadowRTArgs);
+
+		ShadowDenoisePassArgs shadowDenoiseArgs;
+		shadowDenoiseArgs.registry = &m_Registry;
+		shadowDenoiseArgs.resources = &m_Resources;
+		shadowDenoiseArgs.pipeline = m_Resources.shadowDenoisePipeline;
+		m_ShadowDenoisePass = new ShadowDenoisePass(shadowDenoiseArgs);
 	}
 
 	void Renderer::DeletePasses()
@@ -2785,6 +2907,8 @@ namespace tyr
 		m_GUIPass = nullptr;
 		delete m_ShadowRTPass;
 		m_ShadowRTPass = nullptr;
+		delete m_ShadowDenoisePass;
+		m_ShadowDenoisePass = nullptr;
 	}
 
 	RenderPassHandle Renderer::CreateRenderPass()

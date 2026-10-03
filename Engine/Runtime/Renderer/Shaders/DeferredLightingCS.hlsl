@@ -25,6 +25,15 @@ cbuffer SceneInfoCBuffer : register(b0)
 // g_PushConstants.renderFrameIndex entry, never any other, so multiple slots' dispatches
 // can safely be in flight on the GPU at once.
 [[vk::binding(TYR_BINDING_LIGHTING_OUTPUT, 0)]] RWTexture2D<float4> outputImages[TYR_BUFFERED_FRAME_COUNT] : register(u14);
+// Denoised ray-traced shadow visibility, one array layer per shadow-casting light slot this
+// tick - see ShadowDenoiseCS.hlsl. A directional light's own pool index is directly its layer;
+// point/spot go through shadowLightSlotMap below instead, since there can be more of them than
+// affordable shadow slots.
+[[vk::binding(TYR_BINDING_SHADOW_MASKS, 0)]] RWTexture2DArray<float2> shadowMasks[TYR_BUFFERED_FRAME_COUNT] : register(u20);
+// textures[] above is unbounded, so it claims the rest of space0's t-registers - this needs a
+// distinct space, the same reason ShadowRTCS.hlsl's tlas does. The real Vulkan binding slot
+// comes entirely from [[vk::binding]].
+[[vk::binding(TYR_BINDING_SHADOW_LIGHT_SLOT_MAP, 0)]] StructuredBuffer<uint> shadowLightSlotMap : register(t0, space1);
 
 // Matches Renderer.cpp's LightingPushConstants byte-for-byte.
 struct PushConstants
@@ -79,19 +88,36 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
 	float3 colour = materialData.albedo * ambient * materialData.ambientOcclusion;
 
+	// Slot map entries hold this, meaning "not shadowed this tick" (not currently ray-traced at
+	// all, or no shadow-casting light at this index) - matches Renderer.cpp's c_ShadowSlotNone.
+	const uint c_ShadowSlotNone = 0xFFFFFFFFu;
+	const uint3 shadowPixelCoord = uint3(dispatchThreadId.xy, 0);
+
 	for (uint i = 0; i < dirLightCount; ++i)
 	{
-		colour += ComputeDirectionalLightEffect(dirLights[i], materialData, pixelPos, normal, viewDir);
+		// A directional light's own pool index is directly its shadow slot - ShadowRTCS.hlsl
+		// always writes every one of them a fresh value each tick, real or a trivial "fully lit"
+		// fallback, so this is always safe to sample with no further lookup.
+		const float shadow = shadowMasks[g_PushConstants.renderFrameIndex][uint3(shadowPixelCoord.xy, i)].r;
+		colour += ComputeDirectionalLightEffect(dirLights[i], materialData, pixelPos, normal, viewDir) * shadow;
 	}
 
 	for (uint j = 0; j < pointLightCount; ++j)
 	{
-		colour += ComputePointLightEffect(pointLights[j], materialData, pixelPos, normal, viewDir);
+		const uint shadowSlot = shadowLightSlotMap[j];
+		const float shadow = (shadowSlot != c_ShadowSlotNone)
+			? shadowMasks[g_PushConstants.renderFrameIndex][uint3(shadowPixelCoord.xy, shadowSlot)].r
+			: 1.0f;
+		colour += ComputePointLightEffect(pointLights[j], materialData, pixelPos, normal, viewDir) * shadow;
 	}
 
 	for (uint k = 0; k < spotLightCount; ++k)
 	{
-		colour += ComputeSpotLightEffect(spotLights[k], materialData, pixelPos, normal, viewDir);
+		const uint shadowSlot = shadowLightSlotMap[TYR_MAX_POINT_LIGHTS + k];
+		const float shadow = (shadowSlot != c_ShadowSlotNone)
+			? shadowMasks[g_PushConstants.renderFrameIndex][uint3(shadowPixelCoord.xy, shadowSlot)].r
+			: 1.0f;
+		colour += ComputeSpotLightEffect(spotLights[k], materialData, pixelPos, normal, viewDir) * shadow;
 	}
 
 	// This output texture is UNORM, not SRGB (SRGB doesn't support storage image usage on all

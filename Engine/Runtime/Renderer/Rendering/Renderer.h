@@ -12,6 +12,7 @@
 #include "RenderFrame.h"
 #include "RenderWindow.h"
 #include "RenderViewport.h"
+#include "RenderQualitySettings.h"
 #include "RenderContext.h"
 #include "RenderResources.h"
 #include "RenderData.h"
@@ -28,6 +29,7 @@ namespace tyr
 	class TransferPass;
 	class GeometryPass;
 	class GUIPass;
+	class ShadowRTPass;
 	class RenderSubmissionThread;
 	class RenderGraphBuilder;
 	struct BufferBindingUpdate;
@@ -159,12 +161,19 @@ namespace tyr
 		// RendererAPI::CreateTexture's bookkeeping - a separate, minimal copy since Renderer has
 		// no reference back to it. Used only by ResizeRenderViewportSlot.
 		TextureHandle CreateViewportTargetTexture(const char* debugName, PixelFormat format, ImageUsage usage, uint width, uint height);
+		// Shadow mask storage - a Texture2DArray (RenderConstants::c_MaxShadowSlots layers),
+		// storage-only (read/written via Load(), never sampled), so unlike
+		// CreateViewportTargetTexture this never registers into the bindless TYR_BINDING_TEXTURES
+		// array.
+		TextureHandle CreateShadowMaskArrayTexture(const char* debugName, uint width, uint height);
 		// Mirrors RendererAPI::DeleteTexture.
 		void DeleteViewportTargetTexture(TextureHandle handle);
 		// Keeps TYR_BINDING_LIGHTING_OUTPUT[renderFrameIndex] pointed at whatever colour texture
 		// is actually in the active scene's viewport at this slot right now - needed after a
 		// resize or whenever the active scene itself changes. A no-op once already correct.
 		void EnsureLightingOutputBound(uint renderFrameIndex, TextureHandle colourTexture);
+		// Same idea as EnsureLightingOutputBound, for the two shadow mask arrays.
+		void EnsureShadowMaskArraysBound(uint renderFrameIndex, TextureHandle shadowMasksRaw, TextureHandle shadowMasks);
 		// Actually deletes every buffered slot's textures (if any were ever created) and frees the
 		// pool slot - shared by ProcessFrameDeleteLists' handling of renderViewportsToDelete,
 		// wherever it's called from. Mirrors DeleteWindowResources.
@@ -228,6 +237,9 @@ namespace tyr
 		// The colour texture handle TYR_BINDING_LIGHTING_OUTPUT[slot] was last bound to - compared
 		// each tick so a scene switch with no actual resize still rebinds correctly.
 		TextureHandle m_LightingOutputBoundTextures[RenderConstants::c_BufferedFrameCount];
+		// Same idea as m_LightingOutputBoundTextures, for the two shadow mask arrays.
+		TextureHandle m_ShadowMasksRawBoundTextures[RenderConstants::c_BufferedFrameCount];
+		TextureHandle m_ShadowMasksBoundTextures[RenderConstants::c_BufferedFrameCount];
 		HashMap<uint, uint> m_ViewIdIndexMap;
 		RenderContext m_Ctx{};
 		RenderResources m_Resources{};
@@ -235,6 +247,7 @@ namespace tyr
 		TransferPass* m_TransferPass = nullptr;
 		GeometryPass* m_GeometryPass = nullptr;
 		GUIPass* m_GUIPass = nullptr;
+		ShadowRTPass* m_ShadowRTPass = nullptr;
 		uint m_RenderFrameIndex = 0;
 		// Starts true so the very first Render() call runs the one-time descriptor binding block.
 		bool m_FirstRender = true;
@@ -275,6 +288,11 @@ namespace tyr
 		// c_BufferedFrameCount) - incremented once per frame Render() actually submits, used to
 		// pace swap chain image acquisition.
 		uint64 m_FrameNumber = 0;
+
+		// Only ever read/written from inside RenderAsync, never the main thread directly - safe
+		// as plain shared state since consecutive RenderAsync invocations are never concurrent
+		// (see m_PrevRenderAsyncTask below).
+		RenderQualitySettings m_QualitySettings = ResolveQualitySettings(QualityLevel::Medium);
 
 		// The previous frame's RenderAsync task - each new one depends on this, so they never
 		// run at the same time.

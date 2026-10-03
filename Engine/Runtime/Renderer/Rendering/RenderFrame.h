@@ -9,6 +9,7 @@
 #include "RenderInstance/RenderInstances.h"
 #include "RenderWindow.h"
 #include "RenderViewport.h"
+#include "RenderQualitySettings.h"
 
 namespace tyr
 {
@@ -168,6 +169,10 @@ namespace tyr
 		float deltaTime;
 		// Default-constructs to invalid (falsy) - no separate sentinel needed.
 		SceneHandle activeScene;
+		// Set via RendererAPI::SetQualityLevel - merged into Renderer's own quality settings by
+		// RenderAsync, the same one-shot-request pattern SceneFrame::newRenderViewport uses.
+		bool hasQualityLevelOverride = false;
+		QualityLevel qualityLevelOverride = QualityLevel::Medium;
 		// Frame update for the active scene
 		SceneFrame sceneFrame;
 
@@ -224,6 +229,7 @@ namespace tyr
 			buffersToDelete.Clear();
 			sceneFrame.Clear();
 			activeScene = {};
+			hasQualityLevelOverride = false;
 			guiDrawData.Clear();
 			guiVertexCursor = 0;
 			guiIndexCursor = 0;

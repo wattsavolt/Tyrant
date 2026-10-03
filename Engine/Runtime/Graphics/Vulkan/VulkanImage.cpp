@@ -39,6 +39,10 @@ namespace tyr
 				break;
 			case ImageType::Image1DArray:
 			case ImageType::Image2D:
+			case ImageType::Image2DArray:
+				// A 2D array is still imageType 2D - arrayLayers is what makes it an array, no
+				// special flag needed. VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT (not used here) is
+				// for the opposite case: a 3D image that should also be viewable as a 2D array.
 				imageCI.imageType = VK_IMAGE_TYPE_2D;
 				break;
 			case ImageType::Cubemap:
@@ -46,10 +50,8 @@ namespace tyr
 				imageCI.imageType = VK_IMAGE_TYPE_2D;
 				imageCI.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
 				break;
-			case ImageType::Image2DArray:
 			case ImageType::Image3D:
 				imageCI.imageType = VK_IMAGE_TYPE_3D;
-				imageCI.flags = VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
 				break;
 			}
 			imageCI.format = image.format;

@@ -661,4 +661,11 @@ namespace tyr
 		renderFrame.guiVertexCursor = 0;
 		renderFrame.guiIndexCursor = 0;
 	}
+
+	void RendererAPI::SetQualityLevel(QualityLevel level)
+	{
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		renderFrame.hasQualityLevelOverride = true;
+		renderFrame.qualityLevelOverride = level;
+	}
 }

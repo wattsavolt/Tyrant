@@ -28,6 +28,7 @@ namespace tyr
 	struct PointLightInfo;
 	struct SpotLightInfo;
 	struct GUIDrawData;
+	enum class QualityLevel : uint8;
 
 	// Every Create*/Delete* function here must only ever be called from the main thread -
 	// RenderRegistry's pools aren't safe for concurrent creation/deletion against
@@ -154,6 +155,10 @@ namespace tyr
 		// Discards whatever GUI draw data is still sitting unrendered in the current render
 		// frame slot.
 		void ResetGUIDrawData();
+
+		// Takes effect from next tick's RenderAsync onward - queued through RenderFrame the same
+		// one-shot way SetSceneRenderViewport is, since RenderAsync runs on a worker thread.
+		void SetQualityLevel(QualityLevel level);
 
 	private:
 		void UploadMeshInstance(const MeshInstanceInfo& info, uint index);

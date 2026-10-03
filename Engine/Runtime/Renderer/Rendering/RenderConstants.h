@@ -44,6 +44,13 @@ namespace tyr
 		static constexpr uint c_MaxDirLights = 4;
 		static constexpr uint c_MaxPointLights = 16;
 		static constexpr uint c_MaxSpotLights = 16;
+		// Sized to Ultra's own ray-traced-shadow local-light cap - lower quality tiers just
+		// select fewer lights into the same fixed-size slot array each tick.
+		static constexpr uint c_MaxShadowCastingLocalLights = 8;
+		// One shadow-mask array layer per directional light (a stable layer, matching that
+		// light's own pool index - up to c_MaxDirLights of them, always traced when shadow-
+		// casting, never selected/evicted) plus one per this tick's selected local light.
+		static constexpr uint c_MaxShadowSlots = c_MaxDirLights + c_MaxShadowCastingLocalLights;
 		static constexpr uint c_MaxTextureDimension = 4096;
 		static constexpr uint c_MaxMips = TextureUtil::CalculateMaxMipsForBlockCompressed(c_MaxTextureDimension, c_MaxTextureDimension);
 		static constexpr uint c_RowPitchAlignment = 256;

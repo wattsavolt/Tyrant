@@ -26,6 +26,16 @@
 #define TYR_BINDING_VISIBLE_INSTANCE_INDICES 16
 #define TYR_BINDING_INDIRECT_DRAW_COMMANDS 17
 #define TYR_BINDING_DRAW_COUNT 18
+// One top-level acceleration structure per buffered RenderFrame slot, indexed the same way
+// TYR_BINDING_LIGHTING_OUTPUT is - bound once at creation (the handle is rebuilt in place every
+// frame, never recreated), not re-bound per frame.
+#define TYR_BINDING_TLAS 19
+// One Texture2DArray per buffered RenderFrame slot (one array layer per shadow-casting light
+// slot that tick) - RAW is the shadow compute pass's own output, SHADOW_MASKS is the denoiser's
+// output/temporal history. Both read and written only via Load()/indexed storage access, never
+// sampled/filtered, so a single storage-image binding covers every pass that touches them.
+#define TYR_BINDING_SHADOW_MASKS_RAW 20
+#define TYR_BINDING_SHADOW_MASKS 21
 
 // How many copies of the per-frame render targets TYR_BINDING_LIGHTING_OUTPUT holds, one
 // per buffered frame slot - kept in sync with the matching C++ constant.

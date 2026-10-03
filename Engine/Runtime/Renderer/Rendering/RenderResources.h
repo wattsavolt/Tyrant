@@ -79,6 +79,11 @@ namespace tyr
 		ComputePipelineHandle cullingPipeline;
 		ShaderModuleHandle cullingComputeShader;
 
+		// Ray-traced shadow visibility - one dispatch per shadow-casting light, writing into the
+		// active viewport slot's shadowMasksRaw array (see RenderViewportTextureData).
+		ComputePipelineHandle shadowRTPipeline;
+		ShaderModuleHandle shadowRTComputeShader;
+
 		// Ray-traced shadows - one top-level acceleration structure per buffered RenderFrame
 		// slot, rebuilt every frame from the active scene's mesh instances. Per-mesh bottom-level
 		// structures live on Mesh::blas instead.

@@ -22,6 +22,7 @@
 #include "TransferPass.h"
 #include "GeometryPass.h"
 #include "GUIPass.h"
+#include "ShadowRTPass.h"
 #include "RenderGraph.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphAllocation.h"
@@ -326,6 +327,7 @@ namespace tyr
 					// Keep this slot's lighting-output descriptor pointed at the current colour
 					// texture.
 					EnsureLightingOutputBound(m_RenderFrameIndex, targets.colourTexture);
+					EnsureShadowMaskArraysBound(m_RenderFrameIndex, targets.shadowMasksRaw, targets.shadowMasks);
 
 					if (targets.width != 0 && targets.height != 0)
 					{
@@ -586,6 +588,11 @@ namespace tyr
 		// Safe to mutate: nothing else touches this slot's data concurrently.
 		RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
 		FrameContext& frameCtx = m_Ctx.frameContexts[renderFrameIndex];
+
+		if (renderFrame.hasQualityLevelOverride)
+		{
+			m_QualitySettings = ResolveQualitySettings(renderFrame.qualityLevelOverride);
+		}
 
 		m_Data.activeScene = renderFrame.activeScene;
 
@@ -1273,6 +1280,8 @@ namespace tyr
 			Texture* gbufferMotion = nullptr;
 			Texture* depthBuffer = nullptr;
 			Texture* colourTexture = nullptr;
+			Texture* shadowMasksRaw = nullptr;
+			Texture* shadowMasks = nullptr;
 
 			if (hasViewportTextures)
 			{
@@ -1281,6 +1290,8 @@ namespace tyr
 				gbufferMotion = &m_Registry.GetTexture(viewportData->gbufferMotion);
 				depthBuffer = &m_Registry.GetTexture(viewportData->depthBuffer);
 				colourTexture = &m_Registry.GetTexture(viewportData->colourTexture);
+				shadowMasksRaw = &m_Registry.GetTexture(viewportData->shadowMasksRaw);
+				shadowMasks = &m_Registry.GetTexture(viewportData->shadowMasks);
 
 				// A freshly (re)created texture's imageLayout is pre-set to its steady-state
 				// value, not UNKNOWN, even though the real image always starts life as
@@ -1295,6 +1306,8 @@ namespace tyr
 					gbufferMotion->imageLayout = IMAGE_LAYOUT_UNKNOWN;
 					depthBuffer->imageLayout = IMAGE_LAYOUT_UNKNOWN;
 					colourTexture->imageLayout = IMAGE_LAYOUT_UNKNOWN;
+					shadowMasksRaw->imageLayout = IMAGE_LAYOUT_UNKNOWN;
+					shadowMasks->imageLayout = IMAGE_LAYOUT_UNKNOWN;
 					viewportData->isNew = false;
 				}
 
@@ -1303,6 +1316,8 @@ namespace tyr
 				graph.RegisterTexture(gbufferMotion);
 				graph.RegisterTexture(depthBuffer);
 				graph.RegisterTexture(colourTexture);
+				graph.RegisterTexture(shadowMasksRaw);
+				graph.RegisterTexture(shadowMasks);
 			}
 
 			Texture& swapChainImageProxy = window->swapChainImageProxies[window->swapChainImageIndex];
@@ -1337,8 +1352,8 @@ namespace tyr
 
 			// Every BLAS this tick's build batch will touch, plus the TLAS rebuilt every tick -
 			// registered here so both passes' usage declarations below have a valid index.
-			// Nothing reads the TLAS yet - a future shadow/reflection pass just adds its own
-			// ReadAccelerationStructure the same way these two passes already do.
+			// Read by "ShadowRT" below, and a future reflection pass could add its own
+			// ReadAccelerationStructure the same way.
 			for (const BLASBuildRecord& record : renderFrame.blasBuildsToRecord)
 			{
 				graph.RegisterAccelerationStructure(record.blasResource);
@@ -1358,6 +1373,32 @@ namespace tyr
 				[this, renderFrameIndex](RenderGraphBuilder& builder) { SetupTLASBuildPass(builder, renderFrameIndex); },
 				[this, renderFrameIndex](CommandList& cl) { RecordTLASBuildPass(cl, renderFrameIndex); },
 				RenderGraphPhase::RayTracing, CommandQueueType::CQ_GRAPHICS);
+
+			// Ray-traced shadow visibility for this tick's shadow-casting lights - registered
+			// after "TLASBuild" in the same phase, so the render graph's barrier for this tick's
+			// TLAS rebuild lands before this pass's own ReadAccelerationStructure runs.
+			if (hasViewportTextures && !renderFrame.sceneFrame.views.IsEmpty())
+			{
+				Scene& shadowScene = m_Data.scenePool[m_Data.activeScene.h];
+				const Vector3 cameraPosition = renderFrame.sceneFrame.views[0].camera.position;
+				const TextureHandle shadowDepthBuffer = viewportData->depthBuffer;
+				const TextureHandle shadowGBufferNormalRoughMetal = viewportData->gbufferNormalRoughMetal;
+				const TextureHandle shadowMasksRawHandle = viewportData->shadowMasksRaw;
+				const uint shadowViewportWidth = viewportData->width;
+				const uint shadowViewportHeight = viewportData->height;
+
+				graph.AddPass("ShadowRT",
+					[this, &shadowScene, cameraPosition, shadowDepthBuffer, shadowGBufferNormalRoughMetal, shadowMasksRawHandle, renderFrameIndex](RenderGraphBuilder& builder)
+					{
+						m_ShadowRTPass->Setup(builder, shadowScene, cameraPosition, m_QualitySettings, renderFrameIndex,
+							shadowDepthBuffer, shadowGBufferNormalRoughMetal, shadowMasksRawHandle);
+					},
+					[this, renderFrameIndex, shadowViewportWidth, shadowViewportHeight](CommandList& cl)
+					{
+						m_ShadowRTPass->Execute(cl, renderFrameIndex, shadowViewportWidth, shadowViewportHeight);
+					},
+					RenderGraphPhase::RayTracing, CommandQueueType::CQ_GRAPHICS);
+			}
 
 			// Reads the G-buffer/depth GeometryPass just wrote and writes the shaded result into
 			// the viewport colour texture. No new buffer barrier needed for the read-after-read
@@ -1783,6 +1824,29 @@ namespace tyr
 		GetRenderFrame().texturesToDelete.Add(handle);
 	}
 
+	TextureHandle Renderer::CreateShadowMaskArrayTexture(const char* debugName, uint width, uint height)
+	{
+		TextureDesc desc;
+		desc.debugName = debugName;
+		desc.info.width = width;
+		desc.info.height = height;
+		desc.info.depth = 1;
+		desc.info.arrayLayerCount = RenderConstants::c_MaxShadowSlots;
+		desc.info.mipCount = 1;
+		// No single-channel storage format exists in PixelFormat yet - reusing this already-
+		// proven two-channel format (also used for gbufferMotion) and only ever touching the R
+		// channel, rather than adding a new format for one feature.
+		desc.info.format = PixelFormat::PF_R16G16_SFLOAT;
+		desc.info.type = ImageType::Image2DArray;
+		desc.sampleCount = SampleCount::OneBit;
+		desc.usage = static_cast<ImageUsage>(IMAGE_USAGE_STORAGE_BIT);
+		desc.layout = ImageLayout::IMAGE_LAYOUT_GENERAL;
+
+		const TextureHandle handle = m_Registry.CreateTexture(desc);
+		GetRenderFrame().texturesToAdd.Add(handle);
+		return handle;
+	}
+
 	void Renderer::ResizeRenderViewportSlot(RenderViewport& viewport, uint slot, const char* debugName, uint width, uint height)
 	{
 		RenderViewportTextureData& targets = viewport.textureData[slot];
@@ -1794,6 +1858,8 @@ namespace tyr
 			DeleteViewportTargetTexture(targets.gbufferNormalRoughMetal);
 			DeleteViewportTargetTexture(targets.gbufferMotion);
 			DeleteViewportTargetTexture(targets.depthBuffer);
+			DeleteViewportTargetTexture(targets.shadowMasksRaw);
+			DeleteViewportTargetTexture(targets.shadowMasks);
 		}
 
 		// Written by the deferred lighting pass (a storage image), read by the GUI pass to
@@ -1813,6 +1879,9 @@ namespace tyr
 		// Reverse-Z - cleared to 0, compared Greater.
 		targets.depthBuffer = CreateViewportTargetTexture("Depth Buffer", PixelFormat::PF_D32_SFLOAT,
 			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT), width, height);
+
+		targets.shadowMasksRaw = CreateShadowMaskArrayTexture("Shadow Masks Raw", width, height);
+		targets.shadowMasks = CreateShadowMaskArrayTexture("Shadow Masks", width, height);
 
 		targets.width = width;
 		targets.height = height;
@@ -1839,6 +1908,31 @@ namespace tyr
 		m_LightingOutputBoundTextures[renderFrameIndex] = colourTexture;
 	}
 
+	void Renderer::EnsureShadowMaskArraysBound(uint renderFrameIndex, TextureHandle shadowMasksRaw, TextureHandle shadowMasks)
+	{
+		if (shadowMasksRaw && m_ShadowMasksRawBoundTextures[renderFrameIndex] != shadowMasksRaw)
+		{
+			const Texture& texture = m_Registry.GetTexture(shadowMasksRaw);
+			ImageBindingInfo bindingInfo;
+			bindingInfo.imageView = texture.imageView;
+			bindingInfo.hasSampler = false;
+			bindingInfo.layout = texture.imageLayout;
+			QueueImageBindingUpdate(TYR_BINDING_SHADOW_MASKS_RAW, renderFrameIndex, bindingInfo);
+			m_ShadowMasksRawBoundTextures[renderFrameIndex] = shadowMasksRaw;
+		}
+
+		if (shadowMasks && m_ShadowMasksBoundTextures[renderFrameIndex] != shadowMasks)
+		{
+			const Texture& texture = m_Registry.GetTexture(shadowMasks);
+			ImageBindingInfo bindingInfo;
+			bindingInfo.imageView = texture.imageView;
+			bindingInfo.hasSampler = false;
+			bindingInfo.layout = texture.imageLayout;
+			QueueImageBindingUpdate(TYR_BINDING_SHADOW_MASKS, renderFrameIndex, bindingInfo);
+			m_ShadowMasksBoundTextures[renderFrameIndex] = shadowMasks;
+		}
+	}
+
 	void Renderer::DeleteRenderViewportResources(RenderViewportHandle viewport)
 	{
 		RenderViewport& rv = m_RenderViewportPool[viewport.h];
@@ -1858,6 +1952,8 @@ namespace tyr
 			m_Registry.DeleteTexture(targets.gbufferNormalRoughMetal);
 			m_Registry.DeleteTexture(targets.gbufferMotion);
 			m_Registry.DeleteTexture(targets.depthBuffer);
+			m_Registry.DeleteTexture(targets.shadowMasksRaw);
+			m_Registry.DeleteTexture(targets.shadowMasks);
 		}
 
 		m_RenderViewportPool.Delete(viewport.h);
@@ -1932,6 +2028,14 @@ namespace tyr
 		{
 			ShaderDesc desc;
 			desc.entryPoint = "main";
+			desc.fileName = "ShadowRTCS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_COMPUTE_BIT;
+			m_Resources.shadowRTComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
 			desc.fileName = "GUIVS";
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_VERTEX_BIT;
@@ -1954,6 +2058,7 @@ namespace tyr
 		m_Ctx.device->DeleteShaderModule(m_Resources.geometryPixelShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.lightingComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.cullingComputeShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.shadowRTComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.guiVertexShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.guiPixelShader);
 		ShaderCreator::UnloadCompilerLibs();
@@ -2073,10 +2178,17 @@ namespace tyr
 				poolSize.descriptorCount = Device::c_MaxSamplers;
 			}
 			{
-				// TYR_BINDING_LIGHTING_OUTPUT - the deferred lighting pass's storage image output,
-				// one per buffered RenderFrame slot.
+				// TYR_BINDING_LIGHTING_OUTPUT plus TYR_BINDING_SHADOW_MASKS_RAW/SHADOW_MASKS -
+				// three storage-image arrays, each one entry per buffered RenderFrame slot.
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
 				poolSize.descriptorType = DescriptorType::StorageImage;
+				poolSize.descriptorCount = RenderConstants::c_BufferedFrameCount * 3;
+			}
+			{
+				// TYR_BINDING_TLAS - one top-level acceleration structure per buffered
+				// RenderFrame slot.
+				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
+				poolSize.descriptorType = DescriptorType::AccelerationStructure;
 				poolSize.descriptorCount = RenderConstants::c_BufferedFrameCount;
 			}
 			poolDesc.flags = DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
@@ -2142,6 +2254,17 @@ namespace tyr
 				static_cast<ShaderStage>(SHADER_STAGE_COMPUTE_BIT | SHADER_STAGE_TASK_BIT));
 			AddBinding(TYR_BINDING_INDIRECT_DRAW_COMMANDS, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 			AddBinding(TYR_BINDING_DRAW_COUNT, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
+
+			// Ray-traced shadows - one TLAS per buffered RenderFrame slot, read by the shadow
+			// compute pass via an inline ray query.
+			AddBinding(TYR_BINDING_TLAS, DescriptorType::AccelerationStructure, RenderConstants::c_BufferedFrameCount, SHADER_STAGE_COMPUTE_BIT);
+
+			// Shadow mask storage - one Texture2DArray per buffered RenderFrame slot, same
+			// re-bindable-on-resize shape as TYR_BINDING_LIGHTING_OUTPUT above.
+			AddBinding(TYR_BINDING_SHADOW_MASKS_RAW, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
+				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
+			AddBinding(TYR_BINDING_SHADOW_MASKS, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
+				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 
 			m_Resources.descriptorSetLayout = m_Ctx.device->CreateDescriptorSetLayout(layoutDesc);
 
@@ -2316,6 +2439,19 @@ namespace tyr
 		cullingDesc.shader = m_Resources.cullingComputeShader;
 
 		m_Resources.cullingPipeline = m_Ctx.device->CreateComputePipeline(cullingDesc);
+
+		// Ray-traced shadow visibility - one dispatch per shadow-casting light.
+		ComputePipelineDesc shadowRTDesc;
+		shadowRTDesc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
+
+		PushConstantRange& shadowRTPushConstantRange = shadowRTDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
+		shadowRTPushConstantRange.stageFlags = SHADER_STAGE_COMPUTE_BIT;
+		shadowRTPushConstantRange.offset = 0;
+		shadowRTPushConstantRange.size = sizeof(ShadowRTPushConstants);
+
+		shadowRTDesc.shader = m_Resources.shadowRTComputeShader;
+
+		m_Resources.shadowRTPipeline = m_Ctx.device->CreateComputePipeline(shadowRTDesc);
 	}
 
 	void Renderer::DeletePipelines()
@@ -2324,6 +2460,7 @@ namespace tyr
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.guiPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.lightingPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.cullingPipeline);
+		m_Ctx.device->DeleteComputePipeline(m_Resources.shadowRTPipeline);
 		m_Ctx.device->DeleteDescriptorSet(m_Resources.descriptorSet);
 		m_Ctx.device->DeleteDescriptorSetLayout(m_Resources.descriptorSetLayout);
 		m_Ctx.device->DeleteDescriptorPool(m_Resources.descriptorPool);
@@ -2549,6 +2686,13 @@ namespace tyr
 			// Every slot's TLAS shares the same desc, so the same scratch size - just keep
 			// whichever came back, they're all identical.
 			m_TLASScratchPerSlotSize = m_Ctx.device->GetAccelerationStructureBuildScratchSize(m_Resources.tlas[i].accelerationStructure);
+
+			// Queued, not applied immediately - picked up by the first FlushDescriptorUpdates()
+			// call like any other startup binding. The handle itself never changes again, only
+			// what it points to gets rebuilt each frame, so this one-time bind is all it needs.
+			AccelerationStructureBindingInfo tlasBindingInfo;
+			tlasBindingInfo.accelerationStructure = m_Resources.tlas[i].accelerationStructure;
+			QueueAccelerationStructureBindingUpdate(TYR_BINDING_TLAS, i, tlasBindingInfo);
 		}
 
 		RenderBufferDesc scratchDesc;
@@ -2623,6 +2767,12 @@ namespace tyr
 		guiArgs.vertexBuffer = m_Resources.guiVertexBuffer;
 		guiArgs.indexBuffer = m_Resources.guiIndexBuffer;
 		m_GUIPass = new GUIPass(guiArgs);
+
+		ShadowRTPassArgs shadowRTArgs;
+		shadowRTArgs.registry = &m_Registry;
+		shadowRTArgs.resources = &m_Resources;
+		shadowRTArgs.pipeline = m_Resources.shadowRTPipeline;
+		m_ShadowRTPass = new ShadowRTPass(shadowRTArgs);
 	}
 
 	void Renderer::DeletePasses()
@@ -2633,6 +2783,8 @@ namespace tyr
 		m_GeometryPass = nullptr;
 		delete m_GUIPass;
 		m_GUIPass = nullptr;
+		delete m_ShadowRTPass;
+		m_ShadowRTPass = nullptr;
 	}
 
 	RenderPassHandle Renderer::CreateRenderPass()

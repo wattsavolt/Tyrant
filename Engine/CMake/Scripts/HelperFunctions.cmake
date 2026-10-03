@@ -245,6 +245,13 @@ function(set_shader_config srcs)
 				set_property(SOURCE ${f} PROPERTY VS_SHADER_TYPE Hull)
 			elseif(${FILE_NAME} MATCHES "DS$")
 				set_property(SOURCE ${f} PROPERTY VS_SHADER_TYPE Domain)
+			elseif(${FILE_NAME} MATCHES "RTCS$")
+				# Same FXC limitation as the Mesh/Amplification branches below - these compute
+				# shaders use inline ray tracing (RayQuery), which needs SM6.5 and DXC. FXC's
+				# fixed SM6.4 cap above doesn't support it, always failing with "Opcode
+				# AllocateRayQuery not valid in shader model cs_6_4". Compiled at runtime by
+				# ShaderCreator (via DXC) instead, so exclude from MSBuild's own build step.
+				set_property(SOURCE ${f} PROPERTY VS_TOOL_OVERRIDE "None")
 			elseif(${FILE_NAME} MATCHES "CS$")
 				set_property(SOURCE ${f} PROPERTY VS_SHADER_TYPE Compute)
 			elseif(${FILE_NAME} MATCHES "MS$")

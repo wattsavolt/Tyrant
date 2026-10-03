@@ -18,6 +18,12 @@ namespace tyr
 		TextureHandle gbufferNormalRoughMetal;
 		TextureHandle gbufferMotion;
 		TextureHandle depthBuffer;
+		// Texture2DArray, RenderConstants::c_MaxShadowSlots layers - raw per-light ray-traced
+		// visibility (shadowMasksRaw) and the denoised/temporally-accumulated result
+		// (shadowMasks) that both this tick's lighting pass and next tick's denoiser read as
+		// history.
+		TextureHandle shadowMasksRaw;
+		TextureHandle shadowMasks;
 		uint width = 0;
 		uint height = 0;
 		// Set whenever this slot's own targets are (re)created, consumed once by the geometry

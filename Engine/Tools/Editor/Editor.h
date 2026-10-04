@@ -16,6 +16,7 @@ namespace tyr
 	class World;
 	class RendererAPI;
 	class GUIModule;
+	class InputManager;
 	class TYR_EDITOR_EXPORT Editor final : public AppBase
 	{
 	public:
@@ -36,6 +37,7 @@ namespace tyr
 		RendererAPI* m_RendererAPI{};
 		Handle m_LevelEditorWorld{};
 		GUIModule* m_GUIModule{};
+		InputManager* m_InputManager{};
 		// Both constructed in Initialize() rather than the member init list - they need
 		// m_RendererAPI, which isn't resolved from the module manager until then.
 		URef<EditorUI> m_EditorUI;

@@ -30,6 +30,13 @@ namespace tyr
 		return d.count() * 1000;
 	}
 
+	double Timer::GetSecondsPrecise() const
+	{
+		auto newTime = m_HighResClock.now();
+		duration<double> d = newTime - m_StartTime;
+		return d.count();
+	}
+
 	uint64 Timer::GetMicroseconds() const
 	{
 		auto newTime = m_HighResClock.now();

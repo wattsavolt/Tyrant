@@ -21,7 +21,7 @@ namespace tyr
 		// Called before engine shutdown
 		virtual void Shutdown() = 0;
 
-		// Called every frame by the engine
+		// Called every frame by the engine. deltaTime is in seconds.
 		virtual void Update(float deltaTime) = 0;
 
 		virtual bool WantsExit() const = 0;

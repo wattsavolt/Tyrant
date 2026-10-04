@@ -14,6 +14,7 @@ namespace tyr
 		static void InitializeWindow(const WindowDesc& desc, Window& window);
 		static void PollEvents(Window& window);
 		static bool IsWindowActive(const Window& window);
+		static void SetCursorCaptured(Window& window, bool captured);
 
 	private:
 		static ATOM RegisterWindowClass(uint16 iconResourceId);

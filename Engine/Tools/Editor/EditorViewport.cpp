@@ -1,5 +1,7 @@
 #include "EditorViewport.h"
 #include "Rendering/RendererAPI.h"
+#include "Input/InputManager.h"
+#include "World/Camera.h"
 #include "imgui.h"
 
 namespace tyr
@@ -9,7 +11,7 @@ namespace tyr
 	{
 	}
 
-	void EditorViewport::Draw(RenderViewportHandle viewport)
+	void EditorViewport::Draw(RenderViewportHandle viewport, InputManager& inputManager, Camera& camera, float deltaTime)
 	{
 		ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoCollapse;
 
@@ -51,6 +53,9 @@ namespace tyr
 		// legitimately be 0 - see GUIModule's PackTextureHandle for the same offset.
 		const ImTextureID texID = (ImTextureID)(intptr_t)(m_Texture.h.index + 1);
 		ImGui::Image(texID, ImVec2((float)m_Width, (float)m_Height));
+
+		const bool isHovered = ImGui::IsWindowHovered();
+		m_CameraController.Update(inputManager, camera, deltaTime, isHovered);
 
 		ImGui::End();
 	}

@@ -70,8 +70,9 @@ namespace tyr
 		ModuleManager& moduleManager = ModuleManager::Instance();
 		while (shouldExit())
 		{
-			// Time since the timer started
-			const double currentTime = timer.GetMillisecondsPrecise();
+			// Time since the timer started, in seconds - every module's Update(deltaTime) and
+			// everything derived from it (e.g. the editor camera's move speed) expects seconds.
+			const double currentTime = timer.GetSecondsPrecise();
 
 			const float deltaTime = static_cast<float>(currentTime - m_LastFrameTime);
 

@@ -20,6 +20,12 @@ namespace tyr
 		int mouseX{};
 		int mouseY{};
 		float scrollDelta{};
+		// Relative mouse motion from raw input (e.g. PCWindow's WM_INPUT handling), accumulated
+		// between drains just like scrollDelta - see WindowModule::ConsumeRawMouseDelta. Unlike
+		// mouseX/mouseY, this isn't affected by the cursor being clipped to the window or hidden,
+		// so it's what a continuous look control (e.g. an editor fly camera) should read instead.
+		int rawMouseDeltaX{};
+		int rawMouseDeltaY{};
 		char typedChars[c_MaxTypedCharsPerFrame]{};
 		uint typedCharCount{};
 	};
@@ -33,6 +39,10 @@ namespace tyr
 		// size change, cleared by WindowModule::ConsumeResizePending - a one-shot "has this
 		// changed since it was last checked" flag, not a live "is it currently mid-resize" state.
 		bool resizePending{};
+		// Whether the cursor is currently hidden and confined to this window - see
+		// WindowModule::SetCursorCaptured. Tracked here so the platform layer only calls into the
+		// OS when the requested state actually changes.
+		bool cursorCaptured{};
 		WindowInputState input{};
 	};
 }

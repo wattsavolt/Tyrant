@@ -5,6 +5,7 @@
 #include <Utility/Utility.h>
 #include <String/StringUtil.h>
 #include <windowsx.h>
+#include <hidusage.h>
 
 namespace tyr
 {
@@ -65,6 +66,18 @@ namespace tyr
         UpdateWindow(hwnd);
 
         window.handle = static_cast<void*>(hwnd);
+
+        // Registers for raw mouse input so continuous look controls (e.g. an editor fly camera)
+        // can read true relative motion via WM_INPUT, independent of the cursor's on-screen
+        // position - see the WM_INPUT case in HandleMessage below.
+        RAWINPUTDEVICE rawInputDevice{};
+        rawInputDevice.usUsagePage = HID_USAGE_PAGE_GENERIC;
+        rawInputDevice.usUsage = HID_USAGE_GENERIC_MOUSE;
+        rawInputDevice.hwndTarget = hwnd;
+        if (!RegisterRawInputDevices(&rawInputDevice, 1, sizeof(rawInputDevice)))
+        {
+            TYR_LOG_ERROR("Failed to register for raw mouse input with error code: %d.", GetLastError());
+        }
     }
 
     //
@@ -240,6 +253,24 @@ namespace tyr
             window.input.scrollDelta += static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;
             break;
 
+        case WM_INPUT:
+        {
+            BYTE buffer[sizeof(RAWINPUT)];
+            UINT size = sizeof(buffer);
+            if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, buffer, &size, sizeof(RAWINPUTHEADER)) != static_cast<UINT>(-1))
+            {
+                const RAWINPUT* raw = reinterpret_cast<const RAWINPUT*>(buffer);
+                // Ignore absolute-positioned mouse input (e.g. over Remote Desktop or a tablet) -
+                // only relative motion makes sense for a look control.
+                if (raw->header.dwType == RIM_TYPEMOUSE && !(raw->data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE))
+                {
+                    window.input.rawMouseDeltaX += raw->data.mouse.lLastX;
+                    window.input.rawMouseDeltaY += raw->data.mouse.lLastY;
+                }
+            }
+            break;
+        }
+
         case WM_DESTROY:
             // The HWND (and anything tied to it) is no longer valid from this point on - mark
             // it dead immediately rather than waiting for WM_QUIT, which isn't guaranteed to be
@@ -276,6 +307,39 @@ namespace tyr
     bool PCWindow::IsWindowActive(const Window& window)
     {
         return window.handle != nullptr;
+    }
+
+    void PCWindow::SetCursorCaptured(Window& window, bool captured)
+    {
+        if (window.cursorCaptured == captured)
+        {
+            return;
+        }
+        window.cursorCaptured = captured;
+
+        HWND hwnd = static_cast<HWND>(window.handle);
+        if (!hwnd)
+        {
+            return;
+        }
+
+        if (captured)
+        {
+            RECT clientRect;
+            GetClientRect(hwnd, &clientRect);
+            POINT topLeft{ clientRect.left, clientRect.top };
+            POINT bottomRight{ clientRect.right, clientRect.bottom };
+            ClientToScreen(hwnd, &topLeft);
+            ClientToScreen(hwnd, &bottomRight);
+            RECT clipRect{ topLeft.x, topLeft.y, bottomRight.x, bottomRight.y };
+            ClipCursor(&clipRect);
+            ShowCursor(FALSE);
+        }
+        else
+        {
+            ClipCursor(nullptr);
+            ShowCursor(TRUE);
+        }
     }
 }
 

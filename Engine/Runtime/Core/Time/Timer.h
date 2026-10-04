@@ -20,8 +20,11 @@ namespace tyr
 		/// Returns time in milliseconds since timer was initialized or last reset. 
 		uint64 GetMilliseconds() const;
 
-		/// Returns time in milliseconds since timer was initialized or last reset as a double precision floating point . 
+		/// Returns time in milliseconds since timer was initialized or last reset as a double precision floating point .
 		double GetMillisecondsPrecise() const;
+
+		/// Returns time in seconds since timer was initialized or last reset as a double precision floating point.
+		double GetSecondsPrecise() const;
 
 		/// Returns time in microseconds since timer was initialized or last reset. 
 		uint64 GetMicroseconds() const;

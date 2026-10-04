@@ -122,7 +122,7 @@ endif()
 
 ## OS libs
 if(WIN32)
-	target_link_libraries(TyrantEngine PRIVATE Winmm dinput8 xinput9_1_0 dxguid.lib)
+	target_link_libraries(TyrantEngine PRIVATE Winmm xinput9_1_0 dxguid.lib)
 	target_link_libraries(TyrantEngine PRIVATE DbgHelp IPHLPApi Rpcrt4)
 elseif(LINUX)
 	target_link_libraries(TyrantEngine PRIVATE dl pthread)

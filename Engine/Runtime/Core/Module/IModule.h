@@ -18,7 +18,8 @@ namespace tyr
 
         virtual void BeginFrame() {};
 
-        // Called every frame by the engine. Should schedule async tasks for this module
+        // Called every frame by the engine. Should schedule async tasks for this module.
+        // deltaTime is in seconds.
         virtual void Update(float deltaTime) = 0;
 
         virtual void EndFrame() {};

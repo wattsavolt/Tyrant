@@ -131,4 +131,20 @@ namespace tyr
 		input.scrollDelta = 0.0f;
 		return delta;
 	}
+
+	void WindowModule::ConsumeRawMouseDelta(WindowHandle handle, int& outDeltaX, int& outDeltaY)
+	{
+		WindowInputState& input = m_Private->windowPool[handle.h].input;
+		outDeltaX = input.rawMouseDeltaX;
+		outDeltaY = input.rawMouseDeltaY;
+		input.rawMouseDeltaX = 0;
+		input.rawMouseDeltaY = 0;
+	}
+
+	void WindowModule::SetCursorCaptured(WindowHandle handle, bool captured)
+	{
+#if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
+		PCWindow::SetCursorCaptured(m_Private->windowPool[handle.h], captured);
+#endif
+	}
 }

@@ -70,7 +70,8 @@ namespace tyr
 
 		InputModule* inputModule;
 		TYR_GET_MODULE(InputModule, inputModule);
-		inputModule->GetInputManager()->SetWindow(m_WindowModule, m_PrimaryWindow);
+		m_InputManager = inputModule->GetInputManager();
+		m_InputManager->SetWindow(m_WindowModule, m_PrimaryWindow);
 
 		m_EditorViewport = MakeURef<EditorViewport>(*m_RendererAPI);
 		m_EditorUI = MakeURef<EditorUI>(*m_GUIModule, *m_RendererAPI);
@@ -133,7 +134,8 @@ namespace tyr
 	void Editor::Update(float deltaTime)
 	{
 		m_EditorUI->Draw();
-		m_EditorViewport->Draw(m_WorldManager->GetWorld(m_LevelEditorWorld).renderViewportHandle);
+		m_EditorViewport->Draw(m_WorldManager->GetWorld(m_LevelEditorWorld).renderViewportHandle,
+			*m_InputManager, *m_Camera, deltaTime);
 	}
 
 	void Editor::Shutdown()

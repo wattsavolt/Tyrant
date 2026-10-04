@@ -63,6 +63,15 @@ namespace tyr
 		// Returns the accumulated scroll wheel delta since the last call and clears it.
 		float ConsumeScrollDelta(WindowHandle handle);
 
+		// Returns this window's accumulated raw (relative, OS-level) mouse motion since the last
+		// call and clears it - unlike the mouse position, this isn't affected by cursor clipping
+		// or screen edges, so it's what a continuous look control should read.
+		void ConsumeRawMouseDelta(WindowHandle handle, int& outDeltaX, int& outDeltaY);
+
+		// Hides and confines the cursor to this window's client area for continuous look controls,
+		// or restores normal cursor behaviour.
+		void SetCursorCaptured(WindowHandle handle, bool captured);
+
 	private:
 		WindowModulePrivate* m_Private{};
 	};

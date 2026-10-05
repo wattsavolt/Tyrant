@@ -30,10 +30,21 @@ namespace tyr
 		bool Load(const char* filePath, ModelImportResult& outResult) override;
 
 	private:
-		void CollectMeshNodes(size_t nodeIndex, Array<size_t>& outMeshIndices) const;
-		bool LoadMesh(size_t meshIndex, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap);
+		void CollectMeshNodes(size_t nodeIndex, Array<size_t>& outMeshNodeIndices) const;
+		ModelImportMesh* LoadMesh(size_t meshIndex, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap);
+		bool LoadPreAuthoredLod(size_t meshIndex, ModelImportMesh& mesh, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap);
+		bool LoadMeshPrimitives(size_t meshIndex, Array<Vertex>& outVertices, Array<uint>& outIndices,
+			Array<ModelImportSubmesh>& outSubmeshes, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap);
 		uint ResolveMaterial(size_t gltfMaterialIndex, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap);
 		uint GetOrCreateDefaultMaterial(ModelImportResult& outResult);
+
+		// Pre-authored LOD detection, run once per Load() before the main mesh-loading loop -
+		// see the .cpp for the two mechanisms (MSFT_lod extension, "<name>LOD<N>" naming
+		// convention) and how they combine. Fill m_LodChains (a mesh node -> its ordered
+		// alternate-LOD node indices) and m_ConsumedLodNodeIndices (every node already claimed
+		// as someone else's alternate, so the main loop doesn't also import it standalone).
+		void ParseMsftLodChains();
+		void BuildNameBasedLodChains();
 
 		// Keeps the file's bytes and the parsed asset alive for the lifetime of this loader -
 		// see the lifetime note above.
@@ -48,8 +59,16 @@ namespace tyr
 
 		// Scratch space for walking the scene graph and deduplicating materials - reused
 		// the same way, cleared at the top of Load() rather than declared fresh each time.
-		Array<size_t> m_MeshIndices;
+		Array<size_t> m_MeshNodeIndices;
 		HashMap<uint, uint> m_MaterialIndexMap;
+
+		// A mesh node's index -> its ordered pre-authored alternate-LOD node indices (index 0
+		// is LOD1, etc.), and the set of node indices that are themselves such an alternate
+		// (and so should be skipped when the main loop walks m_MeshNodeIndices, since they get
+		// pulled in via their host's entry here instead of being imported as their own mesh).
+		// Both reused across imports like the members above.
+		HashMap<uint, LocalArray<uint, MeshConstants::c_MaxLods - 1>> m_LodChains;
+		HashMap<uint, bool> m_ConsumedLodNodeIndices;
 
 		bool m_HasDefaultMaterial = false;
 		uint m_DefaultMaterialIndex = 0;

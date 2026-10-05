@@ -4,6 +4,7 @@
 #include "Core.h"
 #include "MaterialImporter.h"
 #include "RenderResource/Vertex.h"
+#include "RenderResource/MeshDesc.h"
 #include "Geometry/BoundingSphere.h"
 
 namespace tyr
@@ -18,6 +19,23 @@ namespace tyr
 		uint materialIndex = 0;
 	};
 
+	// One pre-authored LOD's geometry (LOD1+) - a source file's own alternate, already at the
+	// detail level it should be used at, as opposed to one ModelImporter generates itself via
+	// simplification. LOD0 lives directly on ModelImportMesh below, not here.
+	struct ModelImportMeshLod
+	{
+		Array<Vertex> vertices;
+		Array<uint> indices;
+		Array<ModelImportSubmesh> submeshes;
+
+		void Reset()
+		{
+			vertices.Clear();
+			indices.Clear();
+			submeshes.Clear();
+		}
+	};
+
 	// One mesh worth of geometry. By the time a loader hands this back, it must already be
 	// in the engine's own left-handed space, wound correctly, and laid out as tyr::Vertex -
 	// any conversion a source format needs happens inside the loader, never after this point.
@@ -30,6 +48,11 @@ namespace tyr
 		Vector3 aabbMax;
 		BoundingSphere sphere;
 
+		// Additional LODs the source file already provided (via the MSFT_lod extension or a
+		// "<name>LOD<N>" naming convention) beyond LOD0 above - empty when the source only has
+		// one LOD, which is the common case. Index 0 here is LOD1, index 1 is LOD2, and so on.
+		LocalArray<ModelImportMeshLod, MeshConstants::c_MaxLods - 1> preAuthoredLods;
+
 		// Clears this mesh's data but keeps every array's capacity, so the next model
 		// imported into this same slot reuses the memory instead of freeing and
 		// reallocating it.
@@ -41,6 +64,7 @@ namespace tyr
 			aabbMin = Vector3();
 			aabbMax = Vector3();
 			sphere = BoundingSphere();
+			preAuthoredLods.Clear();
 		}
 	};
 

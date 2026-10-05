@@ -88,6 +88,10 @@ endif()
 if (TYR_EDITOR_MODE)
 	# fastgltf - glTF/GLB import
 	target_link_libraries(TyrantEngine PRIVATE fastgltf::fastgltf)
+	# simdjson - fastgltf links this privately for its own parsing, so it isn't visible to us
+	# through that link alone; linked directly here too so GltfModelLoader can do its own small,
+	# separate JSON scan for the MSFT_lod extension, which fastgltf doesn't read itself.
+	target_link_libraries(TyrantEngine PRIVATE simdjson::simdjson)
 endif()
 
 if (TYR_EDITOR_MODE)

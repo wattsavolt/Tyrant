@@ -2,8 +2,9 @@
 #include "imgui.h"
 #include "Platform/Platform.h"
 #include "Utility/PathUtil.h"
-#include "String/Path.h"
+#include "Math/Math.h"
 #include "Importing/ModelImporter.h"
+#include "RenderResource/MeshDesc.h"
 
 namespace tyr
 {
@@ -22,24 +23,62 @@ namespace tyr
 			}
 			ImGui::EndMenu();
 		}
+
+		if (m_ShowImportOptions)
+		{
+			DrawImportOptionsWindow();
+		}
 	}
 
 	void FileMenu::Import()
 	{
-		char filePath[PathConstants::c_MaxPathTotalSize];
-		const bool picked = Platform::ShowOpenFileDialog(filePath, sizeof(filePath),
+		const bool picked = Platform::ShowOpenFileDialog(m_PendingFilePath, sizeof(m_PendingFilePath),
 			"glTF Files\0*.gltf;*.glb\0", "Import Model");
 		if (!picked)
 		{
 			return;
 		}
 
-		char modelName[PathConstants::c_MaxFileNameTotalSize];
-		PathUtil::GetFileNameWithoutExtension(filePath, modelName);
+		PathUtil::GetFileNameWithoutExtension(m_PendingFilePath, m_PendingModelName);
+		snprintf(m_PendingOutputFolder, sizeof(m_PendingOutputFolder), "Models/%s", m_PendingModelName);
 
-		char outputFolder[PathConstants::c_MaxRelativePathTotalSize];
-		snprintf(outputFolder, sizeof(outputFolder), "Models/%s", modelName);
+		m_ShowImportOptions = true;
+	}
 
-		ModelImporter::Instance().ImportModel(filePath, outputFolder, modelName);
+	void FileMenu::DrawImportOptionsWindow()
+	{
+		ImGui::SetNextWindowSize(ImVec2(380, 180), ImGuiCond_FirstUseEver);
+		if (ImGui::Begin("Import Model", &m_ShowImportOptions))
+		{
+			ImGui::Text("%s", m_PendingModelName);
+			ImGui::Separator();
+
+			ImGui::Checkbox("Generate Static Mesh LODs", &m_GenerateStaticMeshLods);
+
+			ImGui::BeginDisabled(!m_GenerateStaticMeshLods);
+			ImGui::InputInt("LOD Count", &m_LodCount);
+			m_LodCount = Math::Clamp(m_LodCount, 1, (int)MeshConstants::c_MaxLods - 1);
+			ImGui::EndDisabled();
+
+			ImGui::Checkbox("Force LOD Regeneration", &m_ForceLodRegeneration);
+
+			ImGui::Separator();
+			if (ImGui::Button("Import"))
+			{
+				ModelImportOptions options;
+				options.generateLods = m_GenerateStaticMeshLods;
+				options.lodCount = (uint)m_LodCount;
+				options.forceLodGeneration = m_ForceLodRegeneration;
+
+				ModelImporter::Instance().ImportModel(m_PendingFilePath, m_PendingOutputFolder, m_PendingModelName, options);
+				m_ShowImportOptions = false;
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel"))
+			{
+				m_ShowImportOptions = false;
+			}
+		}
+		ImGui::End();
 	}
 }

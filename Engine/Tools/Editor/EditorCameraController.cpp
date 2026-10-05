@@ -36,7 +36,6 @@ namespace tyr
 			return;
 		}
 
-		// Mouse-look. If this feels inverted once tried in the editor, flip these two signs.
 		const Vector2& lookDelta = inputManager.GetRawMouseDelta();
 		if (lookDelta.x != 0.0f)
 		{

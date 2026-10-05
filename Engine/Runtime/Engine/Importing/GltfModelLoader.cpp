@@ -2,12 +2,113 @@
 #include "RenderResource/MeshUtil.h"
 
 #include <fastgltf/tools.hpp>
+#include <simdjson.h>
 #include <limits>
+#include <unordered_map>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <cctype>
 
 namespace tyr
 {
 	namespace
 	{
+		// Locates this file's JSON content within its own already-loaded bytes - the whole
+		// buffer for a plain .gltf (it's just JSON text), or the JSON chunk specifically for a
+		// .glb (walking its chunk headers; a GLB's separate binary chunk, if present, is
+		// skipped). Returns false if the bytes don't look like a well-formed glTF/GLB.
+		bool FindGltfJsonBytes(const std::byte* fileData, size_t fileSize, const std::byte*& outJsonData, size_t& outJsonSize)
+		{
+			constexpr size_t c_GlbHeaderSize = 12;
+			constexpr uint32_t c_GlbMagic = 0x46546C67; // "glTF", little-endian
+			constexpr uint32_t c_JsonChunkType = 0x4E4F534A; // "JSON", little-endian
+
+			if (fileSize < 4)
+			{
+				return false;
+			}
+
+			uint32_t magic;
+			memcpy(&magic, fileData, sizeof(magic));
+			if (magic != c_GlbMagic)
+			{
+				// Not a GLB container - the whole file is plain glTF JSON text.
+				outJsonData = fileData;
+				outJsonSize = fileSize;
+				return true;
+			}
+
+			if (fileSize < c_GlbHeaderSize)
+			{
+				return false;
+			}
+
+			size_t offset = c_GlbHeaderSize;
+			while (offset + 8 <= fileSize)
+			{
+				uint32_t chunkLength, chunkType;
+				memcpy(&chunkLength, fileData + offset, sizeof(chunkLength));
+				memcpy(&chunkType, fileData + offset + 4, sizeof(chunkType));
+				offset += 8;
+
+				if (offset + chunkLength > fileSize)
+				{
+					break;
+				}
+
+				if (chunkType == c_JsonChunkType)
+				{
+					outJsonData = fileData + offset;
+					outJsonSize = chunkLength;
+					return true;
+				}
+
+				offset += chunkLength;
+			}
+
+			return false;
+		}
+
+		// Returns true if name ends in "lod" (case-insensitive) followed by one or more digits -
+		// e.g. "Prop_LOD1", "TableLod4", "propLOD12". outBaseName gets the prefix with the LOD
+		// suffix (and a single immediately-preceding '_' or '-', if there is one) stripped,
+		// outLodIndex gets the parsed number.
+		bool TryParseLodSuffix(const std::string& name, std::string& outBaseName, uint& outLodIndex)
+		{
+			const size_t end = name.size();
+			size_t digitsStart = end;
+			while (digitsStart > 0 && std::isdigit(static_cast<unsigned char>(name[digitsStart - 1])))
+			{
+				--digitsStart;
+			}
+			if (digitsStart == end || digitsStart < 3)
+			{
+				return false;
+			}
+
+			const size_t lodStart = digitsStart - 3;
+			if (_strnicmp(name.c_str() + lodStart, "lod", 3) != 0)
+			{
+				return false;
+			}
+
+			size_t baseEnd = lodStart;
+			if (baseEnd > 0 && (name[baseEnd - 1] == '_' || name[baseEnd - 1] == '-'))
+			{
+				--baseEnd;
+			}
+			if (baseEnd == 0)
+			{
+				// The whole name is just "lod123" - no base name left to group other LODs by.
+				return false;
+			}
+
+			outBaseName = name.substr(0, baseEnd);
+			outLodIndex = static_cast<uint>(std::stoul(name.substr(digitsStart)));
+			return true;
+		}
+
 		// Figures out where a glTF texture's actual image bytes live and points a
 		// TextureSource at them - either a resolved absolute path for a loose file, or the
 		// bytes directly for an embedded (GLB) image. Returns false if the texture has no
@@ -89,8 +190,10 @@ namespace tyr
 		// below needs to start this call in a known, empty state rather than whatever the
 		// previous file left behind.
 		m_ResolvedImagePaths.Clear();
-		m_MeshIndices.Clear();
+		m_MeshNodeIndices.Clear();
 		m_MaterialIndexMap.Clear();
+		m_LodChains.Clear();
+		m_ConsumedLodNodeIndices.Clear();
 		m_HasDefaultMaterial = false;
 		m_DefaultMaterialIndex = 0;
 
@@ -141,47 +244,262 @@ namespace tyr
 			const fastgltf::Scene& scene = m_Asset.scenes[sceneIndex];
 			for (size_t nodeIndex : scene.nodeIndices)
 			{
-				CollectMeshNodes(nodeIndex, m_MeshIndices);
+				CollectMeshNodes(nodeIndex, m_MeshNodeIndices);
 			}
 		}
 
-		if (m_MeshIndices.IsEmpty())
+		if (m_MeshNodeIndices.IsEmpty())
 		{
 			TYR_LOG_ERROR("Model file %s has no meshes reachable from its default scene.", filePath);
 			return false;
 		}
 
-		bool anyMeshLoaded = false;
-		for (size_t meshIndex : m_MeshIndices)
+		// Pre-authored LOD detection - MSFT_lod first (only attempted if the file actually
+		// declares using it, via the asset-level list fastgltf already parses for us), then a
+		// naming-convention fallback for any mesh node MSFT_lod didn't already account for.
+		for (const auto& extensionName : m_Asset.extensionsUsed)
 		{
-			if (LoadMesh(meshIndex, outResult, m_MaterialIndexMap))
+			if (extensionName == "MSFT_lod")
 			{
-				anyMeshLoaded = true;
+				ParseMsftLodChains();
+				break;
+			}
+		}
+		BuildNameBasedLodChains();
+
+		bool anyMeshLoaded = false;
+		for (size_t nodeIdx : m_MeshNodeIndices)
+		{
+			const uint nodeIndex = static_cast<uint>(nodeIdx);
+			if (m_ConsumedLodNodeIndices.Find(nodeIndex) != nullptr)
+			{
+				// Already pulled in as another node's own alternate LOD below - not a
+				// standalone mesh in its own right.
+				continue;
+			}
+
+			const fastgltf::Node& node = m_Asset.nodes[nodeIdx];
+			ModelImportMesh* mesh = LoadMesh(*node.meshIndex, outResult, m_MaterialIndexMap);
+			if (!mesh)
+			{
+				continue;
+			}
+			anyMeshLoaded = true;
+
+			if (LocalArray<uint, MeshConstants::c_MaxLods - 1>* alternates = m_LodChains.Find(nodeIndex))
+			{
+				for (uint altNodeIndex : *alternates)
+				{
+					const fastgltf::Node& altNode = m_Asset.nodes[altNodeIndex];
+					if (altNode.meshIndex.has_value())
+					{
+						LoadPreAuthoredLod(*altNode.meshIndex, *mesh, outResult, m_MaterialIndexMap);
+					}
+				}
 			}
 		}
 
 		return anyMeshLoaded;
 	}
 
-	void GltfModelLoader::CollectMeshNodes(size_t nodeIndex, Array<size_t>& outMeshIndices) const
+	void GltfModelLoader::CollectMeshNodes(size_t nodeIndex, Array<size_t>& outMeshNodeIndices) const
 	{
 		const fastgltf::Node& node = m_Asset.nodes[nodeIndex];
 		if (node.meshIndex.has_value())
 		{
-			outMeshIndices.Add(*node.meshIndex);
+			outMeshNodeIndices.Add(nodeIndex);
 		}
 
 		for (size_t childIndex : node.children)
 		{
-			CollectMeshNodes(childIndex, outMeshIndices);
+			CollectMeshNodes(childIndex, outMeshNodeIndices);
 		}
 	}
 
-	bool GltfModelLoader::LoadMesh(size_t meshIndex, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap)
+	void GltfModelLoader::ParseMsftLodChains()
+	{
+		const fastgltf::span<std::byte> fileBytes = static_cast<fastgltf::span<std::byte>>(m_DataBuffer);
+
+		const std::byte* jsonData = nullptr;
+		size_t jsonSize = 0;
+		if (!FindGltfJsonBytes(fileBytes.data(), fileBytes.size(), jsonData, jsonSize))
+		{
+			TYR_LOG_WARNING("Model declares using MSFT_lod but its JSON content couldn't be located for a direct scan - falling back to naming-convention LOD detection only.");
+			return;
+		}
+
+		simdjson::dom::parser jsonParser;
+		simdjson::dom::element doc;
+		if (jsonParser.parse(reinterpret_cast<const char*>(jsonData), jsonSize).get(doc) != simdjson::SUCCESS)
+		{
+			TYR_LOG_WARNING("Failed to re-parse model JSON for MSFT_lod - falling back to naming-convention LOD detection only.");
+			return;
+		}
+
+		simdjson::dom::array nodes;
+		if (doc["nodes"].get(nodes) != simdjson::SUCCESS)
+		{
+			return;
+		}
+
+		uint nodeIndex = 0;
+		for (simdjson::dom::element nodeElem : nodes)
+		{
+			simdjson::dom::object extensions;
+			if (nodeElem["extensions"].get(extensions) == simdjson::SUCCESS)
+			{
+				simdjson::dom::object msftLod;
+				if (extensions["MSFT_lod"].get(msftLod) == simdjson::SUCCESS)
+				{
+					simdjson::dom::array ids;
+					if (msftLod["ids"].get(ids) == simdjson::SUCCESS)
+					{
+						LocalArray<uint, MeshConstants::c_MaxLods - 1> alternates;
+						for (simdjson::dom::element idElem : ids)
+						{
+							int64_t idValue;
+							if (idElem.get(idValue) == simdjson::SUCCESS && idValue >= 0
+								&& alternates.Size() < MeshConstants::c_MaxLods - 1)
+							{
+								alternates.Add(static_cast<uint>(idValue));
+							}
+						}
+
+						if (!alternates.IsEmpty())
+						{
+							m_LodChains.Insert(nodeIndex, alternates);
+							for (uint altNodeIndex : alternates)
+							{
+								m_ConsumedLodNodeIndices.Insert(altNodeIndex, true);
+							}
+						}
+					}
+				}
+			}
+			++nodeIndex;
+		}
+	}
+
+	void GltfModelLoader::BuildNameBasedLodChains()
+	{
+		struct NameGroupEntry
+		{
+			uint lodIndex;
+			uint nodeIndex;
+		};
+		std::unordered_map<std::string, std::vector<NameGroupEntry>> groups;
+
+		for (size_t nodeIdx : m_MeshNodeIndices)
+		{
+			const uint nodeIndex = static_cast<uint>(nodeIdx);
+			if (m_ConsumedLodNodeIndices.Find(nodeIndex) != nullptr || m_LodChains.Find(nodeIndex) != nullptr)
+			{
+				// Already handled by MSFT_lod, either as a host (has its own entry in
+				// m_LodChains) or as an alternate (already consumed) - the naming convention
+				// only needs to cover whatever that extension didn't.
+				continue;
+			}
+
+			const fastgltf::Node& node = m_Asset.nodes[nodeIdx];
+			const fastgltf::Mesh& gltfMesh = m_Asset.meshes[*node.meshIndex];
+
+			std::string baseName;
+			uint lodIndex;
+			if (!TryParseLodSuffix(std::string(gltfMesh.name.c_str()), baseName, lodIndex))
+			{
+				continue;
+			}
+
+			groups[baseName].push_back({ lodIndex, nodeIndex });
+		}
+
+		for (auto& [baseName, entries] : groups)
+		{
+			bool hasLod0 = false;
+			for (const NameGroupEntry& entry : entries)
+			{
+				if (entry.lodIndex == 0)
+				{
+					hasLod0 = true;
+					break;
+				}
+			}
+			if (!hasLod0 || entries.size() < 2)
+			{
+				// No LOD0 to anchor the chain, or only one member (nothing to chain to) - leave
+				// these nodes to be imported as independent, standalone meshes instead.
+				continue;
+			}
+
+			std::sort(entries.begin(), entries.end(), [](const NameGroupEntry& a, const NameGroupEntry& b)
+			{
+				return a.lodIndex < b.lodIndex;
+			});
+
+			const uint hostNodeIndex = entries[0].nodeIndex;
+			LocalArray<uint, MeshConstants::c_MaxLods - 1> alternates;
+			for (size_t i = 1; i < entries.size() && alternates.Size() < MeshConstants::c_MaxLods - 1; ++i)
+			{
+				alternates.Add(entries[i].nodeIndex);
+				m_ConsumedLodNodeIndices.Insert(entries[i].nodeIndex, true);
+			}
+
+			m_LodChains.Insert(hostNodeIndex, alternates);
+		}
+	}
+
+	bool GltfModelLoader::LoadPreAuthoredLod(size_t meshIndex, ModelImportMesh& mesh, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap)
+	{
+		if (mesh.preAuthoredLods.Size() >= MeshConstants::c_MaxLods - 1)
+		{
+			return false;
+		}
+
+		ModelImportMeshLod& lod = mesh.preAuthoredLods.ExpandOne();
+		// Guards against stale content from a previous, larger import that used this same
+		// reused slot - see ModelImportMeshLod's own comment.
+		lod.Reset();
+
+		return LoadMeshPrimitives(meshIndex, lod.vertices, lod.indices, lod.submeshes, outResult, materialIndexMap);
+	}
+
+	ModelImportMesh* GltfModelLoader::LoadMesh(size_t meshIndex, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap)
+	{
+		ModelImportMesh& mesh = outResult.AddMesh();
+
+		if (!LoadMeshPrimitives(meshIndex, mesh.vertices, mesh.indices, mesh.submeshes, outResult, materialIndexMap))
+		{
+			return nullptr;
+		}
+
+		Vector3 aabbMin(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+		Vector3 aabbMax(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
+		for (const Vertex& vertex : mesh.vertices)
+		{
+			aabbMin.x = std::min(aabbMin.x, vertex.position.x);
+			aabbMin.y = std::min(aabbMin.y, vertex.position.y);
+			aabbMin.z = std::min(aabbMin.z, vertex.position.z);
+			aabbMax.x = std::max(aabbMax.x, vertex.position.x);
+			aabbMax.y = std::max(aabbMax.y, vertex.position.y);
+			aabbMax.z = std::max(aabbMax.z, vertex.position.z);
+		}
+
+		mesh.aabbMin = aabbMin;
+		mesh.aabbMax = aabbMax;
+
+		// A simple, not-tightest-possible bounding sphere - centered on the AABB, radius
+		// reaching its farthest corner. Good enough for now.
+		const Vector3 centre = (aabbMin + aabbMax) * 0.5f;
+		const float radius = (aabbMax - centre).Length();
+		mesh.sphere = BoundingSphere(centre, radius);
+
+		return &mesh;
+	}
+
+	bool GltfModelLoader::LoadMeshPrimitives(size_t meshIndex, Array<Vertex>& outVertices, Array<uint>& outIndices,
+		Array<ModelImportSubmesh>& outSubmeshes, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap)
 	{
 		const fastgltf::Mesh& gltfMesh = m_Asset.meshes[meshIndex];
-
-		ModelImportMesh& mesh = outResult.AddMesh();
 		bool anyPrimitiveLoaded = false;
 
 		for (const fastgltf::Primitive& primitive : gltfMesh.primitives)
@@ -209,15 +527,15 @@ namespace tyr
 
 			const fastgltf::Accessor& posAccessor = m_Asset.accessors[posAttribute->accessorIndex];
 			const uint vertexCount = static_cast<uint>(posAccessor.count);
-			const uint baseVertex = mesh.vertices.Size();
-			mesh.vertices.Resize(baseVertex + vertexCount);
+			const uint baseVertex = outVertices.Size();
+			outVertices.Resize(baseVertex + vertexCount);
 
 			// RH -> LH: flip Z on position, normal and tangent, and flip the tangent's
 			// handedness sign to match. UVs are unchanged - glTF's top-left origin already
 			// matches what our renderer expects.
 			fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(m_Asset, posAccessor, [&](fastgltf::math::fvec3 v, size_t i)
 			{
-				mesh.vertices[baseVertex + static_cast<uint>(i)].position = Vector3(v[0], v[1], -v[2]);
+				outVertices[baseVertex + static_cast<uint>(i)].position = Vector3(v[0], v[1], -v[2]);
 			});
 
 			bool hasNormals = false;
@@ -226,7 +544,7 @@ namespace tyr
 			{
 				fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(m_Asset, m_Asset.accessors[normalAttribute->accessorIndex], [&](fastgltf::math::fvec3 v, size_t i)
 				{
-					mesh.vertices[baseVertex + static_cast<uint>(i)].normal = Vector3(v[0], v[1], -v[2]);
+					outVertices[baseVertex + static_cast<uint>(i)].normal = Vector3(v[0], v[1], -v[2]);
 				});
 				hasNormals = true;
 			}
@@ -239,7 +557,7 @@ namespace tyr
 			{
 				fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec2>(m_Asset, m_Asset.accessors[uvAttribute->accessorIndex], [&](fastgltf::math::fvec2 v, size_t i)
 				{
-					mesh.vertices[baseVertex + static_cast<uint>(i)].uv = Vector2(v[0], v[1]);
+					outVertices[baseVertex + static_cast<uint>(i)].uv = Vector2(v[0], v[1]);
 				});
 			}
 
@@ -249,7 +567,7 @@ namespace tyr
 			{
 				fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec4>(m_Asset, m_Asset.accessors[tangentAttribute->accessorIndex], [&](fastgltf::math::fvec4 v, size_t i)
 				{
-					mesh.vertices[baseVertex + static_cast<uint>(i)].tangent = Vector4(v[0], v[1], -v[2], -v[3]);
+					outVertices[baseVertex + static_cast<uint>(i)].tangent = Vector4(v[0], v[1], -v[2], -v[3]);
 				});
 				hasTangents = true;
 			}
@@ -257,15 +575,15 @@ namespace tyr
 
 			const fastgltf::Accessor& indexAccessor = m_Asset.accessors[*primitive.indicesAccessor];
 			const uint indexCount = static_cast<uint>(indexAccessor.count);
-			const uint baseIndex = mesh.indices.Size();
-			mesh.indices.Resize(baseIndex + indexCount);
+			const uint baseIndex = outIndices.Size();
+			outIndices.Resize(baseIndex + indexCount);
 
 			// Written as primitive-local indices for now (0-based into this primitive's own
 			// vertex range, not the mesh-wide one) - rebased to the mesh-wide absolute form
 			// once tangent generation below (which needs them local) is done.
 			fastgltf::iterateAccessorWithIndex<std::uint32_t>(m_Asset, indexAccessor, [&](std::uint32_t index, size_t i)
 			{
-				mesh.indices[baseIndex + static_cast<uint>(i)] = index;
+				outIndices[baseIndex + static_cast<uint>(i)] = index;
 			});
 
 			// Reverse winding per triangle - needed because we flipped Z above. Works the
@@ -273,7 +591,7 @@ namespace tyr
 			// pairs of whatever values are there.
 			for (uint i = 0; i + 2 < indexCount; i += 3)
 			{
-				std::swap(mesh.indices[baseIndex + i + 1], mesh.indices[baseIndex + i + 2]);
+				std::swap(outIndices[baseIndex + i + 1], outIndices[baseIndex + i + 2]);
 			}
 
 			// Fill in whatever wasn't authored. If normals are missing, tangents get
@@ -284,25 +602,25 @@ namespace tyr
 			// rebase below.
 			if (!hasNormals)
 			{
-				MeshUtil::CreateNormalsAndTangents(mesh.vertices.Data() + baseVertex, vertexCount, mesh.indices.Data() + baseIndex, indexCount);
+				MeshUtil::CreateNormalsAndTangents(outVertices.Data() + baseVertex, vertexCount, outIndices.Data() + baseIndex, indexCount);
 			}
 			else if (!hasTangents)
 			{
-				MeshUtil::CreateTangents(mesh.vertices.Data() + baseVertex, vertexCount, mesh.indices.Data() + baseIndex, indexCount);
+				MeshUtil::CreateTangents(outVertices.Data() + baseVertex, vertexCount, outIndices.Data() + baseIndex, indexCount);
 			}
 
 			// Rebase this primitive's indices from local to the mesh-wide absolute form the
 			// rest of the pipeline (and any later primitives sharing this same index buffer) expects.
 			for (uint i = 0; i < indexCount; ++i)
 			{
-				mesh.indices[baseIndex + i] += baseVertex;
+				outIndices[baseIndex + i] += baseVertex;
 			}
 
 			const uint materialIndex = primitive.materialIndex.has_value()
 				? ResolveMaterial(*primitive.materialIndex, outResult, materialIndexMap)
 				: GetOrCreateDefaultMaterial(outResult);
 
-			ModelImportSubmesh& submesh = mesh.submeshes.ExpandOne();
+			ModelImportSubmesh& submesh = outSubmeshes.ExpandOne();
 			submesh.indexOffset = baseIndex;
 			submesh.indexCount = indexCount;
 			submesh.materialIndex = materialIndex;
@@ -310,33 +628,7 @@ namespace tyr
 			anyPrimitiveLoaded = true;
 		}
 
-		if (!anyPrimitiveLoaded)
-		{
-			return false;
-		}
-
-		Vector3 aabbMin(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
-		Vector3 aabbMax(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
-		for (const Vertex& vertex : mesh.vertices)
-		{
-			aabbMin.x = std::min(aabbMin.x, vertex.position.x);
-			aabbMin.y = std::min(aabbMin.y, vertex.position.y);
-			aabbMin.z = std::min(aabbMin.z, vertex.position.z);
-			aabbMax.x = std::max(aabbMax.x, vertex.position.x);
-			aabbMax.y = std::max(aabbMax.y, vertex.position.y);
-			aabbMax.z = std::max(aabbMax.z, vertex.position.z);
-		}
-
-		mesh.aabbMin = aabbMin;
-		mesh.aabbMax = aabbMax;
-
-		// A simple, not-tightest-possible bounding sphere - centered on the AABB, radius
-		// reaching its farthest corner. Good enough for now.
-		const Vector3 centre = (aabbMin + aabbMax) * 0.5f;
-		const float radius = (aabbMax - centre).Length();
-		mesh.sphere = BoundingSphere(centre, radius);
-
-		return true;
+		return anyPrimitiveLoaded;
 	}
 
 	uint GltfModelLoader::ResolveMaterial(size_t gltfMaterialIndex, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap)

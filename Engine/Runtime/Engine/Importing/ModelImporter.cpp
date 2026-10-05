@@ -167,6 +167,11 @@ namespace tyr
 		char meshPath[PathConstants::c_MaxAssetPathTotalSize];
 		snprintf(meshPath, sizeof(meshPath), "%s/%s%s", outputFolderPath, meshName, AssetConstants::c_MeshFileExtension);
 
+		if (!AssetRegistry::Instance().ClearAssetForReimport(meshPath))
+		{
+			return false;
+		}
+
 		char absMeshFolderPath[TYR_MAX_PATH_TOTAL_SIZE];
 		AssetUtil::CreateFullPath(absMeshFolderPath, outputFolderPath);
 

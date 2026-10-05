@@ -5,10 +5,17 @@ namespace tyr
     /// Name of the app
     static constexpr const char* c_AppName = "@TYR_APP_NAME@";
 
-    /// Search path to use when looking for the app's assets. 
-    static constexpr const char* c_AssetsDir = "@TYR_APP_ASSETS_DIR@"; 
+    /// Search path to use when looking for the app's assets.
+    static constexpr const char* c_AssetsDir = "@TYR_APP_ASSETS_DIR@";
 
-    /// Path to the engine root when files haven't been packaged yet (e.g. running from debugger). 
+    /// Search path for engine-owned default/dummy source content, not yet imported - see
+    /// SourceAssets/ at the repo root. Editor-only; never read from a shipped build.
+    static constexpr const char* c_SourceAssetsDir = "@TYR_SOURCE_ASSETS_DIR@";
+
+    /// Search path for editor/app config files (e.g. EditorConfig.ini).
+    static constexpr const char* c_ConfigDir = "@TYR_CONFIG_DIR@";
+
+    /// Path to the engine root when files haven't been packaged yet (e.g. running from debugger).
     static constexpr const char* c_EngineRootDir = "@TYR_ROOT_DIR@"; 
 
     /// Search path to use when looking for built-in shaders.

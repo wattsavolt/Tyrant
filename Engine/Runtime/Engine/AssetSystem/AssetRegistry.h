@@ -43,6 +43,12 @@ namespace tyr
 		int GetAssetDependencyCount(const char* assetPath) const;
 		// Returns the number of assets that depend on this asset
 		int GetAssetReferenceCount(const char* assetPath) const;
+		// Call before writing a fresh asset to assetPath (e.g. a reimport) so the old entry at
+		// that exact path - if any - doesn't linger as a stale duplicate once the new one is
+		// added. Returns false (and logs) if the existing asset there is still referenced by
+		// something else and so can't be safely replaced; otherwise removes it (a no-op if
+		// nothing exists at that path yet) and returns true.
+		bool ClearAssetForReimport(const char* assetPath);
 #endif
 		// Following functions are not thread safe and should only be called from the main thread
 		const RegAssetData& GetAssetData(AssetID assetID) const;

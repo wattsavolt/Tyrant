@@ -13,14 +13,15 @@
 #include "Math/Vector2.h"
 #include "World/Camera.h"
 #include "AssetSystem/AssetUtil.h"
-#include "Importing/MaterialImporter.h"
-#include "Importing/ModelImporter.h"
 #include "ECS/Components.h"
 #include "RendererModule.h"
 #include "Rendering/RendererAPI.h"
 #include "GUI/GUIModule.h"
 #include "Input/InputModule.h"
 #include "Input/InputManager.h"
+#include "Importing/ModelImporter.h"
+#include "Importing/MaterialImporter.h"
+#include "Config/Config.h"
 
 namespace tyr
 {
@@ -76,23 +77,20 @@ namespace tyr
 		m_EditorViewport = MakeURef<EditorViewport>(*m_RendererAPI);
 		m_EditorUI = MakeURef<EditorUI>(*m_GUIModule, *m_RendererAPI);
 
-		// Step 7 test entity: import the test cube mesh if it hasn't been imported yet, then
-		// spawn a single entity for it with a transform and mesh component. This is
-		// temporary roadmap test code, not permanent editor logic.
+		// Must happen before the test-cube block right below - it's what guarantees
+		// Models/Cube/Cube.mesh (and the default material/textures) actually exist on a fresh
+		// checkout. A no-op on every subsequent startup - see ImportDefaultAssetsIfNeeded's own
+		// doc comment.
+		ImportDefaultAssetsIfNeeded();
+
+		// Step 7 test entity: spawn a single entity for the test cube mesh, with a transform
+		// and mesh component. This is temporary roadmap test code, not permanent editor logic.
 		{
 			char meshPath[PathConstants::c_MaxAssetPathTotalSize];
 			snprintf(meshPath, sizeof(meshPath), "Models/Cube/Cube%s", AssetConstants::c_MeshFileExtension);
 
-			AssetID meshAssetID = AssetRegistry::Instance().GetAssetIDSafe(meshPath);
-			if (!AssetUtil::IsValidAssetID(meshAssetID))
-			{
-				const bool importedModel = ModelImporter::Instance().ImportModel(
-					"C:\\Users\\volca\\Content\\Cube\\Cube.glb", "Models/Cube", "Cube");
-				TYR_ASSERT(importedModel);
-
-				meshAssetID = AssetRegistry::Instance().GetAssetIDSafe(meshPath);
-				TYR_ASSERT(AssetUtil::IsValidAssetID(meshAssetID));
-			}
+			const AssetID meshAssetID = AssetRegistry::Instance().GetAssetIDSafe(meshPath);
+			TYR_ASSERT(AssetUtil::IsValidAssetID(meshAssetID));
 
 			World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
 			Entity testEntity = world.entities.CreateEntity();
@@ -129,6 +127,61 @@ namespace tyr
 			// WorldManager::UpdateWorld creates the actual renderer-side light from this
 			// component - no need to also call CreateDirectionalLight here.
 		}
+	}
+
+	void Editor::ImportDefaultAssetsIfNeeded()
+	{
+		char configPath[TYR_MAX_PATH_TOTAL_SIZE];
+		AssetUtil::CreateFullConfigPath(configPath, "EditorConfig.ini");
+
+		Config editorConfig(configPath);
+		const bool shouldImport = !editorConfig.HasValue("ImportDefaultAssets") || editorConfig.GetValueAsBool("ImportDefaultAssets");
+		if (!shouldImport)
+		{
+			return;
+		}
+
+		// Points straight at the 5 plain source images and lets ImportPbrMaterial do exactly
+		// what it would for any real material - packing normal+height and AO+roughness+metallic
+		// itself. That keeps the default material's own creation exercising the same packing
+		// logic every other material goes through, rather than depending on hand-packed source
+		// textures staying in sync with whatever that logic currently does.
+		char albedoPath[TYR_MAX_PATH_TOTAL_SIZE];
+		char normalPath[TYR_MAX_PATH_TOTAL_SIZE];
+		char heightPath[TYR_MAX_PATH_TOTAL_SIZE];
+		char occlusionPath[TYR_MAX_PATH_TOTAL_SIZE];
+		char roughnessMetallicPath[TYR_MAX_PATH_TOTAL_SIZE];
+		AssetUtil::CreateFullSourceAssetPath(albedoPath, "Default/DefaultAlbedo.png");
+		AssetUtil::CreateFullSourceAssetPath(normalPath, "Default/DefaultNormal.png");
+		AssetUtil::CreateFullSourceAssetPath(heightPath, "Default/DefaultHeight.png");
+		AssetUtil::CreateFullSourceAssetPath(occlusionPath, "Default/DefaultOcclusion.png");
+		AssetUtil::CreateFullSourceAssetPath(roughnessMetallicPath, "Default/DefaultRoughnessMetallic.png");
+
+		PbrMaterialImportDesc defaultMaterialDesc;
+		defaultMaterialDesc.outputFolderPath = AssetConstants::c_DefaultMaterialFolderName;
+		defaultMaterialDesc.materialName = AssetConstants::c_DefaultMaterialName;
+		defaultMaterialDesc.albedoSource = TextureSource{ albedoPath };
+		defaultMaterialDesc.normalSource = TextureSource{ normalPath };
+		defaultMaterialDesc.heightSource = TextureSource{ heightPath };
+		defaultMaterialDesc.occlusionSource = TextureSource{ occlusionPath };
+		defaultMaterialDesc.roughnessMetallicSource = TextureSource{ roughnessMetallicPath };
+		if (!MaterialImporter::Instance().ImportPbrMaterial(defaultMaterialDesc))
+		{
+			TYR_LOG_ERROR("Failed to import the default material from SourceAssets.");
+			return;
+		}
+
+		char sourcePath[TYR_MAX_PATH_TOTAL_SIZE];
+		AssetUtil::CreateFullSourceAssetPath(sourcePath, "Cube/Cube.glb");
+		if (!ModelImporter::Instance().ImportModel(sourcePath, "Models/Cube", "Cube"))
+		{
+			TYR_LOG_ERROR("Failed to import the test cube from SourceAssets.");
+			return;
+		}
+
+		// Cleared so this doesn't repeat on every subsequent startup.
+		editorConfig.SetValueAsBool("ImportDefaultAssets", false);
+		editorConfig.Save();
 	}
 
 	void Editor::Update(float deltaTime)

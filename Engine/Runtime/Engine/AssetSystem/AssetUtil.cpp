@@ -29,4 +29,24 @@ namespace tyr
 		// Add relative path
 		strcat_s(absFilePath, absFilePathSize, relativePath);
 	}
+
+	void AssetUtil::CreateFullSourceAssetPath(char absFilePath[], const char* relativePath, size_t absFilePathSize)
+	{
+		static const size_t sourceAssetDirSize = strlen(c_SourceAssetsDir);
+		const size_t relPathSize = strlen(relativePath);
+		TYR_ASSERT(sourceAssetDirSize + 1 + relPathSize <= TYR_MAX_PATH);
+		strcpy_s(absFilePath, absFilePathSize, c_SourceAssetsDir);
+		strcat_s(absFilePath, absFilePathSize, "/");
+		strcat_s(absFilePath, absFilePathSize, relativePath);
+	}
+
+	void AssetUtil::CreateFullConfigPath(char absFilePath[], const char* relativePath, size_t absFilePathSize)
+	{
+		static const size_t configDirSize = strlen(c_ConfigDir);
+		const size_t relPathSize = strlen(relativePath);
+		TYR_ASSERT(configDirSize + 1 + relPathSize <= TYR_MAX_PATH);
+		strcpy_s(absFilePath, absFilePathSize, c_ConfigDir);
+		strcat_s(absFilePath, absFilePathSize, "/");
+		strcat_s(absFilePath, absFilePathSize, relativePath);
+	}
 }

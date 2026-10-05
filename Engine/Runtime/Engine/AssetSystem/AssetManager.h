@@ -48,13 +48,6 @@ namespace tyr
 
 		void LoadLocation(AssetID assetID);
 
-		const char* GetDefaultMaterialPath() const { return c_DefaultMaterialPath; }
-
-		AssetID GetDefaultMaterialAssetID() const { return c_DefaultMaterialAssetID; }
-
-		// Temporary function until mesh loading and mesh components are supported
-		Handle GetDefaultMaterial() const { return m_AssetMap.Find(c_DefaultMaterialAssetID)->resourceHandle; }
-
 	private:
 		// Called once per frame from the main thread - also the only place allowed to
 		// create/delete renderer resources, since doing so isn't safe against a worker
@@ -124,8 +117,6 @@ namespace tyr
 		Handle m_CurrentBatch;
 		Device* m_Device;
 		RendererAPI* m_RendererAPI;
-		char c_DefaultMaterialPath[PathConstants::c_MaxAssetPathTotalSize];
-		AssetID c_DefaultMaterialAssetID;
 	};
 	
 }

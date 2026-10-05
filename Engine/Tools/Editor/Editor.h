@@ -29,6 +29,12 @@ namespace tyr
 		bool WantsExit() const override;
 
 	private:
+		// Reads EditorConfig.ini's "ImportDefaultAssets" flag (treated as true if missing) and,
+		// if set, imports the engine's default/dummy content (fallback textures, the default
+		// material, the test cube) from SourceAssets, then clears the flag so it isn't repeated
+		// on every subsequent startup. Called once from Initialize().
+		void ImportDefaultAssetsIfNeeded();
+
 		WindowHandle m_PrimaryWindow{};
 		URef<Camera> m_Camera;
 		WindowModule* m_WindowModule{};

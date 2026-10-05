@@ -136,6 +136,21 @@ namespace tyr
         return -1;
     }
 
+    bool AssetRegistry::ClearAssetForReimport(const char* assetPath)
+    {
+        const int refCount = GetAssetReferenceCount(assetPath);
+        if (refCount > 0)
+        {
+            TYR_LOG_ERROR("Cannot overwrite asset with references. Path: %s.", assetPath);
+            return false;
+        }
+        if (refCount == 0)
+        {
+            RemoveAssetIfExists(assetPath);
+        }
+        return true;
+    }
+
     const RegAssetData& AssetRegistry::GetAssetData(AssetID assetID) const
     {
         return *m_RegistryFile.assets.Find(assetID);

@@ -33,9 +33,6 @@ namespace tyr
 		m_PendingTextureDeletes.Reserve(16);
 		m_PendingMaterialDeletes.Reserve(16);
 		m_PendingMeshDeletes.Reserve(16);
-
-		snprintf(c_DefaultMaterialPath, sizeof(c_DefaultMaterialPath), "%s/%s%s", AssetConstants::c_DefaultMaterialFolderName, AssetConstants::c_DefaultMaterialName, AssetConstants::c_MaterialFileExtension);
-		c_DefaultMaterialAssetID = AssetRegistry::Instance().GetAssetID(c_DefaultMaterialPath);
 	}
 
 	AssetManager::~AssetManager()

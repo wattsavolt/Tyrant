@@ -37,22 +37,12 @@ namespace tyr
 		// LOD count) when its geometry tasks are created, decremented as each one finishes -
 		// the mesh only becomes Loaded once every LOD has. Unused by every other asset type.
 		uint pendingLodCount = 0;
-		// Mesh-specific: this mesh's header pool slot, set once CreateMesh has deserialized
+		// Mesh-specific for the oment: this mesh's header pool slot, set once CreateMesh has deserialized
 		// it (default-constructed Handle is invalid until then - check with an explicit
 		// bool). Lets other code (AssetManager::CreateMeshInstance) find a mesh's submesh/
 		// default-material list once it's known, without waiting for its geometry to finish
 		// uploading too. Unused by every other asset type.
-		Handle meshHeader;
-	};
-
-	// A single per-submesh-slot material override - what a MeshComponent's own override list
-	// is made of, and what AssetManager::CreateMeshInstance takes to build an instance's
-	// resolved per-slot materials. Slots not covered by any override fall back to the mesh
-	// asset's own default (MeshHeader::materials[slot]).
-	struct MaterialOverride
-	{
-		uint submeshSlot;
-		AssetID material;
+		Handle assetHeader{};
 	};
 
 	struct TextureHeaderLoadData
@@ -130,27 +120,17 @@ namespace tyr
 		GpuBufferAllocation meshletsGpuAlloc;
 	};
 
-	// One AssetManager::CreateMeshInstance call in flight, waiting on its mesh's header (to
-	// know the submesh/default-material list) and every material it'll actually need
-	// (overrides, plus the mesh's own default for any slot not overridden).
+	// A mesh instance waiting for its mesh header and materials to load before it's created.
 	struct MeshInstanceCreateData
 	{
 		AssetID meshAssetID;
 		Matrix4 transform;
-		LocalArray<MaterialOverride, MeshConstants::c_MaxSubmeshes> overrides;
-		// Set once this instance's needed materials have actually been requested (via
-		// LoadMaterial) - can only happen once the mesh's header is available (need the
-		// submesh/default-material list to know what "not overridden" needs loading), so
-		// this has to be a one-time, later transition rather than done up front.
-		bool materialsRequested = false;
-		// Invoked with the real MeshInstanceHandle, and the resolved (override-or-default)
-		// material AssetID actually used for each submesh slot, once
-		// AssetManager::CreateResolvedMeshInstance actually creates it - the caller has no
-		// other way to learn either, since creation is asynchronous. Needed so whoever asked
-		// for this instance can delete it later - both the renderer-side instance and this
-		// instance's share of each material's refcount (e.g. WorldManager tearing down a
-		// world's mesh components - see WorldMeshInstance).
+		// One material per submesh. An invalid or missing entry uses the mesh's own material.
+		LocalArray<AssetID, MeshConstants::c_MaxSubmeshes> materials;
+		// Called once the instance is created, with the material used for each submesh.
 		Function<void(MeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated;
+		// Set once the materials have been requested, which needs the mesh header to be loaded.
+		bool materialsRequested = false;
 	};
 
 	struct AssetLoadBatchEntry

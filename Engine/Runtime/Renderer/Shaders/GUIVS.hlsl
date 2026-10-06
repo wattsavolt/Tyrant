@@ -17,9 +17,9 @@ struct PushConstants
 	float2 translate;
 	uint textureIndex;
 };
-[[vk::push_constant]] PushConstants g_PushConstants;
+TYR_VK_PUSH_CONSTANT PushConstants g_PushConstants;
 
-[[vk::binding(TYR_BINDING_GUI_VERTEX, 0)]] StructuredBuffer<GUIVertex> vertices : register(t13);
+TYR_VK_BINDING(TYR_BINDING_GUI_VERTEX, 0) StructuredBuffer<GUIVertex> vertices : register(t13);
 
 struct GUI_VS_OUTPUT
 {

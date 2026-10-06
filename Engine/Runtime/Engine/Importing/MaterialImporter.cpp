@@ -12,6 +12,25 @@
 
 namespace tyr
 {
+	namespace
+	{
+		// Creates the folder, relative to the assets folder, if it doesn't exist yet.
+		bool CreateAssetFolder(const char* relativeFolderPath)
+		{
+			char absFolderPath[TYR_MAX_PATH_TOTAL_SIZE];
+			AssetUtil::CreateFullPath(absFolderPath, relativeFolderPath);
+
+			std::error_code ec;
+			fs::create_directories(absFolderPath, ec);
+			if (ec)
+			{
+				TYR_LOG_ERROR("Error creating directory %s.", absFolderPath);
+				return false;
+			}
+			return true;
+		}
+	}
+
 	MaterialImporter& MaterialImporter::Instance()
 	{
 		static MaterialImporter importer;
@@ -128,27 +147,13 @@ namespace tyr
 
 	bool MaterialImporter::ImportTexture(const TextureSource& source, const char* outputFolderPath, const char* textureName, bool isSRGB, AssetID& textureID)
 	{
-		// Callers that go through ImportPbrMaterial get this for free via
-		// CreateMaterialAssetInfo - this one doesn't have an equivalent step of its own, so a
-		// standalone caller (e.g. importing a texture with no material at all) needs it here.
-		char absOutputFolderPath[TYR_MAX_PATH_TOTAL_SIZE];
-		AssetUtil::CreateFullPath(absOutputFolderPath, outputFolderPath);
-		if (!fs::exists(absOutputFolderPath))
+		if (!CreateAssetFolder(outputFolderPath))
 		{
-			std::error_code ec;
-			if (!fs::create_directories(absOutputFolderPath, ec))
-			{
-				TYR_LOG_ERROR("Error creating directory %s.", absOutputFolderPath);
-				return false;
-			}
+			return false;
 		}
 
 		char outputPath[TYR_MAX_PATH_TOTAL_SIZE];
 		snprintf(outputPath, sizeof(outputPath), "%s/%s%s", outputFolderPath, textureName, AssetConstants::c_TextureFileExtension);
-		if (!AssetRegistry::Instance().ClearAssetForReimport(outputPath))
-		{
-			return false;
-		}
 
 		ImageInfo info;
 		LoadImageInfo(source, info);
@@ -202,14 +207,11 @@ namespace tyr
 			return false;
 		}
 
-		textureID = AssetUtil::CreateAssetID();
-
-		AssetRegistry::Instance().AddAsset(textureID, compDesc.outputFilePath);
-
+		textureID = AssetRegistry::Instance().AddOrUpdateAsset(outputPath);
 		return true;
 	}
 
-	bool MaterialImporter::CreateAlbedo(const PbrMaterialImportDesc& desc, AssetID materialID, MaterialAssetFile& material)
+	bool MaterialImporter::CreateAlbedo(const PbrMaterialImportDesc& desc, MaterialAssetFile& material)
 	{
 		if (desc.albedoID != 0)
 		{
@@ -238,7 +240,7 @@ namespace tyr
 		return true;
 	}
 
-	bool MaterialImporter::CreateNormalHeight(const PbrMaterialImportDesc& desc, AssetID materialID, MaterialAssetFile& material)
+	bool MaterialImporter::CreateNormalHeight(const PbrMaterialImportDesc& desc, MaterialAssetFile& material)
 	{
 		if (desc.normalHeightID != 0)
 		{
@@ -254,10 +256,6 @@ namespace tyr
 
 		char outputPath[TYR_MAX_PATH_TOTAL_SIZE];
 		snprintf(outputPath, sizeof(outputPath), "%s/%s%s%s", desc.outputFolderPath, desc.materialName, AssetConstants::c_NormalHeightTextureSuffix, AssetConstants::c_TextureFileExtension);
-		if (!AssetRegistry::Instance().ClearAssetForReimport(outputPath))
-		{
-			return false;
-		}
 
 		ImageInfo normalInfo;
 		LoadImageInfo(desc.normalSource, normalInfo);
@@ -278,9 +276,7 @@ namespace tyr
 			}
 		}
 
-		// Use the highest bit depth of any of the textures - heightInfo is only ever
-		// populated (via LoadImageInfo above) when heightPresent is true, so it must not be
-		// read otherwise.
+		// Use the highest bit depth of the textures. heightInfo is only set when there's a height map.
 		const ImageBitDepth bitDepth = heightPresent
 			? static_cast<ImageBitDepth>(std::max(static_cast<uint8>(normalInfo.bitDepth), static_cast<uint8>(heightInfo.bitDepth)))
 			: normalInfo.bitDepth;
@@ -301,9 +297,7 @@ namespace tyr
 			}
 			else
 			{
-				// No real height data - 128 (~0.5) is neutral, not the loader's default
-				// opaque (255) alpha fill. MeshPS.hlsl centers height around 0.5, so this is
-				// what makes an absent height map cause zero parallax offset.
+				// No height map, so use a neutral middle height.
 				ImageUtil::FillChannel<uint8>(normal, texelCount, 4, 3, 128);
 			}
 			compDesc.image = normal;
@@ -321,7 +315,6 @@ namespace tyr
 			}
 			else
 			{
-				// See EightBit's identical comment above.
 				ImageUtil::FillChannel<float>(normal, texelCount, 4, 3, 0.5f);
 			}
 			compDesc.image = normal;
@@ -339,7 +332,6 @@ namespace tyr
 			}
 			else
 			{
-				// See EightBit's identical comment above.
 				ImageUtil::FillChannel<float>(normal, texelCount, 4, 3, 0.5f);
 			}
 			compDesc.image = normal;
@@ -368,16 +360,11 @@ namespace tyr
 			return false;
 		}
 
-		const AssetID textureID = AssetUtil::CreateAssetID();
-
-		AssetRegistry::Instance().AddAsset(textureID, compDesc.outputFilePath, &materialID, 1);
-
-		material.textures[MaterialConstants::c_PbrNormalHeightIndex] = textureID;
-
+		material.textures[MaterialConstants::c_PbrNormalHeightIndex] = AssetRegistry::Instance().AddOrUpdateAsset(outputPath);
 		return true;
 	}
 
-	bool MaterialImporter::CreateAORoughnessMetallic(const PbrMaterialImportDesc& desc, AssetID materialID, MaterialAssetFile& material)
+	bool MaterialImporter::CreateAORoughnessMetallic(const PbrMaterialImportDesc& desc, MaterialAssetFile& material)
 	{
 		if (desc.aoRoughnessMetallicID != 0)
 		{
@@ -393,22 +380,15 @@ namespace tyr
 
 		char outputPath[TYR_MAX_PATH_TOTAL_SIZE];
 		snprintf(outputPath, sizeof(outputPath), "%s/%s%s%s", desc.outputFolderPath, desc.materialName, AssetConstants::c_AORoughnessMetallicTextureSuffix, AssetConstants::c_TextureFileExtension);
-		if (!AssetRegistry::Instance().ClearAssetForReimport(outputPath))
-		{
-			return false;
-		}
 
-		// Occlusion and metallicRoughness are commonly the same texture (R=occlusion, G=roughness,
-		// B=metallic - the same packing this importer outputs), in which case there's nothing to
-		// merge and no reason to decode the image twice.
+		// Occlusion is often already packed into the roughness/metallic texture's red channel.
 		const bool sameSource = IsSameTextureSource(desc.occlusionSource, desc.roughnessMetallicSource);
 		const bool occlusionPresent = desc.occlusionSource.IsPresent();
 
 		ImageInfo roughnessMetallicInfo;
 		LoadImageInfo(desc.roughnessMetallicSource, roughnessMetallicInfo);
 
-		// occlusionInfo is only ever populated (via LoadImageInfo below) when occlusionPresent
-		// and not sameSource - it must not be read otherwise.
+		// Only set when there's occlusion data.
 		ImageInfo occlusionInfo;
 		if (sameSource)
 		{
@@ -424,9 +404,6 @@ namespace tyr
 				return false;
 			}
 		}
-		// else: no occlusion provided at all - channel 0 gets filled with a neutral "fully lit"
-		// value below instead of real occlusion data, the same way CreateNormalHeight fills an
-		// absent height map with a neutral value rather than requiring one.
 
 		const uint minReqRoughnessMetallicChannelCount = 3;
 		if (roughnessMetallicInfo.channelCount < minReqRoughnessMetallicChannelCount)
@@ -435,7 +412,6 @@ namespace tyr
 			return false;
 		}
 
-		// occlusionInfo.bitDepth is only valid when sameSource or occlusionPresent - see above.
 		const bool hasOcclusionInfo = sameSource || occlusionPresent;
 		const ImageBitDepth bitDepth = hasOcclusionInfo
 			? static_cast<ImageBitDepth>(std::max(static_cast<uint8>(occlusionInfo.bitDepth), static_cast<uint8>(roughnessMetallicInfo.bitDepth)))
@@ -458,8 +434,7 @@ namespace tyr
 				}
 				else
 				{
-					// No real occlusion data - 255 (1.0) is "fully lit", matching glTF's own
-					// default when occlusionTexture is absent.
+					// No occlusion map, so treat it as fully lit.
 					ImageUtil::FillChannel<uint8>(roughnessMetallic, texelCount, 4, 0, 255);
 				}
 			}
@@ -480,7 +455,6 @@ namespace tyr
 				}
 				else
 				{
-					// See EightBit's identical comment above.
 					ImageUtil::FillChannel<float>(roughnessMetallic, texelCount, 4, 0, 1.0f);
 				}
 			}
@@ -506,91 +480,32 @@ namespace tyr
 			return false;
 		}
 
-		const AssetID textureID = AssetUtil::CreateAssetID();
-
-		AssetRegistry::Instance().AddAsset(textureID, compDesc.outputFilePath, &materialID, 1);
-
-		material.textures[MaterialConstants::c_PbrAoRoughnessMetallicIndex] = textureID;
-
+		material.textures[MaterialConstants::c_PbrAoRoughnessMetallicIndex] = AssetRegistry::Instance().AddOrUpdateAsset(outputPath);
 		return true;
 	}
 
-	bool MaterialImporter::CreateMaterialAssetInfo(const char* outputFolderPath, const char* materialPath, MaterialAssetFile& material)
+	bool MaterialImporter::ImportPbrMaterial(const PbrMaterialImportDesc& desc, AssetID& materialID)
 	{
-		char absMaterialFolderPath[TYR_MAX_PATH_TOTAL_SIZE];
-		AssetUtil::CreateFullPath(absMaterialFolderPath, outputFolderPath);
-
-		if (!AssetRegistry::Instance().ClearAssetForReimport(materialPath))
+		if (!CreateAssetFolder(desc.outputFolderPath))
 		{
 			return false;
 		}
 
-		// Delete material directory if it exists and no references
-		if (fs::exists(absMaterialFolderPath))
-		{
-			std::error_code ec;
-			fs::remove_all(absMaterialFolderPath, ec);
-			if (ec)
-			{
-				TYR_LOG_ERROR("Error deleting directory %s.", absMaterialFolderPath);
-				return false;
-			}
-		}
-
-		// Create material directory
-		{
-			std::error_code ec;
-			if (!fs::create_directories(absMaterialFolderPath, ec))
-			{
-				TYR_LOG_ERROR("Error creating directory %s.", absMaterialFolderPath);
-				return false;
-			}
-		}
-
-		return true;
-	}
-
-	bool MaterialImporter::ImportPbrMaterial(const PbrMaterialImportDesc& desc)
-	{
 		MaterialAssetFile material;
 		material.type = MaterialType::PBR;
-		// CreateAlbedo/CreateNormalHeight/CreateAORoughnessMetallic below all write into
-		// material.textures by index (material.textures[c_PbrXIndex] = ...), which - unlike
-		// Add() - never grows LocalArray's own size tracking on its own. Without resizing
-		// first, material.textures.Size() stays 0 forever despite those three slots actually
-		// being written, which silently drops every texture reference: the material's own
-		// dependency registration below (AddAsset, keyed off this same Size()), and every
-		// downstream range-based-for over a loaded MaterialAssetFile's textures (see
-		// AssetManager::CreateMaterial), all see zero textures instead of three.
+		// Sized up front because the textures below are written by index.
 		material.textures.Resize(MaterialConstants::c_PbrAoRoughnessMetallicIndex + 1);
 
-		char materialPath[PathConstants::c_MaxAssetPathTotalSize];
-		snprintf(materialPath, sizeof(materialPath), "%s/%s%s", desc.outputFolderPath, desc.materialName, AssetConstants::c_MaterialFileExtension);
-
-		const AssetID materialID = AssetUtil::CreateAssetID();
-
-		if (!CreateMaterialAssetInfo(desc.outputFolderPath, materialPath, material))
+		if (!CreateAlbedo(desc, material) || !CreateNormalHeight(desc, material) || !CreateAORoughnessMetallic(desc, material))
 		{
 			return false;
 		}
 
-		if (!CreateAlbedo(desc, materialID, material) || !CreateNormalHeight(desc, materialID, material) || !CreateAORoughnessMetallic(desc, materialID, material))
-		{
-			return false;
-		}
-
-		AssetRegistry::Instance().AddAsset(materialID, materialPath, material.textures.Data(), material.textures.Size());
-
-		return SerializeMaterial(desc, material);
-	}
-
-	bool MaterialImporter::SerializeMaterial(const PbrMaterialImportDesc& desc, const MaterialAssetFile& material) const
-	{
 		char materialPath[PathConstants::c_MaxAssetPathTotalSize];
 		snprintf(materialPath, sizeof(materialPath), "%s/%s%s", desc.outputFolderPath, desc.materialName, AssetConstants::c_MaterialFileExtension);
 
 		AssetUtil::SaveAsset<MaterialAssetFile>(materialPath, material);
-
+		materialID = AssetRegistry::Instance().AddOrUpdateAsset(materialPath, material.textures.Data(), material.textures.Size());
 		return true;
 	}
 }

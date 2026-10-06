@@ -1,7 +1,11 @@
 #include "EditorViewport.h"
+#include "AssetBrowserPanel.h"
 #include "Rendering/RendererAPI.h"
+#include "RenderAPI/GraphicsUtility.h"
 #include "Input/InputManager.h"
 #include "World/Camera.h"
+#include "World/World.h"
+#include "Math/Matrix4.h"
 #include "imgui.h"
 
 namespace tyr
@@ -11,52 +15,67 @@ namespace tyr
 	{
 	}
 
-	void EditorViewport::Draw(RenderViewportHandle viewport, InputManager& inputManager, Camera& camera, float deltaTime)
+	bool EditorViewport::Draw(const PanelRect& rect, const World& world, InputManager& inputManager, bool editing, float deltaTime, MeshDrop& drop)
 	{
-		ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoCollapse;
+		ImGui::SetNextWindowPos(ImVec2(rect.x, rect.y));
+		ImGui::SetNextWindowSize(ImVec2(rect.width, rect.height));
+		constexpr ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize
+			| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
 
-		// Only takes effect the first time this window is ever seen (i.e. no size saved in
-		// imgui.ini yet) - after that, whatever size the user last dragged it to wins.
-		const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
-		ImGui::SetNextWindowSize(ImVec2(mainViewport->WorkSize.x * 0.7f, mainViewport->WorkSize.y * 0.7f), ImGuiCond_FirstUseEver);
-		ImGui::SetNextWindowPos(ImVec2(mainViewport->WorkPos.x + 20.0f, mainViewport->WorkPos.y + 20.0f), ImGuiCond_FirstUseEver);
-
-		if (m_Maximized)
-		{
-			ImGui::SetNextWindowPos(mainViewport->WorkPos);
-			ImGui::SetNextWindowSize(mainViewport->WorkSize);
-			windowFlags |= ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
-		}
-
-		ImGui::Begin("Viewport", nullptr, windowFlags);
-
-		// Ctrl+Shift+M toggles maximize - matches the "short cuts instead of clutter" direction
-		// for editor panels rather than a permanent toolbar button eating into viewport space.
-		ImGuiIO& io = ImGui::GetIO();
-		if (ImGui::IsWindowFocused() && io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_M))
-		{
-			m_Maximized = !m_Maximized;
-		}
+		ImGui::Begin("##Viewport", nullptr, windowFlags);
 
 		const ImVec2 available = ImGui::GetContentRegionAvail();
 		const uint width = (uint)(available.x > 1.0f ? available.x : 1.0f);
 		const uint height = (uint)(available.y > 1.0f ? available.y : 1.0f);
 
-		if (width != m_Width || height != m_Height || !m_Texture)
+		// Fetched every frame since each buffered frame has its own texture.
+		const TextureHandle texture = m_RendererAPI.GetOrCreateRenderViewportTexture(world.renderViewportHandle, "Viewport", width, height);
+
+		// +1 because ImGui treats a texture ID of 0 as unset.
+		const ImTextureID texID = (ImTextureID)(intptr_t)(texture.h.index + 1);
+		const ImVec2 imageMin = ImGui::GetCursorScreenPos();
+		ImGui::Image(texID, ImVec2((float)width, (float)height));
+
+		bool dropped = false;
+		if (editing)
 		{
-			m_Texture = m_RendererAPI.GetOrCreateRenderViewportTexture(viewport, "Viewport", width, height);
-			m_Width = width;
-			m_Height = height;
+			if (ImGui::BeginDragDropTarget())
+			{
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(AssetBrowserPanel::c_MeshPayload))
+				{
+					const ImVec2 mouse = ImGui::GetMousePos();
+					drop.mesh = *static_cast<const AssetID*>(payload->Data);
+					CalculateMouseRay(world, mouse.x - imageMin.x, mouse.y - imageMin.y, width, height, drop);
+					dropped = true;
+				}
+				ImGui::EndDragDropTarget();
+			}
+
+			m_CameraController.Update(inputManager, *world.camera, deltaTime, ImGui::IsWindowHovered());
 		}
 
-		// +1: ImGui treats ImTextureID(0) as "not yet set" and a texture's own pool index can
-		// legitimately be 0 - see GUIModule's PackTextureHandle for the same offset.
-		const ImTextureID texID = (ImTextureID)(intptr_t)(m_Texture.h.index + 1);
-		ImGui::Image(texID, ImVec2((float)m_Width, (float)m_Height));
-
-		const bool isHovered = ImGui::IsWindowHovered();
-		m_CameraController.Update(inputManager, camera, deltaTime, isHovered);
-
 		ImGui::End();
+		return dropped;
+	}
+
+	void EditorViewport::CalculateMouseRay(const World& world, float mouseX, float mouseY, uint width, uint height, MeshDrop& drop)
+	{
+		const Camera& camera = *world.camera;
+		const ViewArea& viewArea = world.viewArea;
+
+		// Matches the view and projection the renderer builds for this world.
+		const float aspect = GraphicsUtility::CalculateAspectRatio(viewArea, width, height);
+		const Matrix4 view = Matrix4::CreateView(camera.GetPosition(), camera.GetForward(), camera.GetUp());
+		const Matrix4 projection = Matrix4::CreatePerspective(camera.GetFOV(), aspect, camera.GetFarZ(), camera.GetNearZ());
+		const Matrix4 inverseViewProj = (view * projection).Inverse();
+
+		// Normalized device coordinates within the view area, with +Y up.
+		const float u = (mouseX / static_cast<float>(width) - viewArea.x) / viewArea.width;
+		const float v = (mouseY / static_cast<float>(height) - viewArea.y) / viewArea.height;
+		const Vector4 clip(u * 2.0f - 1.0f, 1.0f - v * 2.0f, 0.5f, 1.0f);
+		const Vector4 worldPoint = inverseViewProj.Multiply(clip);
+
+		drop.rayOrigin = camera.GetPosition();
+		drop.rayDirection = Vector3::Normalize(Vector3(worldPoint.x, worldPoint.y, worldPoint.z) / worldPoint.w - drop.rayOrigin);
 	}
 }

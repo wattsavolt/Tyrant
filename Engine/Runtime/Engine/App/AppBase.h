@@ -34,6 +34,10 @@ namespace tyr
 		// overwritten internally - callers don't need to (and shouldn't) set it themselves.
 		static Handle CreatePrimaryWorld(WindowModule& windowModule, WorldManager& worldManager,
 			const WindowDesc& windowDesc, WorldConfig worldConfig, WindowHandle& outWindowHandle);
+
+		// Undoes CreatePrimaryWorld: removes the world, its render window and the OS window.
+		static void DestroyPrimaryWorld(WindowModule& windowModule, WorldManager& worldManager,
+			Handle worldHandle, WindowHandle windowHandle);
 	};
 
 }

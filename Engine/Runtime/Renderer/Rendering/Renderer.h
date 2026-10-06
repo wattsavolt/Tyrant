@@ -152,6 +152,8 @@ namespace tyr
 		// it all as parameters - keeps this Execute lambda's capture list small enough for
 		// Function<>'s fixed inline buffer (see Function.h).
 		void RecordTAAResolvePass(CommandList& cmdList, uint renderFrameIndex);
+		// Draws the viewport grid over sourceIndex's image into the slot's overlay texture.
+		void RecordEditorGridPass(CommandList& cmdList, uint renderFrameIndex, uint sourceIndex);
 		// Resolves the active scene's own RenderViewport down to this renderFrameIndex's own
 		// buffered slot - returns null if the active scene has no RenderViewport yet. Called
 		// from a RenderAsync worker thread - safe to read/write this slot without a lock.
@@ -190,6 +192,10 @@ namespace tyr
 		void EnsureShadowMaskArraysBound(uint renderFrameIndex, TextureHandle shadowMasksRaw, TextureHandle shadowMasks);
 		// Same idea as EnsureLightingOutputBound, for TAA's own resolve output.
 		void EnsureTaaResolveOutputBound(uint renderFrameIndex, TextureHandle resolvedColourTexture);
+		// Same idea as EnsureLightingOutputBound, for the grid's overlay output.
+		void EnsureEditorGridOutputBound(uint renderFrameIndex, TextureHandle overlayColourTexture);
+		// Creates or deletes the slot's overlay texture to match whether the grid is enabled.
+		void SyncViewportOverlay(RenderViewport& viewport, uint slot);
 		// Actually deletes every buffered slot's textures (if any were ever created) and frees the
 		// pool slot - shared by ProcessFrameDeleteLists' handling of renderViewportsToDelete,
 		// wherever it's called from. Mirrors DeleteWindowResources.
@@ -257,6 +263,7 @@ namespace tyr
 		TextureHandle m_ShadowMasksRawBoundTextures[RenderConstants::c_BufferedFrameCount];
 		TextureHandle m_ShadowMasksBoundTextures[RenderConstants::c_BufferedFrameCount];
 		TextureHandle m_TaaResolveOutputBoundTextures[RenderConstants::c_BufferedFrameCount];
+		TextureHandle m_EditorGridOutputBoundTextures[RenderConstants::c_BufferedFrameCount];
 		HashMap<uint, uint> m_ViewIdIndexMap;
 		RenderContext m_Ctx{};
 		RenderResources m_Resources{};

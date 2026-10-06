@@ -3,13 +3,13 @@
 
 #include "Common.hlsli"
 
-[[vk::binding(TYR_BINDING_TEXTURES, 0)]] Texture2D textures[] : register(t11);
+TYR_VK_BINDING(TYR_BINDING_TEXTURES, 0) Texture2D textures[] : register(t11);
 // shadowMasksRaw is a 3-element array starting at u20, so it occupies u20-u22 in HLSL's register
 // model - shadowMasks needs to start past that (u23) to avoid a bogus overlap. As with tlas in
 // ShadowRTCS.hlsl, the real Vulkan binding slot comes entirely from [[vk::binding]]; this
 // register() annotation just needs to be unique within this file.
-[[vk::binding(TYR_BINDING_SHADOW_MASKS_RAW, 0)]] RWTexture2DArray<float2> shadowMasksRaw[TYR_BUFFERED_FRAME_COUNT] : register(u20);
-[[vk::binding(TYR_BINDING_SHADOW_MASKS, 0)]] RWTexture2DArray<float2> shadowMasks[TYR_BUFFERED_FRAME_COUNT] : register(u23);
+TYR_VK_BINDING(TYR_BINDING_SHADOW_MASKS_RAW, 0) RWTexture2DArray<float2> shadowMasksRaw[TYR_BUFFERED_FRAME_COUNT] : register(u20);
+TYR_VK_BINDING(TYR_BINDING_SHADOW_MASKS, 0) RWTexture2DArray<float2> shadowMasks[TYR_BUFFERED_FRAME_COUNT] : register(u23);
 
 // Matches ShadowDenoisePushConstants in ShadowDenoisePass.h byte for byte.
 struct PushConstants
@@ -24,7 +24,7 @@ struct PushConstants
 	uint hasHistory;
 	uint spatialRadius;
 };
-[[vk::push_constant]] PushConstants g_PushConstants;
+TYR_VK_PUSH_CONSTANT PushConstants g_PushConstants;
 
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID)

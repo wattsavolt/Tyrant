@@ -96,6 +96,8 @@ namespace tyr
 		// previous buffered viewport slot's own resolved history.
 		ComputePipelineHandle taaResolvePipeline;
 		ShaderModuleHandle taaResolveComputeShader;
+		ComputePipelineHandle editorGridPipeline;
+		ShaderModuleHandle editorGridComputeShader;
 
 		// Ray-traced shadows - one top-level acceleration structure per buffered RenderFrame
 		// slot, rebuilt every frame from the active scene's mesh instances. Per-mesh bottom-level

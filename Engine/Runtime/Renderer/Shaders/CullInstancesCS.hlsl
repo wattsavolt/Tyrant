@@ -5,7 +5,7 @@
 
 // The only shader that needs frustumPlanes, so it's the only one declaring the cbuffer's
 // full field list.
-[[vk::binding(TYR_BINDING_SCENE_INFO, 0)]]
+TYR_VK_BINDING(TYR_BINDING_SCENE_INFO, 0)
 cbuffer SceneInfoCBuffer : register(b0)
 {
 	float4x4 ViewProj;
@@ -19,12 +19,12 @@ cbuffer SceneInfoCBuffer : register(b0)
 	float4 FrustumPlanes[6];
 };
 
-[[vk::binding(TYR_BINDING_MESH, 0)]] StructuredBuffer<Mesh> meshes : register(t1);
-[[vk::binding(TYR_BINDING_MESH_LOD, 0)]] StructuredBuffer<MeshLOD> meshLODs : register(t2);
-[[vk::binding(TYR_BINDING_MESH_INSTANCE, 0)]] StructuredBuffer<MeshInstance> meshInstances : register(t6);
+TYR_VK_BINDING(TYR_BINDING_MESH, 0) StructuredBuffer<Mesh> meshes : register(t1);
+TYR_VK_BINDING(TYR_BINDING_MESH_LOD, 0) StructuredBuffer<MeshLOD> meshLODs : register(t2);
+TYR_VK_BINDING(TYR_BINDING_MESH_INSTANCE, 0) StructuredBuffer<MeshInstance> meshInstances : register(t6);
 
-[[vk::binding(TYR_BINDING_ACTIVE_INSTANCE_INDICES, 0)]] StructuredBuffer<uint> activeInstanceIndices : register(t15);
-[[vk::binding(TYR_BINDING_VISIBLE_INSTANCE_INDICES, 0)]] RWStructuredBuffer<uint> visibleInstanceIndices : register(u16);
+TYR_VK_BINDING(TYR_BINDING_ACTIVE_INSTANCE_INDICES, 0) StructuredBuffer<uint> activeInstanceIndices : register(t15);
+TYR_VK_BINDING(TYR_BINDING_VISIBLE_INSTANCE_INDICES, 0) RWStructuredBuffer<uint> visibleInstanceIndices : register(u16);
 
 // Matches VkDrawMeshTasksIndirectCommandEXT byte-for-byte (3x uint32, tightly packed).
 struct DrawMeshTasksIndirectCommand
@@ -33,14 +33,14 @@ struct DrawMeshTasksIndirectCommand
 	uint groupCountY;
 	uint groupCountZ;
 };
-[[vk::binding(TYR_BINDING_INDIRECT_DRAW_COMMANDS, 0)]] RWStructuredBuffer<DrawMeshTasksIndirectCommand> indirectDrawCommands : register(u17);
-[[vk::binding(TYR_BINDING_DRAW_COUNT, 0)]] RWStructuredBuffer<uint> drawCount : register(u18);
+TYR_VK_BINDING(TYR_BINDING_INDIRECT_DRAW_COMMANDS, 0) RWStructuredBuffer<DrawMeshTasksIndirectCommand> indirectDrawCommands : register(u17);
+TYR_VK_BINDING(TYR_BINDING_DRAW_COUNT, 0) RWStructuredBuffer<uint> drawCount : register(u18);
 
 struct PushConstants
 {
 	uint activeInstanceCount;
 };
-[[vk::push_constant]] PushConstants g_PushConstants;
+TYR_VK_PUSH_CONSTANT PushConstants g_PushConstants;
 
 // Culled if the sphere is fully on the outside of any plane - dot(pos,abc)+d >= 0 means
 // "inside" that plane.

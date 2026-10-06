@@ -1,0 +1,4 @@
+Folder.png
+  "folder" from Google Material Icons, recoloured.
+  https://github.com/google/material-design-icons
+  Licensed under the Apache License, Version 2.0.

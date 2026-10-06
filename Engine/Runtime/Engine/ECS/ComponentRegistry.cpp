@@ -19,6 +19,7 @@ namespace tyr
 
 		const ComponentTypeID compTypeID = m_NextID++;
 		m_ComponentTypeIDs.Insert(typeID, compTypeID);
+		m_TypeIDs[compTypeID] = typeID;
 		return compTypeID;
 	}
 
@@ -26,5 +27,11 @@ namespace tyr
 	{
 		TYR_ASSERT(m_ComponentTypeIDs.Contains(typeID));
 		return *m_ComponentTypeIDs.Find(typeID);
+	}
+
+	const Id64& ComponentRegistry::GetReflectionTypeID(ComponentTypeID componentTypeID) const
+	{
+		TYR_ASSERT(componentTypeID < m_NextID);
+		return m_TypeIDs[componentTypeID];
 	}
 }

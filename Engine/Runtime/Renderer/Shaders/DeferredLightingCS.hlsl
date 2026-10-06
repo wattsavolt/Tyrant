@@ -4,7 +4,7 @@
 #include "Common.hlsli"
 #include "LightUtility.hlsli"
 
-[[vk::binding(TYR_BINDING_SCENE_INFO, 0)]]
+TYR_VK_BINDING(TYR_BINDING_SCENE_INFO, 0)
 cbuffer SceneInfoCBuffer : register(b0)
 {
 	float4x4 ViewProj;
@@ -16,24 +16,24 @@ cbuffer SceneInfoCBuffer : register(b0)
 	uint spotLightCount;
 };
 
-[[vk::binding(TYR_BINDING_DIR_LIGHT, 0)]] StructuredBuffer<DirectionalLight> dirLights : register(t8);
-[[vk::binding(TYR_BINDING_POINT_LIGHT, 0)]] StructuredBuffer<PointLight> pointLights : register(t9);
-[[vk::binding(TYR_BINDING_SPOT_LIGHT, 0)]] StructuredBuffer<SpotLight> spotLights : register(t10);
+TYR_VK_BINDING(TYR_BINDING_DIR_LIGHT, 0) StructuredBuffer<DirectionalLight> dirLights : register(t8);
+TYR_VK_BINDING(TYR_BINDING_POINT_LIGHT, 0) StructuredBuffer<PointLight> pointLights : register(t9);
+TYR_VK_BINDING(TYR_BINDING_SPOT_LIGHT, 0) StructuredBuffer<SpotLight> spotLights : register(t10);
 
-[[vk::binding(TYR_BINDING_TEXTURES, 0)]] Texture2D textures[] : register(t11);
+TYR_VK_BINDING(TYR_BINDING_TEXTURES, 0) Texture2D textures[] : register(t11);
 // One entry per buffered RenderFrame slot - this dispatch only ever writes its own
 // g_PushConstants.renderFrameIndex entry, never any other, so multiple slots' dispatches
 // can safely be in flight on the GPU at once.
-[[vk::binding(TYR_BINDING_LIGHTING_OUTPUT, 0)]] RWTexture2D<float4> outputImages[TYR_BUFFERED_FRAME_COUNT] : register(u14);
+TYR_VK_BINDING(TYR_BINDING_LIGHTING_OUTPUT, 0) RWTexture2D<float4> outputImages[TYR_BUFFERED_FRAME_COUNT] : register(u14);
 // Denoised ray-traced shadow visibility, one array layer per shadow-casting light slot this
 // tick - see ShadowDenoiseCS.hlsl. A directional light's own pool index is directly its layer;
 // point/spot go through shadowLightSlotMap below instead, since there can be more of them than
 // affordable shadow slots.
-[[vk::binding(TYR_BINDING_SHADOW_MASKS, 0)]] RWTexture2DArray<float2> shadowMasks[TYR_BUFFERED_FRAME_COUNT] : register(u20);
+TYR_VK_BINDING(TYR_BINDING_SHADOW_MASKS, 0) RWTexture2DArray<float2> shadowMasks[TYR_BUFFERED_FRAME_COUNT] : register(u20);
 // textures[] above is unbounded, so it claims the rest of space0's t-registers - this needs a
 // distinct space, the same reason ShadowRTCS.hlsl's tlas does. The real Vulkan binding slot
 // comes entirely from [[vk::binding]].
-[[vk::binding(TYR_BINDING_SHADOW_LIGHT_SLOT_MAP, 0)]] StructuredBuffer<uint> shadowLightSlotMap : register(t0, space1);
+TYR_VK_BINDING(TYR_BINDING_SHADOW_LIGHT_SLOT_MAP, 0) StructuredBuffer<uint> shadowLightSlotMap : register(t0, space1);
 
 // Matches Renderer.cpp's LightingPushConstants byte-for-byte.
 struct PushConstants
@@ -45,7 +45,7 @@ struct PushConstants
 	uint height;
 	uint renderFrameIndex;
 };
-[[vk::push_constant]] PushConstants g_PushConstants;
+TYR_VK_PUSH_CONSTANT PushConstants g_PushConstants;
 
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID)

@@ -359,12 +359,20 @@ namespace tyr
 						}
 						viewport.pendingResize[m_RenderFrameIndex] = false;
 					}
+					SyncViewportOverlay(viewport, m_RenderFrameIndex);
 
 					// Keep this slot's lighting-output descriptor pointed at the current colour
 					// texture.
 					EnsureLightingOutputBound(m_RenderFrameIndex, targets.colourTexture);
 					EnsureShadowMaskArraysBound(m_RenderFrameIndex, targets.shadowMasksRaw, targets.shadowMasks);
-				EnsureTaaResolveOutputBound(m_RenderFrameIndex, targets.resolvedColourTexture);
+					EnsureTaaResolveOutputBound(m_RenderFrameIndex, targets.resolvedColourTexture);
+					EnsureEditorGridOutputBound(m_RenderFrameIndex, targets.overlayColourTexture);
+
+					// Only drawn once the slot has somewhere to draw it.
+					if (targets.overlayColourTexture)
+					{
+						renderFrame.viewportGrid = viewport.grid;
+					}
 
 					if (targets.width != 0 && targets.height != 0)
 					{
@@ -385,6 +393,10 @@ namespace tyr
 					const Matrix4 projection = Matrix4::CreatePerspective(sv.camera.fov, aspect, sv.camera.farZ, sv.camera.nearZ);
 
 					sceneInfo.viewProj = view * projection;
+					if (renderFrame.viewportGrid.enabled)
+					{
+						renderFrame.gridInvViewProj = sceneInfo.viewProj.Inverse();
+					}
 
 					// TAA sub-pixel jitter - read via the main-thread-safe mirror, not
 					// m_TaaEnabled directly, since that's only safe to touch from inside
@@ -1093,6 +1105,20 @@ namespace tyr
 			uint hasHistory;
 			float historyBlendWeight;
 		};
+
+		// Matches EditorGridCS.hlsl's push constant cbuffer byte-for-byte.
+		struct EditorGridPushConstants
+		{
+			Matrix4 invViewProj;
+			uint sourceIndex;
+			uint depthIndex;
+			uint width;
+			uint height;
+			uint renderFrameIndex;
+			uint majorLineEvery;
+			float cellSize;
+			float _pad0;
+		};
 	}
 
 	void Renderer::RecordLightingPass(CommandList& cmdList, uint renderFrameIndex)
@@ -1171,6 +1197,35 @@ namespace tyr
 		pushConstants.hasHistory = hasHistory ? 1u : 0u;
 		pushConstants.historyBlendWeight = m_QualitySettings.taaHistoryBlendWeight;
 		cmdList.PushConstants(m_Resources.taaResolvePipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(TAAResolvePushConstants), &pushConstants);
+
+		const uint groupCountX = (viewportData->width + 7) / 8;
+		const uint groupCountY = (viewportData->height + 7) / 8;
+		cmdList.Dispatch(groupCountX, groupCountY, 1);
+	}
+
+	void Renderer::RecordEditorGridPass(CommandList& cmdList, uint renderFrameIndex, uint sourceIndex)
+	{
+		const RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
+		if (!viewportData || viewportData->width == 0 || viewportData->height == 0)
+		{
+			return;
+		}
+
+		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
+
+		cmdList.BindComputePipeline(m_Resources.editorGridPipeline);
+		cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.editorGridPipeline);
+
+		EditorGridPushConstants pushConstants{};
+		pushConstants.invViewProj = renderFrame.gridInvViewProj;
+		pushConstants.sourceIndex = sourceIndex;
+		pushConstants.depthIndex = viewportData->depthBuffer.h.index;
+		pushConstants.width = viewportData->width;
+		pushConstants.height = viewportData->height;
+		pushConstants.renderFrameIndex = renderFrameIndex;
+		pushConstants.majorLineEvery = renderFrame.viewportGrid.majorLineEvery;
+		pushConstants.cellSize = renderFrame.viewportGrid.cellSize;
+		cmdList.PushConstants(m_Resources.editorGridPipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(EditorGridPushConstants), &pushConstants);
 
 		const uint groupCountX = (viewportData->width + 7) / 8;
 		const uint groupCountY = (viewportData->height + 7) / 8;
@@ -1397,9 +1452,22 @@ namespace tyr
 			Texture* shadowMasksRaw = nullptr;
 			Texture* shadowMasks = nullptr;
 			Texture* resolvedColourTexture = nullptr;
+			Texture* overlayColourTexture = nullptr;
 
 			if (hasViewportTextures)
 			{
+				// Checked before isNew is cleared below, since the overlay can also be new on its own.
+				if (renderFrame.viewportGrid.enabled && viewportData->overlayColourTexture)
+				{
+					overlayColourTexture = &m_Registry.GetTexture(viewportData->overlayColourTexture);
+					if (viewportData->isNew || viewportData->overlayIsNew)
+					{
+						overlayColourTexture->imageLayout = IMAGE_LAYOUT_UNKNOWN;
+						viewportData->overlayIsNew = false;
+					}
+					graph.RegisterTexture(overlayColourTexture);
+				}
+
 				gbufferAlbedoAO = &m_Registry.GetTexture(viewportData->gbufferAlbedoAO);
 				gbufferNormalRoughMetal = &m_Registry.GetTexture(viewportData->gbufferNormalRoughMetal);
 				gbufferMotion = &m_Registry.GetTexture(viewportData->gbufferMotion);
@@ -1650,14 +1718,35 @@ namespace tyr
 				taaDisplayTexture = resolvedColourTexture;
 			}
 
+			// Drawn after TAA into its own texture, so the grid never ends up in TAA's history.
+			Texture* displayTexture = taaDisplayTexture;
+			if (overlayColourTexture && taaDisplayTexture)
+			{
+				const uint gridSourceIndex = taaDisplayTexture == resolvedColourTexture
+					? viewportData->resolvedColourTexture.h.index
+					: viewportData->colourTexture.h.index;
+
+				graph.AddPass("EditorGrid",
+					[taaDisplayTexture, depthBuffer, overlayColourTexture](RenderGraphBuilder& builder)
+					{
+						builder.ReadTexture(*taaDisplayTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+						builder.ReadTexture(*depthBuffer, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+						builder.WriteTexture(*overlayColourTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
+					},
+					[this, renderFrameIndex, gridSourceIndex](CommandList& cl) { RecordEditorGridPass(cl, renderFrameIndex, gridSourceIndex); },
+					RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
+
+				displayTexture = overlayColourTexture;
+			}
+
 			// Always added, even on a frame with nothing to draw - this is the only pass that
 			// touches the swap chain image.
 			graph.AddPass("GUI",
-				[this, taaDisplayTexture, &swapChainImageProxy, window, &renderFrame](RenderGraphBuilder& builder)
+				[this, displayTexture, &swapChainImageProxy, window, &renderFrame](RenderGraphBuilder& builder)
 				{
 					m_GUIPass->Setup(builder, renderFrame);
-					if (taaDisplayTexture)
-						builder.ReadTexture(*taaDisplayTexture, PIPELINE_STAGE_FRAGMENT_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+					if (displayTexture)
+						builder.ReadTexture(*displayTexture, PIPELINE_STAGE_FRAGMENT_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
 					builder.WriteTexture(swapChainImageProxy, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, window->swapChain->GetRenderingWriteAccess(), window->swapChain->GetRenderingLayout());
 				},
 				[this, renderFrameIndex](CommandList& cl) { RecordGUIPass(cl, renderFrameIndex); },
@@ -2096,6 +2185,11 @@ namespace tyr
 			DeleteViewportTargetTexture(targets.shadowMasks);
 			DeleteViewportTargetTexture(targets.resolvedColourTexture);
 		}
+		if (targets.overlayColourTexture)
+		{
+			DeleteViewportTargetTexture(targets.overlayColourTexture);
+			targets.overlayColourTexture = {};
+		}
 
 		// Written by the deferred lighting pass (a storage image), read by the GUI pass to
 		// display it. UNORM, not SRGB - the storage-image format doesn't support SRGB on this
@@ -2126,6 +2220,31 @@ namespace tyr
 		targets.width = width;
 		targets.height = height;
 		targets.isNew = true;
+
+		SyncViewportOverlay(viewport, slot);
+	}
+
+	void Renderer::SyncViewportOverlay(RenderViewport& viewport, uint slot)
+	{
+		RenderViewportTextureData& targets = viewport.textureData[slot];
+		const bool wanted = viewport.grid.enabled && targets.colourTexture;
+		if (wanted == static_cast<bool>(targets.overlayColourTexture))
+		{
+			return;
+		}
+
+		if (wanted)
+		{
+			// Same usage as resolvedColourTexture - written by a compute pass, sampled for display.
+			targets.overlayColourTexture = CreateViewportTargetTexture("Overlay Colour", PixelFormat::PF_R8G8B8A8_UNORM,
+				static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT), targets.width, targets.height);
+			targets.overlayIsNew = true;
+		}
+		else
+		{
+			DeleteViewportTargetTexture(targets.overlayColourTexture);
+			targets.overlayColourTexture = {};
+		}
 	}
 
 	void Renderer::EnsureLightingOutputBound(uint renderFrameIndex, TextureHandle colourTexture)
@@ -2189,6 +2308,22 @@ namespace tyr
 		m_TaaResolveOutputBoundTextures[renderFrameIndex] = resolvedColourTexture;
 	}
 
+	void Renderer::EnsureEditorGridOutputBound(uint renderFrameIndex, TextureHandle overlayColourTexture)
+	{
+		if (!overlayColourTexture || m_EditorGridOutputBoundTextures[renderFrameIndex] == overlayColourTexture)
+		{
+			return;
+		}
+
+		const Texture& texture = m_Registry.GetTexture(overlayColourTexture);
+		ImageBindingInfo bindingInfo;
+		bindingInfo.imageView = texture.imageView;
+		bindingInfo.hasSampler = false;
+		bindingInfo.layout = texture.imageLayout;
+		QueueImageBindingUpdate(TYR_BINDING_EDITOR_GRID_OUTPUT, renderFrameIndex, bindingInfo);
+		m_EditorGridOutputBoundTextures[renderFrameIndex] = overlayColourTexture;
+	}
+
 	void Renderer::DeleteRenderViewportResources(RenderViewportHandle viewport)
 	{
 		RenderViewport& rv = m_RenderViewportPool[viewport.h];
@@ -2211,6 +2346,10 @@ namespace tyr
 			m_Registry.DeleteTexture(targets.shadowMasksRaw);
 			m_Registry.DeleteTexture(targets.shadowMasks);
 			m_Registry.DeleteTexture(targets.resolvedColourTexture);
+			if (targets.overlayColourTexture)
+			{
+				m_Registry.DeleteTexture(targets.overlayColourTexture);
+			}
 		}
 
 		m_RenderViewportPool.Delete(viewport.h);
@@ -2309,6 +2448,14 @@ namespace tyr
 		{
 			ShaderDesc desc;
 			desc.entryPoint = "main";
+			desc.fileName = "EditorGridCS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_COMPUTE_BIT;
+			m_Resources.editorGridComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
 			desc.fileName = "GUIVS";
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_VERTEX_BIT;
@@ -2334,6 +2481,7 @@ namespace tyr
 		m_Ctx.device->DeleteShaderModule(m_Resources.shadowRTComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.shadowDenoiseComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.taaResolveComputeShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.editorGridComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.guiVertexShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.guiPixelShader);
 		ShaderCreator::UnloadCompilerLibs();
@@ -2454,12 +2602,12 @@ namespace tyr
 				poolSize.descriptorCount = Device::c_MaxSamplers;
 			}
 			{
-				// TYR_BINDING_LIGHTING_OUTPUT, TYR_BINDING_SHADOW_MASKS_RAW/SHADOW_MASKS, and
-				// TYR_BINDING_TAA_RESOLVE_OUTPUT - four storage-image arrays, each one entry per
-				// buffered RenderFrame slot.
+				// TYR_BINDING_LIGHTING_OUTPUT, TYR_BINDING_SHADOW_MASKS_RAW/SHADOW_MASKS,
+				// TYR_BINDING_TAA_RESOLVE_OUTPUT and TYR_BINDING_EDITOR_GRID_OUTPUT - five
+				// storage-image arrays, each one entry per buffered RenderFrame slot.
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
 				poolSize.descriptorType = DescriptorType::StorageImage;
-				poolSize.descriptorCount = RenderConstants::c_BufferedFrameCount * 4;
+				poolSize.descriptorCount = RenderConstants::c_BufferedFrameCount * 5;
 			}
 			{
 				// TYR_BINDING_TLAS - one top-level acceleration structure per buffered
@@ -2544,6 +2692,8 @@ namespace tyr
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 			AddBinding(TYR_BINDING_SHADOW_LIGHT_SLOT_MAP, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 			AddBinding(TYR_BINDING_TAA_RESOLVE_OUTPUT, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
+				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
+			AddBinding(TYR_BINDING_EDITOR_GRID_OUTPUT, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 
 			m_Resources.descriptorSetLayout = m_Ctx.device->CreateDescriptorSetLayout(layoutDesc);
@@ -2758,6 +2908,18 @@ namespace tyr
 		taaResolveDesc.shader = m_Resources.taaResolveComputeShader;
 
 		m_Resources.taaResolvePipeline = m_Ctx.device->CreateComputePipeline(taaResolveDesc);
+
+		ComputePipelineDesc editorGridDesc;
+		editorGridDesc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
+
+		PushConstantRange& editorGridPushConstantRange = editorGridDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
+		editorGridPushConstantRange.stageFlags = SHADER_STAGE_COMPUTE_BIT;
+		editorGridPushConstantRange.offset = 0;
+		editorGridPushConstantRange.size = sizeof(EditorGridPushConstants);
+
+		editorGridDesc.shader = m_Resources.editorGridComputeShader;
+
+		m_Resources.editorGridPipeline = m_Ctx.device->CreateComputePipeline(editorGridDesc);
 	}
 
 	void Renderer::DeletePipelines()
@@ -2769,6 +2931,7 @@ namespace tyr
 		m_Ctx.device->DeleteComputePipeline(m_Resources.shadowRTPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.shadowDenoisePipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.taaResolvePipeline);
+		m_Ctx.device->DeleteComputePipeline(m_Resources.editorGridPipeline);
 		m_Ctx.device->DeleteDescriptorSet(m_Resources.descriptorSet);
 		m_Ctx.device->DeleteDescriptorSetLayout(m_Resources.descriptorSetLayout);
 		m_Ctx.device->DeleteDescriptorPool(m_Resources.descriptorPool);

@@ -177,6 +177,10 @@ namespace tyr
 		// own on/off switch isn't tied to any quality preset), same one-shot-request pattern.
 		bool hasTaaEnabledOverride = false;
 		bool taaEnabledOverride = true;
+		// The active viewport's grid, plus the camera's inverse viewProj without TAA jitter,
+		// since the grid is drawn after TAA.
+		ViewportGridDesc viewportGrid;
+		Matrix4 gridInvViewProj;
 		// Frame update for the active scene
 		SceneFrame sceneFrame;
 
@@ -235,6 +239,7 @@ namespace tyr
 			activeScene = {};
 			hasQualityLevelOverride = false;
 			hasTaaEnabledOverride = false;
+			viewportGrid = {};
 			guiDrawData.Clear();
 			guiVertexCursor = 0;
 			guiIndexCursor = 0;

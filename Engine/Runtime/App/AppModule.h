@@ -23,8 +23,9 @@ namespace tyr
 
 	private:
 		AppBase* m_App;
-		// Only actually loads anything when m_App is created via the DLL below, not when it's
-		// an in-process Editor - Unload() (called from ~LibraryLoader) is a safe no-op either way.
+		// The game app the editor runs inside its own viewport for Play. Null when not in the editor.
+		AppBase* m_EmbeddedApp = nullptr;
+		// Loads the game app's library. Must outlive both apps above.
 		LibraryLoader m_Loader;
 	};
 

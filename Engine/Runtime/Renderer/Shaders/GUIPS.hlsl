@@ -9,10 +9,10 @@ struct PushConstants
 	float2 translate;
 	uint textureIndex;
 };
-[[vk::push_constant]] PushConstants g_PushConstants;
+TYR_VK_PUSH_CONSTANT PushConstants g_PushConstants;
 
-[[vk::binding(TYR_BINDING_TEXTURES, 0)]] Texture2D textures[] : register(t11);
-[[vk::binding(TYR_BINDING_SAMPLERS, 0)]] SamplerState samplers[] : register(s12);
+TYR_VK_BINDING(TYR_BINDING_TEXTURES, 0) Texture2D textures[] : register(t11);
+TYR_VK_BINDING(TYR_BINDING_SAMPLERS, 0) SamplerState samplers[] : register(s12);
 
 struct GUI_VS_OUTPUT
 {

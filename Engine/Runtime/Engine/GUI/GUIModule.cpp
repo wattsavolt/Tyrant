@@ -5,6 +5,8 @@
 #include "RenderTransfer/RenderTransferTypes.h"
 #include "RenderTransfer/UploadRequest.h"
 #include "RenderResource/TextureDesc.h"
+#include "Rendering/RenderConstants.h"
+#include "Memory/MemoryUtil.h"
 #include "Module/ModuleManager.h"
 #include "Window/WindowModule.h"
 #include "Input/InputModule.h"
@@ -60,6 +62,52 @@ namespace tyr
 			TextureHandle handle;
 			handle.h.index = (uint)(value & 0xFFFFFFFFu) - 1;
 			handle.h.generation = (uint)(value >> 32);
+			return handle;
+		}
+
+		// Creates a GPU texture for an ImGui texture and queues its pixels for upload.
+		TextureHandle CreateImGuiTexture(RendererAPI& rendererAPI, ImTextureData& tex)
+		{
+			TextureDesc desc;
+			desc.debugName = "ImGui Texture";
+			desc.info.width = (uint)tex.Width;
+			desc.info.height = (uint)tex.Height;
+			desc.info.depth = 1;
+			desc.info.arrayLayerCount = 1;
+			desc.info.mipCount = 1;
+			desc.info.format = PixelFormat::PF_R8G8B8A8_UNORM;
+			desc.info.type = ImageType::Image2D;
+			desc.sampleCount = SampleCount::OneBit;
+			desc.usage = static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_TRANSFER_DST_BIT);
+			desc.layout = ImageLayout::IMAGE_LAYOUT_GENERAL;
+
+			const TextureHandle handle = rendererAPI.CreateTexture(desc);
+
+			// Uploaded texture rows have to be padded to the row pitch alignment.
+			const uint rowSize = (uint)tex.GetPitch();
+			const uint alignedRowSize = MemoryUtil::Align(rowSize, RenderConstants::c_RowPitchAlignment);
+			UploadBufferAllocation alloc;
+			if (rendererAPI.RequestResourceUploadAllocation((size_t)alignedRowSize * tex.Height, alloc))
+			{
+				const uint8* src = static_cast<const uint8*>(tex.GetPixels());
+				uint8* dst = static_cast<uint8*>(alloc.cpuPtr);
+				for (int row = 0; row < tex.Height; ++row)
+				{
+					memcpy(dst + (size_t)row * alignedRowSize, src + (size_t)row * rowSize, rowSize);
+				}
+				rendererAPI.FlushBufferUploadAllocation(alloc);
+
+				TextureUploadRequest request;
+				request.srcBuffer = alloc.buffer;
+				request.srcOffset = alloc.offset;
+				request.dstTexture = handle;
+				request.highestMip = 0;
+				request.mipCount = 1;
+				request.type = TextureUploadRequestType::GUI;
+				request.resourceId = alloc.resourceId;
+				rendererAPI.AddTextureUploadRequest(request);
+			}
+
 			return handle;
 		}
 
@@ -333,42 +381,9 @@ namespace tyr
 		{
 			if (tex->Status == ImTextureStatus_WantCreate)
 			{
-				TextureDesc desc;
-				desc.debugName = "ImGui Texture";
-				desc.info.width = (uint)tex->Width;
-				desc.info.height = (uint)tex->Height;
-				desc.info.depth = 1;
-				desc.info.arrayLayerCount = 1;
-				desc.info.mipCount = 1;
-				desc.info.format = PixelFormat::PF_R8G8B8A8_UNORM;
-				desc.info.type = ImageType::Image2D;
-				desc.sampleCount = SampleCount::OneBit;
-				desc.usage = static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_TRANSFER_DST_BIT);
-				desc.layout = ImageLayout::IMAGE_LAYOUT_GENERAL;
+				const TextureHandle handle = CreateImGuiTexture(*m_RendererAPI, *tex);
 
-				const TextureHandle handle = m_RendererAPI->CreateTexture(desc);
-
-				const size_t byteSize = (size_t)tex->GetSizeInBytes();
-				UploadBufferAllocation alloc;
-				if (m_RendererAPI->RequestResourceUploadAllocation(byteSize, alloc))
-				{
-					memcpy(alloc.cpuPtr, tex->GetPixels(), byteSize);
-					m_RendererAPI->FlushBufferUploadAllocation(alloc);
-
-					TextureUploadRequest request;
-					request.srcBuffer = alloc.buffer;
-					request.srcOffset = alloc.offset;
-					request.dstTexture = handle;
-					request.highestMip = 0;
-					request.mipCount = 1;
-					request.type = TextureUploadRequestType::GUI;
-					request.resourceId = alloc.resourceId;
-					m_RendererAPI->AddTextureUploadRequest(request);
-				}
-
-				// +1: ImGui treats ImTextureID(0) as "not yet set" (see the assert in
-				// ImDrawCmd::GetTexID's caller) and a texture's own pool index can legitimately
-				// be 0, so the index alone isn't a safe sentinel-free ID.
+				// +1 because ImGui treats a texture ID of 0 as unset.
 				tex->SetTexID((ImTextureID)(intptr_t)(handle.h.index + 1));
 				tex->BackendUserData = PackTextureHandle(handle);
 				tex->SetStatus(ImTextureStatus_OK);
@@ -385,40 +400,7 @@ namespace tyr
 				// assumes every texture only ever goes through it once, right after creation, so a
 				// genuine in-place re-upload isn't safe there yet.
 				const TextureHandle oldHandle = UnpackTextureHandle(tex->BackendUserData);
-
-				TextureDesc desc;
-				desc.debugName = "ImGui Texture";
-				desc.info.width = (uint)tex->Width;
-				desc.info.height = (uint)tex->Height;
-				desc.info.depth = 1;
-				desc.info.arrayLayerCount = 1;
-				desc.info.mipCount = 1;
-				desc.info.format = PixelFormat::PF_R8G8B8A8_UNORM;
-				desc.info.type = ImageType::Image2D;
-				desc.sampleCount = SampleCount::OneBit;
-				desc.usage = static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_TRANSFER_DST_BIT);
-				desc.layout = ImageLayout::IMAGE_LAYOUT_GENERAL;
-
-				const TextureHandle handle = m_RendererAPI->CreateTexture(desc);
-
-				const size_t byteSize = (size_t)tex->GetSizeInBytes();
-				UploadBufferAllocation alloc;
-				if (m_RendererAPI->RequestResourceUploadAllocation(byteSize, alloc))
-				{
-					memcpy(alloc.cpuPtr, tex->GetPixels(), byteSize);
-					m_RendererAPI->FlushBufferUploadAllocation(alloc);
-
-					TextureUploadRequest request;
-					request.srcBuffer = alloc.buffer;
-					request.srcOffset = alloc.offset;
-					request.dstTexture = handle;
-					request.highestMip = 0;
-					request.mipCount = 1;
-					request.type = TextureUploadRequestType::GUI;
-					request.resourceId = alloc.resourceId;
-					m_RendererAPI->AddTextureUploadRequest(request);
-				}
-
+				const TextureHandle handle = CreateImGuiTexture(*m_RendererAPI, *tex);
 				m_RendererAPI->DeleteTexture(oldHandle);
 				tex->SetTexID((ImTextureID)(intptr_t)(handle.h.index + 1));
 				tex->BackendUserData = PackTextureHandle(handle);

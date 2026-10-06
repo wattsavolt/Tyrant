@@ -22,11 +22,109 @@
 #include "Importing/ModelImporter.h"
 #include "Importing/MaterialImporter.h"
 #include "Config/Config.h"
+#include "Actor/ActorUtil.h"
+#include "AssetSystem/MeshAsset.h"
+#include "Utility/PathUtil.h"
+#include "Math/Math.h"
+#include "Math/Matrix3.h"
+#include <algorithm>
+#include <cfloat>
+#include <cstring>
+#include <utility>
 
 namespace tyr
 {
-	Editor::Editor(GUIModule& guiModule)
-		: m_GUIModule(&guiModule)
+	namespace
+	{
+		// How far in front of the camera a mesh dropped onto nothing is placed.
+		constexpr float c_BackgroundDropDistance = 5.0f;
+
+		float SnapToGrid(float value, float cellSize)
+		{
+			return Math::Round(value / cellSize) * cellSize;
+		}
+
+		struct RayHit
+		{
+			float distance;
+			// The axis of the face the ray entered through, and which way that face points.
+			uint axis;
+			float normalSign;
+		};
+
+		// Where the ray enters the box. Fails when it misses or starts inside it.
+		bool IntersectBox(const Vector3& origin, const Vector3& direction, const Vector3& boxMin, const Vector3& boxMax, RayHit& hit)
+		{
+			float tNear = -FLT_MAX;
+			float tFar = FLT_MAX;
+			uint nearAxis = 0;
+			for (uint i = 0; i < 3; ++i)
+			{
+				if (Math::Abs(direction[i]) < 1e-8f)
+				{
+					if (origin[i] < boxMin[i] || origin[i] > boxMax[i])
+					{
+						return false;
+					}
+					continue;
+				}
+
+				const float invDirection = 1.0f / direction[i];
+				float t0 = (boxMin[i] - origin[i]) * invDirection;
+				float t1 = (boxMax[i] - origin[i]) * invDirection;
+				if (t0 > t1)
+				{
+					std::swap(t0, t1);
+				}
+				if (t0 > tNear)
+				{
+					tNear = t0;
+					nearAxis = i;
+				}
+				tFar = std::min(tFar, t1);
+				if (tNear > tFar)
+				{
+					return false;
+				}
+			}
+
+			if (tNear <= 0.0f)
+			{
+				return false;
+			}
+			hit.distance = tNear;
+			hit.axis = nearAxis;
+			hit.normalSign = direction[nearAxis] > 0.0f ? -1.0f : 1.0f;
+			return true;
+		}
+
+		// World-space bounds enclosing a box component however its entity is rotated.
+		void CalculateWorldBounds(const BoxComponent& box, const Transform& transform, Vector3& outMin, Vector3& outMax)
+		{
+			Matrix3 rotation;
+			transform.rotation.ToRotationMatrix(rotation);
+			const Vector3 scaledCenter = box.center * transform.scale;
+			const Vector3 scaledHalfExtents = box.halfExtents * transform.scale;
+
+			// Each row is a local axis in world space, the same as Matrix4::SetTRS.
+			Vector3 center = transform.position;
+			Vector3 extents = Vector3::c_Zero;
+			for (uint row = 0; row < 3; ++row)
+			{
+				for (uint col = 0; col < 3; ++col)
+				{
+					center[col] += scaledCenter[row] * rotation[row][col];
+					extents[col] += Math::Abs(scaledHalfExtents[row] * rotation[row][col]);
+				}
+			}
+			outMin = center - extents;
+			outMax = center + extents;
+		}
+	}
+
+	Editor::Editor(GUIModule& guiModule, AppBase& app)
+		: m_App(app)
+		, m_GUIModule(&guiModule)
 	{
 	}
 
@@ -53,16 +151,15 @@ namespace tyr
 
 		// Get project related properties from the config later
 		WindowDesc desc;
-		desc.showFlag = 1;
+		// SW_MAXIMIZE, so the editor opens filling the screen.
+		desc.showFlag = 3;
 		desc.name = c_AppName;
 		Platform::GetMaxWindowResolution(desc.width, desc.height);
 
-		// Pulled back from the origin along -Z, looking down +Z (c_Forward) toward it - the test
-		// cube below is placed at the origin too, and a camera sitting exactly on top of what
-		// it's meant to look at ends up with the whole thing behind or inside the near plane.
-		m_Camera = MakeURef<Camera>(Vector3(0, 0, -3), Vector3::c_Up, Vector3::c_Forward, 90, 1.0f, 2000);
+		// 10 metres above the grid and pulled back along -Z, looking down at the origin.
+		m_Camera = MakeURef<Camera>(Vector3(0.0f, 10.0f, -10.0f), Vector3::c_Up, Vector3::c_Forward, 90.0f, 1.0f, 2000.0f);
+		m_Camera->Target(Vector3::c_Zero);
 
-		// Default viewport
 		WorldConfig worldParams{};
 		worldParams.camera = m_Camera.get();
 
@@ -74,58 +171,24 @@ namespace tyr
 		m_InputManager = inputModule->GetInputManager();
 		m_InputManager->SetWindow(m_WindowModule, m_PrimaryWindow);
 
-		m_EditorViewport = MakeURef<EditorViewport>(*m_RendererAPI);
-		m_EditorUI = MakeURef<EditorUI>(*m_GUIModule, *m_RendererAPI);
-
-		// Must happen before the test-cube block right below - it's what guarantees
-		// Models/Cube/Cube.mesh (and the default material/textures) actually exist on a fresh
-		// checkout. A no-op on every subsequent startup - see ImportDefaultAssetsIfNeeded's own
-		// doc comment.
+		// Before the test cube below, which needs it imported.
 		ImportDefaultAssetsIfNeeded();
 
-		// Step 7 test entity: spawn a single entity for the test cube mesh, with a transform
-		// and mesh component. This is temporary roadmap test code, not permanent editor logic.
-		{
-			char meshPath[PathConstants::c_MaxAssetPathTotalSize];
-			snprintf(meshPath, sizeof(meshPath), "Models/Cube/Cube%s", AssetConstants::c_MeshFileExtension);
+		m_EditorViewport = MakeURef<EditorViewport>(*m_RendererAPI);
+		m_EditorUI = MakeURef<EditorUI>(*m_GUIModule, *m_RendererAPI, *m_AssetManager);
 
-			const AssetID meshAssetID = AssetRegistry::Instance().GetAssetIDSafe(meshPath);
-			TYR_ASSERT(AssetUtil::IsValidAssetID(meshAssetID));
-
-			World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
-			Entity testEntity = world.entities.CreateEntity();
-
-			ComponentTransform transform;
-			transform.local.scale = Vector3::c_One;
-			transform.local.rotation = Quaternion::c_Identity;
-			transform.local.position = Vector3::c_Zero;
-			transform.world = transform.local;
-			world.entities.AddComponent<ComponentTransform>(testEntity, transform);
-
-			MeshComponent meshComponent;
-			meshComponent.mesh = meshAssetID;
-			world.entities.AddComponent<MeshComponent>(testEntity, meshComponent);
-			// WorldManager::UpdateWorld creates the actual mesh instance from this component -
-			// no need (and would double up the instance) to also call CreateMeshInstance here.
-		}
-
-		// Test light: without at least one directional light plus the ambient term set in
-		// WorldManager::UpdateWorld, MeshPS.hlsl has literally nothing to shade with and every
-		// pixel comes out black regardless of whether the geometry/camera are otherwise correct.
+		// TODO: Temporary test light until lights can be placed from the editor.
 		{
 			World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
 			Entity lightEntity = world.entities.CreateEntity();
 
 			DirLightComponent lightComponent;
-			// The direction the light travels (light -> scene, matching SpotLightInfo's own
-			// direction convention) - see ComputeDirectionalLightEffect's comment.
+			// The direction the light travels, from the light towards the scene.
 			lightComponent.direction = Vector3::Normalize(Vector3(-0.4f, -0.8f, 0.4f));
 			lightComponent.colour = Vector3::c_One;
 			lightComponent.intensity = 3.0f;
 			lightComponent.castsShadow = false;
 			world.entities.AddComponent<DirLightComponent>(lightEntity, lightComponent);
-			// WorldManager::UpdateWorld creates the actual renderer-side light from this
-			// component - no need to also call CreateDirectionalLight here.
 		}
 	}
 
@@ -141,11 +204,8 @@ namespace tyr
 			return;
 		}
 
-		// Points straight at the 5 plain source images and lets ImportPbrMaterial do exactly
-		// what it would for any real material - packing normal+height and AO+roughness+metallic
-		// itself. That keeps the default material's own creation exercising the same packing
-		// logic every other material goes through, rather than depending on hand-packed source
-		// textures staying in sync with whatever that logic currently does.
+		// Imported from separate source images like any other material, so the importer does
+		// the channel packing.
 		char albedoPath[TYR_MAX_PATH_TOTAL_SIZE];
 		char normalPath[TYR_MAX_PATH_TOTAL_SIZE];
 		char heightPath[TYR_MAX_PATH_TOTAL_SIZE];
@@ -165,11 +225,14 @@ namespace tyr
 		defaultMaterialDesc.heightSource = TextureSource{ heightPath };
 		defaultMaterialDesc.occlusionSource = TextureSource{ occlusionPath };
 		defaultMaterialDesc.roughnessMetallicSource = TextureSource{ roughnessMetallicPath };
-		if (!MaterialImporter::Instance().ImportPbrMaterial(defaultMaterialDesc))
+		AssetID defaultMaterialID;
+		if (!MaterialImporter::Instance().ImportPbrMaterial(defaultMaterialDesc, defaultMaterialID))
 		{
 			TYR_LOG_ERROR("Failed to import the default material from SourceAssets.");
 			return;
 		}
+
+		EditorIcons::Import();
 
 		char sourcePath[TYR_MAX_PATH_TOTAL_SIZE];
 		AssetUtil::CreateFullSourceAssetPath(sourcePath, "Cube/Cube.glb");
@@ -186,17 +249,191 @@ namespace tyr
 
 	void Editor::Update(float deltaTime)
 	{
-		m_EditorUI->Draw();
-		m_EditorViewport->Draw(m_WorldManager->GetWorld(m_LevelEditorWorld).renderViewportHandle,
-			*m_InputManager, *m_Camera, deltaTime);
+		PlayState requestedState = m_PlayState;
+		const PanelRect viewportRect = m_EditorUI->Draw(requestedState);
+		if (requestedState != m_PlayState)
+		{
+			SetPlayState(requestedState);
+		}
+
+		if (m_PlayState == PlayState::Playing)
+		{
+			m_App.Update(deltaTime);
+		}
+
+		UpdateGrid();
+
+		// Shows whichever world is active - the game's while playing, the level's otherwise.
+		const World& activeWorld = m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld());
+		EditorViewport::MeshDrop drop;
+		if (m_EditorViewport->Draw(viewportRect, activeWorld, *m_InputManager, m_PlayState == PlayState::Editing, deltaTime, drop))
+		{
+			AddMeshDrop(drop);
+		}
+		ProcessPendingMeshDrops();
+	}
+
+	void Editor::UpdateGrid()
+	{
+		const bool showGrid = m_EditorUI->GetViewSettings().showGrid;
+		if (showGrid == m_Grid.enabled)
+		{
+			return;
+		}
+
+		m_Grid.enabled = showGrid;
+		const World& levelWorld = m_WorldManager->GetWorld(m_LevelEditorWorld);
+		m_RendererAPI->SetRenderViewportGrid(levelWorld.renderViewportHandle, m_Grid);
+	}
+
+	void Editor::AddMeshDrop(const EditorViewport::MeshDrop& drop)
+	{
+		if (m_PendingMeshDrops.Size() == c_MaxPendingMeshDrops)
+		{
+			TYR_LOG_WARNING("Too many meshes are still loading to place another.");
+			return;
+		}
+
+		// Placing the actor needs the mesh's bounds, which come with its header.
+		m_AssetManager->LoadMesh(drop.mesh);
+		PendingMeshDrop& pending = m_PendingMeshDrops.ExpandOne();
+		pending.drop = drop;
+		pending.entity = c_InvalidEntity;
+	}
+
+	void Editor::ProcessPendingMeshDrops()
+	{
+		World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
+		for (uint i = m_PendingMeshDrops.Size(); i-- > 0;)
+		{
+			PendingMeshDrop& pending = m_PendingMeshDrops[i];
+			if (pending.entity == c_InvalidEntity)
+			{
+				const MeshHeader* header = m_AssetManager->GetMeshHeader(pending.drop.mesh);
+				if (!header)
+				{
+					continue;
+				}
+				pending.entity = SpawnStaticMeshActor(pending.drop, *header);
+			}
+
+			// Released once the actor's mesh instance has its own reference, or the actor is gone.
+			if (!world.entities.HasComponent<MeshComponent>(pending.entity)
+				|| world.entities.GetComponent<MeshComponent>(pending.entity).meshInstanceRequested)
+			{
+				m_AssetManager->DeleteMesh(pending.drop.mesh);
+				m_PendingMeshDrops.SwapAndPopBack(i);
+			}
+		}
+	}
+
+	Entity Editor::SpawnStaticMeshActor(const EditorViewport::MeshDrop& drop, const MeshHeader& header)
+	{
+		World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
+		const bool snap = m_EditorUI->GetViewSettings().snapToGrid;
+		const float cellSize = m_Grid.cellSize;
+
+		// The nearest existing actor the ray hits.
+		RayHit nearestHit;
+		nearestHit.distance = FLT_MAX;
+		bool hasHit = false;
+		world.entities.ForEach<BoxComponent>([&](Entity entity, BoxComponent& box)
+		{
+			if (!world.entities.HasComponent<ComponentTransform>(entity))
+			{
+				return;
+			}
+
+			Vector3 boxMin;
+			Vector3 boxMax;
+			CalculateWorldBounds(box, world.entities.GetComponent<ComponentTransform>(entity).world, boxMin, boxMax);
+			RayHit hit;
+			if (IntersectBox(drop.rayOrigin, drop.rayDirection, boxMin, boxMax, hit) && hit.distance < nearestHit.distance)
+			{
+				nearestHit = hit;
+				hasHit = true;
+			}
+		});
+
+		Vector3 position;
+		if (hasHit)
+		{
+			// Flush against the face that was hit, sliding along it in grid steps.
+			position = drop.rayOrigin + drop.rayDirection * nearestHit.distance;
+			for (uint i = 0; i < 3; ++i)
+			{
+				if (snap && i != nearestHit.axis)
+				{
+					position[i] = SnapToGrid(position[i], cellSize);
+				}
+			}
+			const uint axis = nearestHit.axis;
+			position[axis] -= nearestHit.normalSign > 0.0f ? header.aabbMin[axis] : header.aabbMax[axis];
+		}
+		else
+		{
+			// Like Unreal, a drop onto nothing goes a set distance in front of the camera.
+			position = drop.rayOrigin + drop.rayDirection * c_BackgroundDropDistance;
+			for (uint i = 0; snap && i < 3; ++i)
+			{
+				position[i] = SnapToGrid(position[i], cellSize);
+			}
+		}
+
+		StaticMeshActorMeshDesc desc;
+		desc.mesh = drop.mesh;
+		desc.localTransform.position = position;
+		desc.localTransform.rotation = Quaternion::c_Identity;
+		desc.localTransform.scale = Vector3::c_One;
+		desc.aabbMin = header.aabbMin;
+		desc.aabbMax = header.aabbMax;
+
+		LocalArray<Entity, c_MaxActorInstanceEntities> entities;
+		entities.Add(ActorUtil::BuildStaticMeshActor(world.entities, desc));
+
+		// Named after the mesh file, cut short if it doesn't fit.
+		const char* meshPath = AssetRegistry::Instance().GetAssetData(drop.mesh).filePath.CStr();
+		char fileName[PathConstants::c_MaxFileNameTotalSize];
+		PathUtil::GetFileNameWithoutExtension(meshPath, fileName);
+		fileName[std::min<size_t>(strlen(fileName), NameConstants::c_MaxName)] = '\0';
+
+		m_WorldManager->AddActorInstance(m_LevelEditorWorld, fileName, "", entities);
+		return entities[0];
+	}
+
+	void Editor::SetPlayState(PlayState state)
+	{
+		if (m_PlayState == PlayState::Editing)
+		{
+			m_App.Initialize();
+		}
+		else if (state == PlayState::Editing)
+		{
+			m_App.Shutdown();
+			m_WorldManager->SetActiveWorld(m_LevelEditorWorld);
+		}
+		m_PlayState = state;
 	}
 
 	void Editor::Shutdown()
 	{
-		m_WorldManager->RemoveWorld(m_LevelEditorWorld);
+		if (m_PlayState != PlayState::Editing)
+		{
+			SetPlayState(PlayState::Editing);
+		}
+
+		for (const PendingMeshDrop& pending : m_PendingMeshDrops)
+		{
+			m_AssetManager->DeleteMesh(pending.drop.mesh);
+		}
+		m_PendingMeshDrops.Clear();
+
+		// Destroyed here, while the asset manager it releases icons back to still exists.
+		m_EditorUI.reset();
+
+		DestroyPrimaryWorld(*m_WindowModule, *m_WorldManager, m_LevelEditorWorld, m_PrimaryWindow);
 		m_LevelEditorWorld = {};
 		m_WorldManager = nullptr;
-		m_WindowModule->DestroyWindow(m_PrimaryWindow);
 	}
 
 	bool Editor::WantsExit() const

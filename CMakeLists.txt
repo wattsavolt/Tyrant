@@ -16,8 +16,7 @@ set (TYR_TOOLS_DIR ${TYR_ENGINE_DIR}/Tools)
 set (TYR_APP_DIR ${TYR_ROOT_DIR}/DefaultApp CACHE STRING "The path to the app's directory.")
 set (TYR_APP_ASSETS_DIR ${TYR_APP_DIR}/Assets CACHE STRING "The path to the app's asset directory.")
 set (TYR_CONFIG_DIR ${TYR_APP_DIR}/Config CACHE STRING "The path to the app's config directory.")
-# Raw, not-yet-imported source files for engine-owned default/dummy content (e.g. fallback
-# textures, the test cube) - editor-only, never shipped. See SourceAssets/ at the repo root.
+# The engine's own content before it's imported. Editor only.
 set (TYR_SOURCE_ASSETS_DIR ${TYR_ROOT_DIR}/SourceAssets CACHE STRING "The path to the engine's source (pre-import) asset directory.")
 set (TYR_FINAL_BIN_DIR "")
 

@@ -19,11 +19,9 @@ namespace tyr
 		static AssetID CreateAssetID();
 		// Note: absFilePath must be an empty preallocated char array that does not contain the null character.
 		static void CreateFullPath(char absFilePath[], const char* relativePath, size_t absFilePathSize = TYR_MAX_PATH_TOTAL_SIZE);
-		// Same as CreateFullPath, but rooted at c_SourceAssetsDir instead of c_AssetsDir - for
-		// resolving a path under SourceAssets (raw, not-yet-imported engine default content).
+		// Same as CreateFullPath, but relative to the source assets folder.
 		static void CreateFullSourceAssetPath(char absFilePath[], const char* relativePath, size_t absFilePathSize = TYR_MAX_PATH_TOTAL_SIZE);
-		// Same as CreateFullPath, but rooted at c_ConfigDir instead of c_AssetsDir - for
-		// resolving a path under the app's config folder (e.g. EditorConfig.ini).
+		// Same as CreateFullPath, but relative to the config folder.
 		static void CreateFullConfigPath(char absFilePath[], const char* relativePath, size_t absFilePathSize = TYR_MAX_PATH_TOTAL_SIZE);
 
 		// file path should be relative to the assets folder in following functions

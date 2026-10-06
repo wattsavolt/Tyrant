@@ -24,6 +24,7 @@ namespace tyr
         m_Archetypes.Clear();
         m_EntityRecords.Clear();
         m_NextEntityID = 0;
+        m_Version = 0;
     }
 
     Entity EntitySystem::CreateEntity()
@@ -31,6 +32,18 @@ namespace tyr
         Entity e = m_NextEntityID++;
         m_EntityRecords[e] = {};
         return e;
+    }
+
+    void EntitySystem::RemoveEntity(Entity entity)
+    {
+        EntityRecord* record = m_EntityRecords.Find(entity);
+        TYR_ASSERT(record);
+        if (record->archetype)
+        {
+            RemoveFromArchetype(*record);
+        }
+        m_EntityRecords.Erase(entity);
+        ++m_Version;
     }
 
     Archetype* EntitySystem::GetOrCreateArchetype(const ArchetypeKey& key)

@@ -116,22 +116,10 @@ namespace tyr
 			desc.outputFolderPath = outputFolderPath;
 			desc.materialName = materialName;
 
-			if (!MaterialImporter::Instance().ImportPbrMaterial(desc))
+			AssetID materialID;
+			if (!MaterialImporter::Instance().ImportPbrMaterial(desc, materialID))
 			{
 				TYR_LOG_ERROR("Failed to import material %s for model %s.", materialName, modelName);
-				return false;
-			}
-
-			// ImportPbrMaterial doesn't hand its new AssetID back directly, but it always
-			// registers the material at this exact deterministic path, so we can just look
-			// it up rather than changing MaterialImporter's public signature for this.
-			char materialPath[PathConstants::c_MaxAssetPathTotalSize];
-			snprintf(materialPath, sizeof(materialPath), "%s/%s%s", outputFolderPath, materialName, AssetConstants::c_MaterialFileExtension);
-
-			const AssetID materialID = AssetRegistry::Instance().GetAssetIDSafe(materialPath);
-			if (!AssetUtil::IsValidAssetID(materialID))
-			{
-				TYR_LOG_ERROR("Material %s imported but could not be found in the asset registry afterwards.", materialPath);
 				return false;
 			}
 
@@ -167,11 +155,6 @@ namespace tyr
 		char meshPath[PathConstants::c_MaxAssetPathTotalSize];
 		snprintf(meshPath, sizeof(meshPath), "%s/%s%s", outputFolderPath, meshName, AssetConstants::c_MeshFileExtension);
 
-		if (!AssetRegistry::Instance().ClearAssetForReimport(meshPath))
-		{
-			return false;
-		}
-
 		char absMeshFolderPath[TYR_MAX_PATH_TOTAL_SIZE];
 		AssetUtil::CreateFullPath(absMeshFolderPath, outputFolderPath);
 
@@ -193,9 +176,7 @@ namespace tyr
 			return false;
 		}
 
-		const AssetID meshID = AssetUtil::CreateAssetID();
-		AssetRegistry::Instance().AddAsset(meshID, meshPath, materialIDs.Data(), materialIDs.Size());
-
+		AssetRegistry::Instance().AddOrUpdateAsset(meshPath, materialIDs.Data(), materialIDs.Size());
 		return true;
 	}
 

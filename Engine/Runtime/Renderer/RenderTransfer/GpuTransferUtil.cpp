@@ -36,7 +36,8 @@ namespace tyr
 
     void CreateImageCopyInfos(LocalArray<BufferImageCopyInfo, RenderConstants::c_MaxMips>& copyInfos, uint highestMip, uint mipCount, const TextureInfo& textureInfo, size_t baseOffset)
     {
-        // Currently just supporting BC3 / BC5 / BC7
+        // Expects each mip's rows padded to c_RowPitchAlignment and each mip to start at a
+        // c_UploadAlignment boundary.
         const uint blockW = TextureUtil::GetTextureBlockWidth(textureInfo.format);
         const uint blockH = TextureUtil::GetTextureBlockHeight(textureInfo.format);
         const uint bytesPerBlock = TextureUtil::GetTextureBlockSize(textureInfo.format);
@@ -65,8 +66,10 @@ namespace tyr
                 BufferImageCopyInfo& info = copyInfos.ExpandOne();
 
                 info.bufferOffset = static_cast<uint64>(MemoryUtil::Align(currentOffset, static_cast<size_t>(RenderConstants::c_UploadAlignment)));
-                info.bufferRowLength = 0;     
-                info.bufferImageHeight = 0;
+                // Source rows are padded to c_RowPitchAlignment, so the copy needs the padded row
+                // length in texels rather than assuming tightly packed rows.
+                info.bufferRowLength = (rowSize / bytesPerBlock) * blockW;
+                info.bufferImageHeight = blocksY * blockH;
 
                 info.imageSubresource.aspect = SUBRESOURCE_ASPECT_COLOUR_BIT;
                 info.imageSubresource.mipLevel = mip;

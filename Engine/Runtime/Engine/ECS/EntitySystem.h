@@ -107,9 +107,8 @@ namespace tyr
     // Archetype::entities, the entity IDs themselves) as one flat byte buffer, since a
     // component's real type isn't known here - Archetype::columns has to be an array of
     // the same type for every component slot, so the actual bytes are only ever
-    // interpreted as T through At<T>(). Growing just reserves more of the same buffer
-    // (Array<uint8>::Reserve never shrinks or moves data unnecessarily), so this only
-    // ever needs to allocate more when it actually runs out of room.
+    // interpreted as T through At<T>(). The buffer's size covers every row written so far,
+    // so the rows are carried over when it grows.
     struct EcsColumn
     {
         Array<uint8> data;
@@ -120,16 +119,26 @@ namespace tyr
             return elementSize > 0;
         }
 
+        // Rows a column has room for up front, so a typical level's archetypes never need to
+        // reallocate. Beyond this the buffer doubles as it grows.
+        static constexpr uint c_InitialRowCapacity = 256;
+
         void Init(uint size)
         {
             TYR_ASSERT(!IsInitialized());
             elementSize = size;
+            data.Reserve(c_InitialRowCapacity * size);
         }
 
         void EnsureCapacity(uint rowCount)
         {
             TYR_ASSERT(IsInitialized());
-            data.Reserve((size_t)rowCount * elementSize);
+            // Resized rather than reserved, since growing only copies the bytes within the size.
+            const uint byteCount = rowCount * elementSize;
+            if (byteCount > data.Size())
+            {
+                data.Resize(Array<uint8>::UninitializedTag{}, byteCount);
+            }
         }
 
         void* GetElement(uint row)
@@ -195,6 +204,9 @@ namespace tyr
 
         Entity CreateEntity();
 
+        // Removes the entity and all of its components.
+        void RemoveEntity(Entity entity);
+
         template<typename T, typename... Args>
         void AddComponent(Entity entity, Args&&... args)
         {
@@ -215,6 +227,7 @@ namespace tyr
             column.EnsureCapacity(record.index + 1);
 
             column.At<T>(record.index) = T(std::forward<Args>(args)...);
+            ++m_Version;
         }
 
         template<typename T>
@@ -223,6 +236,13 @@ namespace tyr
             EntityRecord& record = m_EntityRecords[entity];
             EcsColumn& column = record.archetype->columns[ComponentRegistry::GetComponentTypeID<T>()];
             return column.At<T>(record.index);
+        }
+
+        template<typename T>
+        bool HasComponent(Entity entity) const
+        {
+            const EntityRecord* record = m_EntityRecords.Find(entity);
+            return record && record->archetype && record->archetype->key.Test(ComponentRegistry::GetComponentTypeID<T>());
         }
 
         // Calls func(Entity, T&) once for every entity that has a T, across every archetype
@@ -254,8 +274,12 @@ namespace tyr
         // slot is recycled for a new level.
         void Reset();
 
+        // Changes whenever a component is added or an entity is removed.
+        uint GetVersion() const { return m_Version; }
+
     private:
         Entity m_NextEntityID{ 0 };
+        uint m_Version = 0;
 
         HashMap<Entity, EntityRecord> m_EntityRecords;
         HashMap<ArchetypeKey, Archetype*> m_Archetypes;

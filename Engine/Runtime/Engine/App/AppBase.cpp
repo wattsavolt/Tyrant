@@ -32,4 +32,17 @@ namespace tyr
 		worldManager.SetActiveWorld(worldHandle);
 		return worldHandle;
 	}
+
+	void AppBase::DestroyPrimaryWorld(WindowModule& windowModule, WorldManager& worldManager,
+		Handle worldHandle, WindowHandle windowHandle)
+	{
+		const RenderWindowHandle renderWindow = worldManager.GetWorld(worldHandle).windowHandle;
+		worldManager.RemoveWorld(worldHandle);
+
+		RendererModule* rendererModule;
+		TYR_GET_MODULE(RendererModule, rendererModule);
+		rendererModule->GetRendererAPI()->RemoveWindow(renderWindow);
+
+		windowModule.DestroyWindow(windowHandle);
+	}
 }

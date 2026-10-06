@@ -11,7 +11,7 @@ struct MeshTaskPayload
 	uint globalIndexBase;
 };
 
-[[vk::binding(TYR_BINDING_SCENE_INFO, 0)]]
+TYR_VK_BINDING(TYR_BINDING_SCENE_INFO, 0)
 cbuffer SceneInfoCBuffer : register(b0)
 {
 	float4x4 ViewProj;
@@ -22,10 +22,10 @@ cbuffer SceneInfoCBuffer : register(b0)
 	float ambient;
 };
 
-[[vk::binding(TYR_BINDING_MESHLET, 0)]] StructuredBuffer<Meshlet> meshlets : register(t3);
-[[vk::binding(TYR_BINDING_VERTEX, 0)]] StructuredBuffer<Vertex> vertices : register(t4);
-[[vk::binding(TYR_BINDING_INDEX, 0)]] StructuredBuffer<uint> indices : register(t5);
-[[vk::binding(TYR_BINDING_MESH_INSTANCE, 0)]] StructuredBuffer<MeshInstance> meshInstances : register(t6);
+TYR_VK_BINDING(TYR_BINDING_MESHLET, 0) StructuredBuffer<Meshlet> meshlets : register(t3);
+TYR_VK_BINDING(TYR_BINDING_VERTEX, 0) StructuredBuffer<Vertex> vertices : register(t4);
+TYR_VK_BINDING(TYR_BINDING_INDEX, 0) StructuredBuffer<uint> indices : register(t5);
+TYR_VK_BINDING(TYR_BINDING_MESH_INSTANCE, 0) StructuredBuffer<MeshInstance> meshInstances : register(t6);
 
 [outputtopology("triangle")]
 [numthreads(TYR_MAX_MESHLET_TRIANGLES, 1, 1)]

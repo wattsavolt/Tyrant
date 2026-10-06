@@ -168,7 +168,17 @@ namespace tyr
 		// not a hazard, since both textures are always kept in a valid state by their own passes
 		// regardless of which one is actually selected here.
 		const RenderViewportTextureData& textureData = rv.textureData[renderFrameIndex];
+		if (rv.grid.enabled && textureData.overlayColourTexture)
+		{
+			return textureData.overlayColourTexture;
+		}
 		return m_Renderer.IsTaaEnabledMainThread() ? textureData.resolvedColourTexture : textureData.colourTexture;
+	}
+
+	void RendererAPI::SetRenderViewportGrid(RenderViewportHandle viewport, const ViewportGridDesc& desc)
+	{
+		// The overlay textures follow on each buffered slot's own next turn.
+		m_Renderer.GetRenderViewportPool()[viewport.h].grid = desc;
 	}
 
 	MaterialHandle RendererAPI::CreateMaterial(const MaterialDesc& desc)

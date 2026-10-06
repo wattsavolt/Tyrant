@@ -8,6 +8,7 @@
 #include "AssetSystem/AssetDataTypes.h"
 #include "ECS/EntitySystem.h"
 #include "Window/WindowHandle.h"
+#include "String/Path.h"
 
 namespace tyr
 {
@@ -17,6 +18,7 @@ namespace tyr
 	{
 		Name name;
 		// The render window the world's scene will draw to. Must come from RendererAPI::AddWindow.
+		// The world doesn't own it - whoever added the window removes it.
 		RenderWindowHandle windowHandle;
 		// The OS window backing windowHandle above. Lets WorldManager poll for an externally
 		// (OS-)detected resize each tick and forward it to the renderer.
@@ -26,17 +28,18 @@ namespace tyr
 		Camera* camera = nullptr;
 	};
 
-	// One MeshComponent's renderer-side mesh instance, tracked outside the ECS so it can be
-	// deleted (and release the world's reference to the mesh asset) when the world is torn
-	// down. meshInstance stays invalid until creation resolves, since creation is asynchronous.
-	struct WorldMeshInstance
+	constexpr uint c_MaxActorInstanceEntities = 32;
+
+	// An actor placed in a world, with the name and folder it's shown under in the editor.
+	// Identify it by its root entity rather than its index, since indices change on removal.
+	struct ActorInstance
 	{
-		AssetID meshAssetID;
-		// Only actually populated once meshInstance itself resolves - the per-slot material
-		// AssetIDs resolved and loaded on this instance's behalf, needed to release each
-		// one's refcount alongside the mesh's own when torn down.
-		LocalArray<AssetID, MeshConstants::c_MaxSubmeshes> materialAssetIDs;
-		MeshInstanceHandle meshInstance;
+		Name name;
+		// Folder in the level hierarchy, e.g. "Enemies/Boss".
+		RelativePath folderPath;
+		LocalArray<Entity, c_MaxActorInstanceEntities> entities;
+
+		Entity RootEntity() const { return entities[0]; }
 	};
 
 	// A world/scene in an app. Just data - a manager owns all the logic that creates, updates,
@@ -55,14 +58,9 @@ namespace tyr
 		RenderViewportHandle renderViewportHandle;
 		bool visible = true;
 		EntitySystem entities;
-		Array<WorldMeshInstance> meshInstances;
-		// One-shot: set the first time mesh instances are created for this world's
-		// MeshComponents, so it only happens once. Revisit once entities can be added after a
-		// world is already running.
-		bool meshInstancesSynced = false;
-		// Renderer-side directional lights created from this world's DirLightComponents.
-		Array<DirLightHandle> dirLights;
-		bool dirLightsSynced = false;
+		// The entities version the renderer-side mesh instances and lights were last synced at.
+		uint syncedEntitiesVersion = 0;
+		Array<ActorInstance> actorInstances;
 
 		// Puts a recycled pool slot back to a blank state before it's filled in again for a
 		// new world. entities.Reset() drops every entity/archetype from whatever level was
@@ -78,10 +76,8 @@ namespace tyr
 			renderViewportHandle = {};
 			visible = true;
 			entities.Reset();
-			meshInstances.Clear();
-			meshInstancesSynced = false;
-			dirLights.Clear();
-			dirLightsSynced = false;
+			syncedEntitiesVersion = 0;
+			actorInstances.Clear();
 		}
 	};
 }

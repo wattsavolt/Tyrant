@@ -34,21 +34,21 @@ namespace tyr
 		void Save();
 
 #if TYR_EDITOR
-		void AddAsset(AssetID assetID, const char* assetPath, const AssetID* dependencies = nullptr, uint dependencyCount = 0);
+		// Registers the asset at the path and sets its dependencies. An asset already at the path
+		// keeps its ID, so anything referencing it stays valid after a reimport.
+		AssetID AddOrUpdateAsset(const char* assetPath, const AssetID* dependencies = nullptr, uint dependencyCount = 0);
 		void UpdateAssetPath(AssetID assetID, const char* assetPath);
 		void RemoveAsset(AssetID assetID);
 		bool RemoveAssetIfExists(const char* assetPath);
+		// Locks, for calling from a thread other than the main thread.
 		AssetID GetAssetIDSafe(const char* assetPath) const;
 		// Returns the number of assets this asset depends on
 		int GetAssetDependencyCount(const char* assetPath) const;
 		// Returns the number of assets that depend on this asset
 		int GetAssetReferenceCount(const char* assetPath) const;
-		// Call before writing a fresh asset to assetPath (e.g. a reimport) so the old entry at
-		// that exact path - if any - doesn't linger as a stale duplicate once the new one is
-		// added. Returns false (and logs) if the existing asset there is still referenced by
-		// something else and so can't be safely replaced; otherwise removes it (a no-op if
-		// nothing exists at that path yet) and returns true.
-		bool ClearAssetForReimport(const char* assetPath);
+		const HashMap<AssetID, RegAssetData>& GetAssets() const { return m_RegistryFile.assets; }
+		// Changes whenever an asset is added, removed or moved.
+		uint GetVersion() const { return m_Version; }
 #endif
 		// Following functions are not thread safe and should only be called from the main thread
 		const RegAssetData& GetAssetData(AssetID assetID) const;
@@ -67,6 +67,7 @@ namespace tyr
 		Array<AssetID> m_DependenciesBackup;
 		AssetRegistryFile m_RegistryFile;
 		mutable Mutex m_Mutex;
+		uint m_Version = 0;
 	};
 	
 }

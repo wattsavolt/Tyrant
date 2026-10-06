@@ -15,8 +15,8 @@ namespace tyr
 			entities.AddComponent<ComponentTransform>(entity, transform);
 
 			MeshComponent meshComponent;
+			// Materials left empty so the mesh's own materials are used.
 			meshComponent.mesh = desc.mesh;
-			meshComponent.materialOverrides = desc.materialOverrides;
 			entities.AddComponent<MeshComponent>(entity, meshComponent);
 
 			BoxComponent boxComponent;

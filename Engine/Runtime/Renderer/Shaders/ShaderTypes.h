@@ -45,6 +45,9 @@
 // relevant tick's history, and by the editor/GUI for display) via the ordinary bindless
 // TYR_BINDING_TEXTURES array instead, since this texture is also registered there.
 #define TYR_BINDING_TAA_RESOLVE_OUTPUT 23
+// The viewport grid's storage-image output, one per buffered RenderFrame slot - same shape as
+// TYR_BINDING_TAA_RESOLVE_OUTPUT.
+#define TYR_BINDING_EDITOR_GRID_OUTPUT 24
 
 // How many copies of the per-frame render targets TYR_BINDING_LIGHTING_OUTPUT holds, one
 // per buffered frame slot - kept in sync with the matching C++ constant.
@@ -89,6 +92,15 @@ namespace tyr
 	#define TYR_SHADER_QUATERNION float4
 	#define TYR_SHADER_FLOAT3x3 float3x3
 	#define TYR_SHADER_FLOAT4x4 float4x4
+
+	// Vulkan-only attributes. D3D12 places each resource with its register() alone.
+	#ifdef TYR_VULKAN
+		#define TYR_VK_BINDING(slot, space) [[vk::binding(slot, space)]]
+		#define TYR_VK_PUSH_CONSTANT [[vk::push_constant]]
+	#else
+		#define TYR_VK_BINDING(slot, space)
+		#define TYR_VK_PUSH_CONSTANT
+	#endif
 #endif
 
 #ifdef __cplusplus

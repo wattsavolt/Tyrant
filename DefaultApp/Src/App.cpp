@@ -1,4 +1,4 @@
-/// Copyright (c) 2023 Aidan Clear 
+/// Copyright (c) 2023 Aidan Clear
 
 #include "App.h"
 #include "BuildConfig.h"
@@ -7,20 +7,20 @@
 #include "World/WorldModule.h"
 #include "World/WorldManager.h"
 #include "World/World.h"
-#include "World/Camera.h"
 #include "Platform/Platform.h"
 
 using namespace tyr;
 
-TYR_EXPORT AppBase* TYR_STDCALL CreateApp()
+TYR_EXPORT AppBase* TYR_STDCALL CreateApp(bool embedded)
 {
 	// #pragam comment line below prevents having to use extern "C"
 #pragma comment(linker, "/EXPORT:" __FUNCTION__ "=" __FUNCDNAME__)
-	return new App();
+	return new App(embedded);
 }
 
 
-App::App()
+App::App(bool embedded)
+	: m_Embedded(embedded)
 {
 
 }
@@ -38,18 +38,29 @@ void App::Initialize()
 	TYR_GET_MODULE(WorldModule, worldModule);
 	m_WorldManager = worldModule->GetWorldManager();
 
+	// Pulled back from the origin along -Z, looking down +Z toward it.
+	m_Camera = Camera(Vector3(0, 0, -3), Vector3::c_Up, Vector3::c_Forward, 90, 1.0f, 2000);
+
+	WorldConfig worldParams{};
+	worldParams.camera = &m_Camera;
+
+	if (m_Embedded)
+	{
+		// Draws into the host's window instead of opening a second one.
+		const World& hostWorld = m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld());
+		worldParams.windowHandle = hostWorld.windowHandle;
+		worldParams.osWindowHandle = hostWorld.osWindowHandle;
+
+		m_MainWorld = m_WorldManager->AddWorld(worldParams);
+		m_WorldManager->SetActiveWorld(m_MainWorld);
+		return;
+	}
+
 	// Get project related properties from the config later
 	WindowDesc desc;
 	desc.showFlag = 1;
 	desc.name = c_AppName;
 	Platform::GetMaxWindowResolution(desc.width, desc.height);
-
-	// Pulled back from the origin along -Z, looking down +Z (c_Forward) toward it - matches
-	// Editor::Initialize's camera setup.
-	m_Camera = MakeURef<Camera>(Vector3(0, 0, -3), Vector3::c_Up, Vector3::c_Forward, 90, 1.0f, 2000);
-
-	WorldConfig worldParams{};
-	worldParams.camera = m_Camera.get();
 
 	m_MainWorld = CreatePrimaryWorld(*m_WindowModule, *m_WorldManager, desc, worldParams, m_PrimaryWindow);
 }
@@ -61,13 +72,20 @@ void App::Update(float deltaTime)
 
 void App::Shutdown()
 {
-	m_WorldManager->RemoveWorld(m_MainWorld);
+	if (m_Embedded)
+	{
+		m_WorldManager->RemoveWorld(m_MainWorld);
+	}
+	else
+	{
+		DestroyPrimaryWorld(*m_WindowModule, *m_WorldManager, m_MainWorld, m_PrimaryWindow);
+	}
 	m_MainWorld = {};
 	m_WorldManager = nullptr;
-	m_WindowModule->DestroyWindow(m_PrimaryWindow);
 }
 
 bool App::WantsExit() const
 {
+	TYR_ASSERT(!m_Embedded);
 	return m_WindowModule->IsWindowActive(m_PrimaryWindow);
 }

@@ -17,6 +17,23 @@
 
 namespace tyr
 {
+	namespace
+	{
+		// Reads only the header at the start of a mesh file. Returns the header's size in bytes.
+		size_t LoadMeshHeader(const char* filePath, MeshHeader& header)
+		{
+			char absFilePath[TYR_MAX_PATH_TOTAL_SIZE];
+			AssetUtil::CreateFullPath(absFilePath, filePath);
+
+			constexpr size_t c_StreamBufferSize = 65536;
+			SmartStack<uint8> streamBuffer = SmartStackAlloc<uint8>((uint)c_StreamBufferSize);
+			BufferedFileStream stream(streamBuffer, c_StreamBufferSize, absFilePath, BinaryStream::Operation::Read);
+
+			Deserialize<MeshHeader>(stream, header);
+			return stream.GetOffset();
+		}
+	}
+
 	AssetManager::AssetManager()
 		: m_AssetMap(c_MaxAssets)
 		, m_CurrentBatch(0)
@@ -202,6 +219,32 @@ namespace tyr
 		{
 			assetData->refCount--;
 		}
+	}
+
+	TextureHandle AssetManager::GetTexture(AssetID assetID) const
+	{
+		const AssetData* assetData = m_AssetMap.Find(assetID);
+		if (!assetData || assetData->loadState != AssetLoadState::Loaded)
+		{
+			return {};
+		}
+		return TextureHandle(assetData->resourceHandle);
+	}
+
+	AssetLoadState AssetManager::GetLoadState(AssetID assetID) const
+	{
+		const AssetData* assetData = m_AssetMap.Find(assetID);
+		return assetData ? assetData->loadState : AssetLoadState::Unloaded;
+	}
+
+	const MeshHeader* AssetManager::GetMeshHeader(AssetID assetID) const
+	{
+		const AssetData* assetData = m_AssetMap.Find(assetID);
+		if (!assetData || !static_cast<bool>(assetData->assetHeader))
+		{
+			return nullptr;
+		}
+		return &m_MeshHeaderPool[assetData->assetHeader];
 	}
 
 	void AssetManager::DeleteTextureResources(AssetID assetID, AssetData& assetData)
@@ -455,20 +498,8 @@ namespace tyr
 
 			TaskScheduler::Instance().CreateAndEnqueueTask([this, ld]()
 			{
-				char absFilePath[TYR_MAX_PATH_TOTAL_SIZE];
-				AssetUtil::CreateFullPath(absFilePath, ld->filePath.CStr());
-
-				constexpr size_t c_StreamBufferSize = 65536;
-				SmartStack<uint8> streamBufferStack = SmartStackAlloc<uint8>((uint)c_StreamBufferSize);
-				BufferedFileStream stream(streamBufferStack, c_StreamBufferSize, absFilePath, BinaryStream::Operation::Read);
-
-				MeshHeader& header = m_MeshHeaderPool[ld->header];
-				Deserialize<MeshHeader>(stream, header);
-				// Exact on-disk header size, from the stream's position right after reading
-				// it - lets CreateMesh compute each chunk's absolute file offset below
-				// without the file needing to store them (see MeshChunkHeader's comment).
-				ld->headerByteSize = stream.GetOffset();
-
+				// The header's size on disk is where the mesh's chunks start.
+				ld->headerByteSize = LoadMeshHeader(ld->filePath.CStr(), m_MeshHeaderPool[ld->header]);
 				m_MeshHeadersLoadedQueue.Enqueue(ld);
 			});
 		}
@@ -502,7 +533,7 @@ namespace tyr
 	void AssetManager::DeleteMeshResources(AssetID assetID, AssetData& assetData)
 	{
 		m_RendererAPI->DeleteMesh(MeshHandle(assetData.resourceHandle));
-		m_MeshHeaderPool.Delete(assetData.meshHeader);
+		m_MeshHeaderPool.Delete(assetData.assetHeader);
 		m_AssetMap.Erase(assetID);
 	}
 
@@ -545,7 +576,7 @@ namespace tyr
 		assetData.resourceHandle = meshHandle.h;
 		// Marks the header available to other code. Geometry loading below doesn't need to
 		// wait on anything else, but resolving pending mesh instances does wait on this being set.
-		assetData.meshHeader = ld->header;
+		assetData.assetHeader = ld->header;
 		assetData.pendingLodCount = header.lods.Size();
 
 		// Running byte offset into the file, starting right after the header - advances by
@@ -718,26 +749,23 @@ namespace tyr
 		TempDelete<MeshGeometryLoadData>(ld);
 	}
 
-	void AssetManager::CreateMeshInstance(AssetID meshAssetID, const Matrix4& transform, const LocalArray<MaterialOverride, MeshConstants::c_MaxSubmeshes>& overrides, Function<void(MeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated)
+	void AssetManager::CreateMeshInstance(AssetID meshAssetID, const Matrix4& transform, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials, Function<void(MeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated)
 	{
 		LoadMesh(meshAssetID);
 
 		MeshInstanceCreateData* instData = TempNew<MeshInstanceCreateData>();
 		instData->meshAssetID = meshAssetID;
 		instData->transform = transform;
-		instData->overrides = overrides;
+		instData->materials = materials;
 		instData->onCreated = std::move(onCreated);
 		m_PendingMeshInstances.Add(instData);
 	}
 
 	AssetID AssetManager::GetEffectiveMaterialForSlot(const MeshHeader& header, const MeshInstanceCreateData& instData, uint slot) const
 	{
-		for (const MaterialOverride& override : instData.overrides)
+		if (slot < instData.materials.Size() && AssetUtil::IsValidAssetID(instData.materials[slot]))
 		{
-			if (override.submeshSlot == slot)
-			{
-				return override.material;
-			}
+			return instData.materials[slot];
 		}
 		return header.materials[slot];
 	}
@@ -753,9 +781,9 @@ namespace tyr
 
 			// The header has to be available before anything else here can happen - it's
 			// what says how many submesh slots there are and what their defaults are.
-			if ((bool)meshAssetData.meshHeader)
+			if ((bool)meshAssetData.assetHeader)
 			{
-				const MeshHeader& header = m_MeshHeaderPool[meshAssetData.meshHeader];
+				const MeshHeader& header = m_MeshHeaderPool[meshAssetData.assetHeader];
 				TYR_ASSERT(header.materials.Size() <= MeshConstants::c_MaxSubmeshes);
 
 				if (!instData->materialsRequested)
@@ -797,7 +825,7 @@ namespace tyr
 	void AssetManager::CreateResolvedMeshInstance(MeshInstanceCreateData* instData)
 	{
 		const AssetData& meshAssetData = m_AssetMap[instData->meshAssetID];
-		const MeshHeader& header = m_MeshHeaderPool[meshAssetData.meshHeader];
+		const MeshHeader& header = m_MeshHeaderPool[meshAssetData.assetHeader];
 
 		MeshInstanceDesc desc;
 		desc.info.transform = instData->transform;

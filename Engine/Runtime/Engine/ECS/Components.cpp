@@ -17,7 +17,7 @@ namespace tyr
 
 	TYR_COMPONENT_START(MeshComponent, 0);
 		TYR_COMPONENT_FIELD(&MeshComponent::mesh, "Mesh", true, true, true);
-		TYR_COMPONENT_FIELD(&MeshComponent::materialOverrides, "Material Overrides", true, true, true);
+		TYR_COMPONENT_FIELD(&MeshComponent::materials, "Materials", true, true, true);
 	TYR_COMPONENT_END();
 
 	TYR_COMPONENT_START(BoxComponent, 0);

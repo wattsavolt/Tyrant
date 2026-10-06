@@ -10,6 +10,7 @@ namespace tyr
 	class RendererAPI;
 	class WindowModule;
 	class AssetManager;
+	struct MeshComponent;
 	class TYR_ENGINE_API WorldManager final
 	{
 	public:
@@ -43,13 +44,22 @@ namespace tyr
 		// this also pushes the change to RendererAPI immediately via SetSceneWindow.
 		void SetWorldWindow(Handle worldHandle, RenderWindowHandle windowHandle);
 
+		// Adds an actor whose entities have already been created in the world.
+		void AddActorInstance(Handle worldHandle, const char* name, const char* folderPath, const LocalArray<Entity, c_MaxActorInstanceEntities>& entities);
+
+		// Removes the actor and all of its entities.
+		void RemoveActorInstance(Handle worldHandle, Entity rootEntity);
+
 	private:
-		// Both are lifecycle transitions that have to stay coordinated with the pool
-		// (handle creation/deletion, m_Worlds membership), unlike UpdateWorld which is
-		// safe to call on a live world at any time - so these stay private, only ever
-		// called from AddWorld/RemoveWorld(s).
+		// Only called from AddWorld/RemoveWorld(s), which keep the pool and m_Worlds in step.
 		void InitWorld(World& world, const WorldConfig& config);
 		void ShutdownWorld(World& world);
+
+		// Requests the mesh instance for the component and stores it on the component once created.
+		void SyncMeshInstance(Handle worldHandle, Entity entity, MeshComponent& meshComponent);
+		// Releases the component's mesh instance along with its mesh and materials.
+		void RemoveMeshInstance(const MeshComponent& meshComponent);
+		void ReleaseMeshInstance(MeshInstanceHandle handle, AssetID meshID, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials);
 
 		RendererAPI* m_RendererAPI;
 		WindowModule* m_WindowModule;

@@ -78,6 +78,30 @@ namespace tyr
             }
         }
 
+        // Adds a key that isn't in the map yet to the first free or deleted bucket on its probe chain.
+        Value& InsertNew(const Key& key, const Value& value)
+        {
+            EnsureCapacity(m_Size + 1);
+            const uint hash = static_cast<uint>(Hash{}(key));
+            for (uint i = 0; i < m_Capacity; ++i)
+            {
+                Bucket& bucket = m_Buckets[ProbeIndex(hash, i)];
+                if (!bucket.occupied || bucket.deleted)
+                {
+                    bucket.key = key;
+                    bucket.value = value;
+                    bucket.occupied = true;
+                    bucket.deleted = false;
+                    ++m_Size;
+                    return bucket.value;
+                }
+            }
+
+            TYR_ASSERT(false);
+            static Value dummy = {};
+            return dummy;
+        }
+
         const Value* FindInternal(const Key& key) const
         {
             const uint hash = Hash{}(key);
@@ -119,72 +143,22 @@ namespace tyr
 
         Value& operator[](const Key& key)
         {
-            uint hash = Hash{}(key);
-            for (uint i = 0; i < m_Capacity; ++i)
+            // The key can sit past a deleted bucket, so look for it before picking a free one.
+            if (Value* existing = Find(key))
             {
-                const uint index = ProbeIndex(hash, i);
-                Bucket& bucket = m_Buckets[index];
-
-                if (bucket.occupied && !bucket.deleted && bucket.key == key)
-                {
-                    return bucket.value;
-                }
-
-                if (!bucket.occupied || bucket.deleted)
-                {
-                    EnsureCapacity(m_Size + 1); // Ensure BEFORE insert!
-                    hash = static_cast<uint>(Hash{}(key)); // In case rehash changed capacity
-
-                    for (uint j = 0; j < m_Capacity; ++j)
-                    {
-                        uint insertIndex = ProbeIndex(hash, j);
-                        Bucket& insertBucket = m_Buckets[insertIndex];
-                        if (!insertBucket.occupied || insertBucket.deleted)
-                        {
-                            insertBucket.key = key;
-                            insertBucket.value = Value();
-                            insertBucket.occupied = true;
-                            insertBucket.deleted = false;
-                            ++m_Size;
-                            return insertBucket.value;
-                        }
-                    }
-                }
+                return *existing;
             }
-
-            TYR_ASSERT(false);
-            static Value dummy = {};
-            return dummy;
+            return InsertNew(key, Value());
         }
 
         void Insert(const Key& key, const Value& value)
         {
-            EnsureCapacity(m_Size + 1);
-            uint hash = Hash{}(key);
-
-            for (uint i = 0; i < m_Capacity; ++i)
+            if (Value* existing = Find(key))
             {
-                uint index = ProbeIndex(hash, i);
-                Bucket& bucket = m_Buckets[index];
-
-                if (bucket.occupied && !bucket.deleted && bucket.key == key)
-                {
-                    bucket.value = value;
-                    return;
-                }
-
-                if (!bucket.occupied || bucket.deleted)
-                {
-                    bucket.key = key;
-                    bucket.value = value;
-                    bucket.occupied = true;
-                    bucket.deleted = false;
-                    ++m_Size;
-                    return;
-                }
+                *existing = value;
+                return;
             }
-
-            TYR_ASSERT(false);
+            InsertNew(key, value);
         }
 
         Value* Find(const Key& key)

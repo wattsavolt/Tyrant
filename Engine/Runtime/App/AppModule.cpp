@@ -8,33 +8,37 @@
 
 namespace tyr
 {
-	typedef TYR_IMPORT tyr::AppBase* (TYR_STDCALL* CreateApp)();
+	typedef TYR_IMPORT tyr::AppBase* (TYR_STDCALL* CreateApp)(bool);
 
-	tyr::AppBase* LoadApp(const tyr::LibraryLoader& loader)
+	tyr::AppBase* LoadApp(const tyr::LibraryLoader& loader, bool embedded)
 	{
 		CreateApp createApp = static_cast<CreateApp>(loader.GetProcessAddress("CreateApp"));
-		return createApp();
+		return createApp(embedded);
 	}
 
 	AppModule::AppModule()
 	{
+		const char* libName = TYR_TO_LITERAL(TYR_APP_LIB_NAME);
+		const bool loaded = m_Loader.Load(libName);
+		TYR_ASSERT(loaded);
+
 #if TYR_EDITOR
 		if (CommandLine::Instance().HasFlag("editor"))
 		{
 			GUIModule* guiModule;
 			TYR_GET_MODULE(GUIModule, guiModule);
-			m_App = new tyr::Editor(*guiModule);
+			m_EmbeddedApp = LoadApp(m_Loader, true);
+			m_App = new tyr::Editor(*guiModule, *m_EmbeddedApp);
 			return;
 		}
 #endif
-		const char* libName = TYR_TO_LITERAL(TYR_APP_LIB_NAME);
-		TYR_ASSERT(m_Loader.Load(libName));
-		m_App = LoadApp(m_Loader);
+		m_App = LoadApp(m_Loader, false);
 	}
 
 	AppModule::~AppModule()
 	{
 		delete m_App;
+		delete m_EmbeddedApp;
 	}
 
 	void AppModule::Initialize()

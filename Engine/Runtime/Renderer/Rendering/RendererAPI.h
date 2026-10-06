@@ -28,6 +28,7 @@ namespace tyr
 	struct PointLightInfo;
 	struct SpotLightInfo;
 	struct GUIDrawData;
+	struct ViewportGridDesc;
 	enum class QualityLevel : uint8;
 
 	// Every Create*/Delete* function here must only ever be called from the main thread -
@@ -79,6 +80,9 @@ namespace tyr
 		// this tick's own buffered slot on first call, or resizes them if width/height differ from
 		// last time. Safe to call every frame - only actually does work when the size has changed.
 		TextureHandle GetOrCreateRenderViewportTexture(RenderViewportHandle viewport, const char* name, uint width, uint height);
+
+		// Draws an infinite grid over the viewport's final image, e.g. for a level editor.
+		void SetRenderViewportGrid(RenderViewportHandle viewport, const ViewportGridDesc& desc);
 
 		MaterialHandle CreateMaterial(const MaterialDesc& desc);
 

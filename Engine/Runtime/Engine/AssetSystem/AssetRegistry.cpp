@@ -38,6 +38,7 @@ namespace tyr
         {
             Serializer::Instance().DeserializeFromFile<AssetRegistryFile>(absAssetRegistryPath, m_RegistryFile);
         }
+        ++m_Version;
     }
 
     void AssetRegistry::Save()
@@ -51,19 +52,46 @@ namespace tyr
     }
 
 #if TYR_EDITOR
-    void AssetRegistry::AddAsset(AssetID assetID, const char* assetPath, const AssetID* dependencies, uint dependencyCount)
+    AssetID AssetRegistry::AddOrUpdateAsset(const char* assetPath, const AssetID* dependencies, uint dependencyCount)
     {
         LockGuard guard(m_Mutex);
-        TYR_ASSERT(!m_RegistryFile.assets.Contains(assetID));
-        RegAssetData& data = m_RegistryFile.assets[assetID];
-        data.filePath = assetPath;
-        data.dependencyOffset = m_RegistryFile.dependencies.Size();
-        data.dependencyCount = dependencyCount;
-        m_RegistryFile.dependencies.Reserve(data.dependencyOffset + dependencyCount);
+
+        AssetID assetID = GetAssetID(assetPath);
+        RegAssetData* data = m_RegistryFile.assets.Find(assetID);
+        if (!data)
+        {
+            assetID = AssetUtil::CreateAssetID();
+            data = &m_RegistryFile.assets[assetID];
+            data->filePath = assetPath;
+            data->dependencyOffset = m_RegistryFile.dependencies.Size();
+            data->dependencyCount = 0;
+            ++m_Version;
+        }
+
+        if (dependencyCount == data->dependencyCount)
+        {
+            for (uint i = 0; i < dependencyCount; ++i)
+            {
+                m_RegistryFile.dependencies[data->dependencyOffset + i] = dependencies[i];
+            }
+            return assetID;
+        }
+
+        // A different number of dependencies goes on the end, then the old range is compacted away.
+        const bool hadDependencies = data->dependencyCount > 0;
+        data->dependencyOffset = m_RegistryFile.dependencies.Size();
+        data->dependencyCount = static_cast<uint16>(dependencyCount);
+        m_RegistryFile.dependencies.Reserve(data->dependencyOffset + dependencyCount);
         for (uint i = 0; i < dependencyCount; ++i)
         {
             m_RegistryFile.dependencies.Add(dependencies[i]);
         }
+
+        if (hadDependencies)
+        {
+            RebuildDependencies();
+        }
+        return assetID;
     }
 
     void AssetRegistry::UpdateAssetPath(AssetID assetID, const char* assetPath)
@@ -72,6 +100,7 @@ namespace tyr
         TYR_ASSERT(m_RegistryFile.assets.Contains(assetID));
         RegAssetData& data = m_RegistryFile.assets[assetID];
         data.filePath = assetPath;
+        ++m_Version;
     }
 
     void AssetRegistry::RemoveAsset(AssetID assetID)
@@ -80,6 +109,7 @@ namespace tyr
         TYR_ASSERT(m_RegistryFile.assets.Contains(assetID));
         m_RegistryFile.assets.Erase(assetID);
         RebuildDependencies();
+        ++m_Version;
     }
 
     bool AssetRegistry::RemoveAssetIfExists(const char* assetPath)
@@ -91,6 +121,7 @@ namespace tyr
             {
                 m_RegistryFile.assets.Erase(keyVal.first);
                 RebuildDependencies();
+                ++m_Version;
                 return true;
             }
         }
@@ -136,21 +167,6 @@ namespace tyr
         return -1;
     }
 
-    bool AssetRegistry::ClearAssetForReimport(const char* assetPath)
-    {
-        const int refCount = GetAssetReferenceCount(assetPath);
-        if (refCount > 0)
-        {
-            TYR_LOG_ERROR("Cannot overwrite asset with references. Path: %s.", assetPath);
-            return false;
-        }
-        if (refCount == 0)
-        {
-            RemoveAssetIfExists(assetPath);
-        }
-        return true;
-    }
-
     const RegAssetData& AssetRegistry::GetAssetData(AssetID assetID) const
     {
         return *m_RegistryFile.assets.Find(assetID);
@@ -181,14 +197,15 @@ namespace tyr
         m_DependenciesBackup = m_RegistryFile.dependencies;
         m_RegistryFile.dependencies.Clear();
         
-        for (auto keyVal : m_RegistryFile.assets)
+        for (std::pair<const AssetID&, RegAssetData&> keyVal : m_RegistryFile.assets)
         {
-            uint newOffset = m_RegistryFile.dependencies.Size();
-            for (uint i = keyVal.second.dependencyOffset; i < keyVal.second.dependencyCount; ++i)
+            RegAssetData& data = keyVal.second;
+            const uint newOffset = m_RegistryFile.dependencies.Size();
+            for (uint i = 0; i < data.dependencyCount; ++i)
             {
-                m_RegistryFile.dependencies.Add(m_DependenciesBackup[i]);
+                m_RegistryFile.dependencies.Add(m_DependenciesBackup[data.dependencyOffset + i]);
             }
-            keyVal.second.dependencyOffset = newOffset;
+            data.dependencyOffset = newOffset;
         }
         m_DependenciesBackup.Clear();
     }

@@ -42,50 +42,31 @@ namespace tyr
 
 	void WorldManager::UpdateWorld(Handle worldHandle, World& world, float deltaTime)
 	{
-		if (!world.meshInstancesSynced)
+		// Creates renderer-side mesh instances and lights for any components added since last time.
+		if (world.syncedEntitiesVersion != world.entities.GetVersion())
 		{
-			world.meshInstancesSynced = true;
-			world.entities.ForEach<MeshComponent>([this, worldHandle](Entity /*entity*/, MeshComponent& meshComponent)
+			world.syncedEntitiesVersion = world.entities.GetVersion();
+
+			world.entities.ForEach<MeshComponent>([this, worldHandle](Entity entity, MeshComponent& meshComponent)
 			{
-				// world (the reference captured just below) only stays valid for this call -
-				// the pool slot could be freed by the time onCreated fires later, so it
-				// re-fetches by handle, validated, rather than capturing a reference directly.
-				World& world = m_WorldPool[worldHandle];
-				const uint index = world.meshInstances.Size();
-				WorldMeshInstance& tracked = world.meshInstances.ExpandOne();
-				tracked.meshAssetID = meshComponent.mesh;
-
-				// TODO: MeshComponent has no transform of its own yet - once one exists, or
-				// entities get a proper transform component lookup here, use that instead of identity.
-				m_AssetManager->CreateMeshInstance(meshComponent.mesh, Matrix4::c_Identity, meshComponent.materialOverrides,
-					[this, worldHandle, index](MeshInstanceHandle handle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materialAssetIDs)
-					{
-						// The world might have been removed while this was still loading -
-						// nothing to write back to in that case; this instance becomes an
-						// orphan the renderer just carries.
-						if (m_WorldPool.IsValid(worldHandle))
-						{
-							WorldMeshInstance& tracked = m_WorldPool[worldHandle].meshInstances[index];
-							tracked.meshInstance = handle;
-							tracked.materialAssetIDs = materialAssetIDs;
-						}
-					});
+				if (!meshComponent.meshInstanceRequested)
+				{
+					SyncMeshInstance(worldHandle, entity, meshComponent);
+				}
 			});
-		}
 
-		if (!world.dirLightsSynced)
-		{
-			world.dirLightsSynced = true;
-			// Unlike mesh instances, a directional light is created synchronously - no need for
-			// an onCreated-style callback, so the handle can just be captured directly here.
 			world.entities.ForEach<DirLightComponent>([&world, this](Entity /*entity*/, DirLightComponent& lightComponent)
 			{
+				if (lightComponent.lightHandle)
+				{
+					return;
+				}
 				DirectionalLightDesc lightDesc{};
 				lightDesc.info.direction = lightComponent.direction;
 				lightDesc.info.colour = lightComponent.colour;
 				lightDesc.info.intensity = lightComponent.intensity;
 				lightDesc.info.castsShadow = lightComponent.castsShadow;
-				world.dirLights.Add(m_RendererAPI->CreateDirectionalLight(world.sceneHandle, lightDesc));
+				lightComponent.lightHandle = m_RendererAPI->CreateDirectionalLight(world.sceneHandle, lightDesc);
 			});
 		}
 
@@ -218,33 +199,106 @@ namespace tyr
 		m_Worlds.Clear();
 	}
 
+	void WorldManager::SyncMeshInstance(Handle worldHandle, Entity entity, MeshComponent& meshComponent)
+	{
+		meshComponent.meshInstanceRequested = true;
+
+		const AssetID meshID = meshComponent.mesh;
+
+		Matrix4 transform = Matrix4::c_Identity;
+		EntitySystem& entities = m_WorldPool[worldHandle].entities;
+		if (entities.HasComponent<ComponentTransform>(entity))
+		{
+			const Transform& worldTransform = entities.GetComponent<ComponentTransform>(entity).world;
+			transform = Matrix4::CreateTRS(worldTransform.position, worldTransform.rotation, worldTransform.scale);
+		}
+
+		m_AssetManager->CreateMeshInstance(meshID, transform, meshComponent.materials,
+			[this, worldHandle, entity, meshID](MeshInstanceHandle handle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials)
+			{
+				// The entity or its world was removed while this was loading, so nothing owns it.
+				if (!m_WorldPool.IsValid(worldHandle) || !m_WorldPool[worldHandle].entities.HasComponent<MeshComponent>(entity))
+				{
+					ReleaseMeshInstance(handle, meshID, materials);
+					return;
+				}
+
+				MeshComponent& comp = m_WorldPool[worldHandle].entities.GetComponent<MeshComponent>(entity);
+				comp.meshInstance = handle;
+				comp.materials = materials;
+			});
+	}
+
+	void WorldManager::RemoveMeshInstance(const MeshComponent& meshComponent)
+	{
+		// One that's still loading is released by its creation callback once it finishes.
+		if (meshComponent.meshInstance)
+		{
+			ReleaseMeshInstance(meshComponent.meshInstance, meshComponent.mesh, meshComponent.materials);
+		}
+	}
+
+	void WorldManager::ReleaseMeshInstance(MeshInstanceHandle handle, AssetID meshID, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials)
+	{
+		m_RendererAPI->DeleteMeshInstance(handle);
+		for (AssetID materialID : materials)
+		{
+			m_AssetManager->DeleteMaterial(materialID);
+		}
+		m_AssetManager->DeleteMesh(meshID);
+	}
+
+	void WorldManager::AddActorInstance(Handle worldHandle, const char* name, const char* folderPath, const LocalArray<Entity, c_MaxActorInstanceEntities>& entities)
+	{
+		World& world = m_WorldPool[worldHandle];
+
+		ActorInstance& instance = world.actorInstances.ExpandOne();
+		instance.name = name;
+		instance.folderPath = folderPath;
+		instance.entities = entities;
+	}
+
+	void WorldManager::RemoveActorInstance(Handle worldHandle, Entity rootEntity)
+	{
+		World& world = m_WorldPool[worldHandle];
+
+		for (uint i = 0; i < world.actorInstances.Size(); ++i)
+		{
+			if (world.actorInstances[i].RootEntity() != rootEntity)
+			{
+				continue;
+			}
+
+			for (Entity entity : world.actorInstances[i].entities)
+			{
+				if (world.entities.HasComponent<MeshComponent>(entity))
+				{
+					RemoveMeshInstance(world.entities.GetComponent<MeshComponent>(entity));
+				}
+				world.entities.RemoveEntity(entity);
+			}
+
+			world.actorInstances.SwapAndPopBack(i);
+			return;
+		}
+	}
+
 	void WorldManager::ShutdownWorld(World& world)
 	{
-		// Delete the renderer-side instance and release this world's share of each material's
-		// refcount once resolved, plus release the mesh asset reference itself regardless of
-		// whether the instance ever resolved.
-		for (const WorldMeshInstance& tracked : world.meshInstances)
+		world.entities.ForEach<MeshComponent>([this](Entity /*entity*/, MeshComponent& meshComponent)
 		{
-			if (tracked.meshInstance)
-			{
-				m_RendererAPI->DeleteMeshInstance(tracked.meshInstance);
-				for (AssetID materialAssetID : tracked.materialAssetIDs)
-				{
-					m_AssetManager->DeleteMaterial(materialAssetID);
-				}
-			}
-			m_AssetManager->DeleteMesh(tracked.meshAssetID);
-		}
-		world.meshInstances.Clear();
+			RemoveMeshInstance(meshComponent);
+		});
 
-		for (DirLightHandle handle : world.dirLights)
+		world.entities.ForEach<DirLightComponent>([this, &world](Entity /*entity*/, DirLightComponent& lightComponent)
 		{
-			m_RendererAPI->DeleteDirectionalLight(world.sceneHandle, handle);
-		}
-		world.dirLights.Clear();
+			if (lightComponent.lightHandle)
+			{
+				m_RendererAPI->DeleteDirectionalLight(world.sceneHandle, lightComponent.lightHandle);
+			}
+		});
 
 		m_RendererAPI->RemoveScene(world.sceneHandle);
 		m_RendererAPI->DeleteRenderViewport(world.renderViewportHandle);
-		m_RendererAPI->RemoveWindow(world.windowHandle);
 	}
 }

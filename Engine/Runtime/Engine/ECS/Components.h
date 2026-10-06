@@ -5,6 +5,7 @@
 #include "Math/Vector3.h"
 #include "AssetSystem/AssetDataTypes.h"
 #include "ECS/EntitySystem.h"
+#include "RenderBase/RenderHandles.h"
 
 namespace tyr
 {
@@ -24,15 +25,16 @@ namespace tyr
 		Entity parentEntity = c_InvalidEntity;
 	};
 
-	// materialOverrides is a LocalArray, not Array - an ECS component can never own a
-	// dynamic allocation (Archetype/EcsColumn moves components between archetypes with
-	// memcpy, never placement-construct/destruct - see ComponentReflection.h's comment).
-	// c_MaxSubmeshes is a safe upper bound (a mesh can't have more submeshes than
-	// that to begin with), even though realistically an entity would only override one or two.
 	struct MeshComponent
 	{
 		AssetID mesh;
-		LocalArray<MaterialOverride, MeshConstants::c_MaxSubmeshes> materialOverrides;
+		// One material per submesh. An invalid or missing entry uses the mesh's own material,
+		// and is filled in with it once the mesh instance has been created.
+		LocalArray<AssetID, MeshConstants::c_MaxSubmeshes> materials;
+		// Invalid until the mesh and its materials have loaded.
+		MeshInstanceHandle meshInstance;
+		// True once the mesh instance has been asked for, even if it hasn't been created yet.
+		bool meshInstanceRequested = false;
 	};
 
 	// A box in the entity's own local space, relative to its ComponentTransform - for
@@ -55,6 +57,8 @@ namespace tyr
 		Vector3 colour;
 		float intensity;
 		bool castsShadow;
+		// Invalid until the light has been created in the renderer.
+		DirLightHandle lightHandle;
 	};
 
 }

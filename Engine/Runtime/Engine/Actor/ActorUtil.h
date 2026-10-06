@@ -22,7 +22,6 @@ namespace tyr
 		Transform localTransform;
 		Vector3 aabbMin;
 		Vector3 aabbMax;
-		LocalArray<MaterialOverride, MeshConstants::c_MaxSubmeshes> materialOverrides;
 	};
 
 	class TYR_ENGINE_API ActorUtil final

@@ -5,6 +5,15 @@
 
 namespace tyr
 {
+	// An infinite grid on the y = 0 plane, drawn over a viewport's final image.
+	struct ViewportGridDesc
+	{
+		bool enabled = false;
+		float cellSize = 1.0f;
+		// How many cells apart the brighter major lines are.
+		uint majorLineEvery = 10;
+	};
+
 	// One buffered slot's own G-buffer/colour/depth texture set for a single scene's viewport -
 	// one full set per buffered RenderFrame slot, each (re)creating only its own entry, on its
 	// own turn, when the requested size changes.
@@ -28,12 +37,17 @@ namespace tyr
 		// (colourTexture otherwise). Reads the previous buffered slot's own resolvedColourTexture
 		// as history, the same cross-slot-reuse pattern the shadow denoiser already uses.
 		TextureHandle resolvedColourTexture;
+		// The final image with the grid drawn over it, kept apart from the TAA history so the grid
+		// never smears. Only exists while the viewport's grid is enabled.
+		TextureHandle overlayColourTexture;
 		uint width = 0;
 		uint height = 0;
 		// Set whenever this slot's own targets are (re)created, consumed once by the geometry
 		// pass to run the one-time "undefined -> real layout" transition a fresh image needs
 		// before its first use as an attachment - reset back to false right after.
 		bool isNew = false;
+		// Same as isNew, for an overlay texture created on its own when the grid is turned on.
+		bool overlayIsNew = false;
 	};
 
 	// A scene's own render target set. Like RenderWindow, this lives in its own pool on
@@ -56,5 +70,7 @@ namespace tyr
 		uint requestedHeight = 0;
 		// Indexed by renderFrameIndex, same as textureData.
 		bool pendingResize[RenderConstants::c_BufferedFrameCount] = {};
+		// Main thread only - snapshotted into the RenderFrame for the worker.
+		ViewportGridDesc grid;
 	};
 }

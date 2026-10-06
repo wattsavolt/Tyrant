@@ -3,7 +3,7 @@
 
 #include "Common.hlsli"
 
-[[vk::binding(TYR_BINDING_SCENE_INFO, 0)]]
+TYR_VK_BINDING(TYR_BINDING_SCENE_INFO, 0)
 cbuffer SceneInfoCBuffer : register(b0)
 {
 	float4x4 ViewProj;
@@ -15,12 +15,12 @@ cbuffer SceneInfoCBuffer : register(b0)
 	uint spotLightCount;
 };
 
-[[vk::binding(TYR_BINDING_TEXTURES, 0)]] Texture2D textures[] : register(t11);
+TYR_VK_BINDING(TYR_BINDING_TEXTURES, 0) Texture2D textures[] : register(t11);
 // textures[] above is unbounded, so it implicitly claims the rest of space0's t-registers -
 // tlas needs a distinct space to avoid a bogus register-overlap error. The real Vulkan binding
 // slot comes entirely from [[vk::binding]]; this register() annotation just needs to be unique.
-[[vk::binding(TYR_BINDING_TLAS, 0)]] RaytracingAccelerationStructure tlas[TYR_BUFFERED_FRAME_COUNT] : register(t0, space1);
-[[vk::binding(TYR_BINDING_SHADOW_MASKS_RAW, 0)]] RWTexture2DArray<float2> shadowMasksRaw[TYR_BUFFERED_FRAME_COUNT] : register(u20);
+TYR_VK_BINDING(TYR_BINDING_TLAS, 0) RaytracingAccelerationStructure tlas[TYR_BUFFERED_FRAME_COUNT] : register(t0, space1);
+TYR_VK_BINDING(TYR_BINDING_SHADOW_MASKS_RAW, 0) RWTexture2DArray<float2> shadowMasksRaw[TYR_BUFFERED_FRAME_COUNT] : register(u20);
 
 // Matches ShadowRTPushConstants in ShadowRTPass.cpp byte for byte.
 struct PushConstants
@@ -43,7 +43,7 @@ struct PushConstants
 	float spotDirZ;
 	float spotCone;
 };
-[[vk::push_constant]] PushConstants g_PushConstants;
+TYR_VK_PUSH_CONSTANT PushConstants g_PushConstants;
 
 // Matches ShadowRTPass.h's c_ShadowLightType* constants exactly.
 static const uint c_LightTypeDirectional = 0;

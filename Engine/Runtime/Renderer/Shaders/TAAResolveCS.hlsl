@@ -3,8 +3,8 @@
 
 #include "Common.hlsli"
 
-[[vk::binding(TYR_BINDING_TEXTURES, 0)]] Texture2D textures[] : register(t11);
-[[vk::binding(TYR_BINDING_TAA_RESOLVE_OUTPUT, 0)]] RWTexture2D<float4> outputImages[TYR_BUFFERED_FRAME_COUNT] : register(u23);
+TYR_VK_BINDING(TYR_BINDING_TEXTURES, 0) Texture2D textures[] : register(t11);
+TYR_VK_BINDING(TYR_BINDING_TAA_RESOLVE_OUTPUT, 0) RWTexture2D<float4> outputImages[TYR_BUFFERED_FRAME_COUNT] : register(u23);
 
 // Matches TAAResolvePushConstants in Renderer.cpp byte for byte.
 struct PushConstants
@@ -18,7 +18,7 @@ struct PushConstants
 	uint hasHistory;
 	float historyBlendWeight;
 };
-[[vk::push_constant]] PushConstants g_PushConstants;
+TYR_VK_PUSH_CONSTANT PushConstants g_PushConstants;
 
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID)

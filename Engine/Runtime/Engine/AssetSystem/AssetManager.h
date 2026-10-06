@@ -33,6 +33,12 @@ namespace tyr
 
 		void DeleteTexture(AssetID assetID);
 
+		// Returns an invalid handle until the texture has finished loading.
+		TextureHandle GetTexture(AssetID assetID) const;
+
+		// Unloaded when the asset isn't loaded or in use.
+		AssetLoadState GetLoadState(AssetID assetID) const;
+
 		void LoadMaterial(AssetID assetID);
 
 		void DeleteMaterial(AssetID assetID);
@@ -41,10 +47,13 @@ namespace tyr
 
 		void DeleteMesh(AssetID assetID);
 
-		// Creates a mesh instance - loads the mesh itself plus whatever materials it'll
-		// actually need before creating it on the renderer. onCreated is invoked
-		// asynchronously with the real instance handle and each submesh's resolved material.
-		void CreateMeshInstance(AssetID meshAssetID, const Matrix4& transform, const LocalArray<MaterialOverride, MeshConstants::c_MaxSubmeshes>& overrides, Function<void(MeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated);
+		// Null until LoadMesh has read the mesh's header.
+		const MeshHeader* GetMeshHeader(AssetID assetID) const;
+
+		// Loads the mesh and its materials, then creates the instance on the renderer. An invalid
+		// or missing entry in materials uses the mesh's own material for that submesh. onCreated
+		// receives the instance and the material actually used for each submesh.
+		void CreateMeshInstance(AssetID meshAssetID, const Matrix4& transform, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials, Function<void(MeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated);
 
 		void LoadLocation(AssetID assetID);
 

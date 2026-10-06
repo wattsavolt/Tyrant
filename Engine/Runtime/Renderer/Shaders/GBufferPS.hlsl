@@ -6,7 +6,7 @@
 // camPos (parallax view direction) and PrevViewProj (motion vectors, below) are the only
 // fields actually used here - everything in between exists purely so PrevViewProj lands
 // at its real cbuffer offset.
-[[vk::binding(TYR_BINDING_SCENE_INFO, 0)]]
+TYR_VK_BINDING(TYR_BINDING_SCENE_INFO, 0)
 cbuffer SceneInfoCBuffer : register(b0)
 {
 	float4x4 ViewProj;
@@ -22,9 +22,9 @@ cbuffer SceneInfoCBuffer : register(b0)
 	float2 JitterDelta;
 };
 
-[[vk::binding(TYR_BINDING_MATERIAL, 0)]] StructuredBuffer<Material> materials : register(t7);
-[[vk::binding(TYR_BINDING_TEXTURES, 0)]] Texture2D textures[] : register(t11);
-[[vk::binding(TYR_BINDING_SAMPLERS, 0)]] SamplerState samplers[] : register(s12);
+TYR_VK_BINDING(TYR_BINDING_MATERIAL, 0) StructuredBuffer<Material> materials : register(t7);
+TYR_VK_BINDING(TYR_BINDING_TEXTURES, 0) Texture2D textures[] : register(t11);
+TYR_VK_BINDING(TYR_BINDING_SAMPLERS, 0) SamplerState samplers[] : register(s12);
 
 struct GBufferOutput
 {

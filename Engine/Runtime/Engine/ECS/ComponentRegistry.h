@@ -35,11 +35,16 @@ namespace tyr
 			return id;
 		}
 
+		// The reflection type ID of the component type with this ComponentTypeID.
+		const Id64& GetReflectionTypeID(ComponentTypeID componentTypeID) const;
+
 	private:
 		ComponentRegistry() = default;
 		~ComponentRegistry() = default;
 
 		HashMap<Id64, ComponentTypeID> m_ComponentTypeIDs;
+		// Indexed by ComponentTypeID.
+		Id64 m_TypeIDs[c_MaxComponentTypes];
 		uint m_NextID = 0;
 	};
 

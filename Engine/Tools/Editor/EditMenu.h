@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Rendering/RenderQualitySettings.h"
+
 namespace tyr
 {
 	class RendererAPI;
@@ -12,16 +14,25 @@ namespace tyr
 
 		void Draw();
 
+		// Sends the level editor's or the game's render settings to the renderer.
+		void ApplyRenderSettings(bool editing);
+
 	private:
+		struct RenderSettings
+		{
+			QualityLevel quality;
+			bool taaEnabled;
+		};
+
 		void DrawProjectSettingsWindow();
+		// Returns true when the settings were changed.
+		static bool DrawRenderSettings(const char* label, RenderSettings& settings);
 
 		RendererAPI& m_RendererAPI;
 		bool m_ShowProjectSettings = false;
-		// Mirrors whatever was last picked in this UI - there's no getter back from the renderer
-		// (its own quality state is worker-owned, not safe to read from here), and nothing else
-		// calls SetQualityLevel/SetTaaEnabled, so this is never out of sync with reality. Defaults
-		// match Renderer's own built-in defaults (Ultra, TAA on).
-		int m_QualityLevelIndex = 3;
-		bool m_TaaEnabled = true;
+		// The level editor renders more cheaply than the game, which defaults to the best quality.
+		RenderSettings m_LevelEditorSettings = { QualityLevel::Medium, false };
+		RenderSettings m_GameSettings = { QualityLevel::Ultra, true };
+		bool m_Editing = true;
 	};
 }

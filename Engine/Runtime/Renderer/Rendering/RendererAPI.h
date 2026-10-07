@@ -128,8 +128,7 @@ namespace tyr
 		// reads this, so there's no SceneFrame merge to also queue.
 		void SetSceneAmbient(SceneHandle scene, float ambient);
 
-		// Takes an explicit scene handle so ImmediateSceneData's light counts stay correct per
-		// scene.
+		// Takes an explicit scene handle so the light goes in that scene's light list.
 		DirLightHandle CreateDirectionalLight(SceneHandle scene, const DirectionalLightDesc& desc);
 
 		void UpdateDirectionalLight(DirLightHandle handle, const DirectionalLightDesc& desc);

@@ -32,23 +32,30 @@ namespace tyr
 	{
 		Array<MeshInstanceHandle> meshInstances;
 		Array<SkeletalMeshInstanceHandle> skeletalMeshInstances;
-		Array<DirLightHandle> dirLights;
-		Array<PointLightHandle> pointLights;
-		Array<SpotLightHandle> spotLights;
-	
+
 		SceneContent()
 		{
 			meshInstances.Reserve(RenderConstants::c_MaxMeshInstances);
 			skeletalMeshInstances.Reserve(RenderConstants::c_MaxSkeletalMeshInstances);
-			dirLights.Reserve(RenderConstants::c_MaxDirLights);
-			pointLights.Reserve(RenderConstants::c_MaxPointLights);
-			spotLights.Reserve(RenderConstants::c_MaxSpotLights);
 		}
 
 		void Clear()
 		{
 			meshInstances.Clear();
 			skeletalMeshInstances.Clear();
+		}
+	};
+
+	// A scene's lights. Their order is the order the lighting shader goes through them in, and
+	// a directional light's position is also its shadow slot.
+	struct SceneLights
+	{
+		LocalArray<DirLightHandle, RenderConstants::c_MaxDirLights> dirLights;
+		LocalArray<PointLightHandle, RenderConstants::c_MaxPointLights> pointLights;
+		LocalArray<SpotLightHandle, RenderConstants::c_MaxSpotLights> spotLights;
+
+		void Clear()
+		{
 			dirLights.Clear();
 			pointLights.Clear();
 			spotLights.Clear();
@@ -62,11 +69,8 @@ namespace tyr
 	{
 		RenderWindowHandle windowHandle{};
 		RenderViewportHandle renderViewport{};
-		// Kept up to date by incrementing/decrementing directly, instead of reading
-		// Scene::content.dirLights.Size() etc., which would race the worker thread's writes.
-		uint dirLightCount = 0;
-		uint pointLightCount = 0;
-		uint spotLightCount = 0;
+		// Kept here on the main thread, where each frame's light index list is built from them.
+		SceneLights lights;
 		// Flat ambient term added to every pixel regardless of any light.
 		float ambient = 0.0f;
 		// Whether this scene should actually render/upload this tick.
@@ -76,9 +80,7 @@ namespace tyr
 		{
 			windowHandle = {};
 			renderViewport = {};
-			dirLightCount = 0;
-			pointLightCount = 0;
-			spotLightCount = 0;
+			lights.Clear();
 			ambient = 0.0f;
 			visible = true;
 		}

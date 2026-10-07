@@ -1,6 +1,5 @@
 #include "EditMenu.h"
 #include "Rendering/RendererAPI.h"
-#include "Rendering/RenderQualitySettings.h"
 #include "imgui.h"
 
 namespace tyr
@@ -36,26 +35,50 @@ namespace tyr
 		}
 	}
 
+	void EditMenu::ApplyRenderSettings(bool editing)
+	{
+		m_Editing = editing;
+		const RenderSettings& settings = editing ? m_LevelEditorSettings : m_GameSettings;
+		m_RendererAPI.SetQualityLevel(settings.quality);
+		m_RendererAPI.SetTaaEnabled(settings.taaEnabled);
+	}
+
 	void EditMenu::DrawProjectSettingsWindow()
 	{
-		// Runtime-only for now, as discussed - this doesn't persist to a project settings file
-		// yet, so whatever's picked here reverts to the defaults above next time the editor opens.
-		ImGui::SetNextWindowSize(ImVec2(400, 200), ImGuiCond_FirstUseEver);
+		// Runtime-only for now - this doesn't persist to a project settings file yet, so these
+		// revert to their defaults next time the editor opens.
+		ImGui::SetNextWindowSize(ImVec2(400, 260), ImGuiCond_FirstUseEver);
 		if (ImGui::Begin("Project Settings - Rendering", &m_ShowProjectSettings))
 		{
-			if (ImGui::Combo("Quality Level", &m_QualityLevelIndex, c_QualityLevelNames, (int)(sizeof(c_QualityLevelNames) / sizeof(c_QualityLevelNames[0]))))
+			// Only the settings for what's on screen now are sent straight away.
+			if (DrawRenderSettings("Level Editor", m_LevelEditorSettings) && m_Editing)
 			{
-				m_RendererAPI.SetQualityLevel((QualityLevel)m_QualityLevelIndex);
+				ApplyRenderSettings(true);
 			}
-
-			// Kept independent of the quality combo above on purpose - lets TAA be ruled in or
-			// out on its own when tracking down a visual issue, without also changing ray/light
-			// counts.
-			if (ImGui::Checkbox("Temporal Anti-Aliasing (TAA)", &m_TaaEnabled))
+			if (DrawRenderSettings("Game", m_GameSettings) && !m_Editing)
 			{
-				m_RendererAPI.SetTaaEnabled(m_TaaEnabled);
+				ApplyRenderSettings(false);
 			}
 		}
 		ImGui::End();
+	}
+
+	bool EditMenu::DrawRenderSettings(const char* label, RenderSettings& settings)
+	{
+		ImGui::SeparatorText(label);
+		ImGui::PushID(label);
+
+		int qualityIndex = static_cast<int>(settings.quality);
+		bool changed = false;
+		if (ImGui::Combo("Quality Level", &qualityIndex, c_QualityLevelNames, static_cast<int>(sizeof(c_QualityLevelNames) / sizeof(c_QualityLevelNames[0]))))
+		{
+			settings.quality = static_cast<QualityLevel>(qualityIndex);
+			changed = true;
+		}
+		// Separate from the quality level so TAA can be ruled in or out on its own.
+		changed |= ImGui::Checkbox("Temporal Anti-Aliasing (TAA)", &settings.taaEnabled);
+
+		ImGui::PopID();
+		return changed;
 	}
 }

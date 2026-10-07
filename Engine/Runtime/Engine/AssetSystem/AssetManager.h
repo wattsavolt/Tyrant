@@ -31,7 +31,8 @@ namespace tyr
 
 		void LoadTexture(AssetID assetID);
 
-		void DeleteTexture(AssetID assetID);
+		// The policy only applies when this releases the last reference.
+		void DeleteTexture(AssetID assetID, AssetDeletePolicy policy = AssetDeletePolicy::KeepUnreferenced);
 
 		// Returns an invalid handle until the texture has finished loading.
 		TextureHandle GetTexture(AssetID assetID) const;
@@ -39,16 +40,26 @@ namespace tyr
 		// Unloaded when the asset isn't loaded or in use.
 		AssetLoadState GetLoadState(AssetID assetID) const;
 
+		// Frees the asset now if it's only being kept loaded for reuse, e.g. before its file is deleted.
+		void EvictUnreferencedAsset(AssetID assetID);
+
 		void LoadMaterial(AssetID assetID);
 
-		void DeleteMaterial(AssetID assetID);
+		// Materials aren't kept unreferenced - the policy is passed on to their textures.
+		void DeleteMaterial(AssetID assetID, AssetDeletePolicy policy = AssetDeletePolicy::KeepUnreferenced);
 
 		void LoadMesh(AssetID assetID);
 
-		void DeleteMesh(AssetID assetID);
+		void DeleteMesh(AssetID assetID, AssetDeletePolicy policy = AssetDeletePolicy::KeepUnreferenced);
 
 		// Null until LoadMesh has read the mesh's header.
 		const MeshHeader* GetMeshHeader(AssetID assetID) const;
+
+		// Invalid until the mesh's header has loaded, which is when its GPU mesh is created.
+		MeshHandle GetMesh(AssetID assetID) const;
+
+		// Invalid until the material has finished loading.
+		MaterialHandle GetMaterial(AssetID assetID) const;
 
 		// Loads the mesh and its materials, then creates the instance on the renderer. An invalid
 		// or missing entry in materials uses the mesh's own material for that submesh. onCreated
@@ -58,6 +69,11 @@ namespace tyr
 		void LoadLocation(AssetID assetID);
 
 	private:
+		static constexpr float c_UnreferencedAssetMaxAge = 60.0f;
+		static constexpr size_t c_UnreferencedAssetBudget = 256 * 1024 * 1024; // 256 MB
+		// Also bounds how many renderer pool slots the cache can hold on to.
+		static constexpr uint c_MaxUnreferencedAssets = 256;
+
 		// Called once per frame from the main thread - also the only place allowed to
 		// create/delete renderer resources, since doing so isn't safe against a worker
 		// thread's own concurrent reads.
@@ -80,7 +96,7 @@ namespace tyr
 		void CreateMaterial(MaterialLoadData* ld);
 		// Frees a material's renderer resource and AssetData entry, deferred until any
 		// in-flight load for it has finished.
-		void DeleteMaterialResources(AssetID assetID, AssetData& assetData);
+		void DeleteMaterialResources(AssetID assetID, AssetData& assetData, AssetDeletePolicy policy);
 		void ProcessPendingMaterialDeletes();
 
 		// Mesh loading pipeline: load the header, create GPU geometry/LOD buffers and
@@ -98,6 +114,18 @@ namespace tyr
 		void TryResolvePendingMeshInstances();
 		AssetID GetEffectiveMaterialForSlot(const MeshHeader& header, const MeshInstanceCreateData& instData, uint slot) const;
 		void CreateResolvedMeshInstance(MeshInstanceCreateData* instData);
+
+		// Defers a delete until loading finishes. Immediate wins if the asset is already pending.
+		static void AddPendingDelete(Array<PendingAssetDelete>& pendingDeletes, AssetID assetID, AssetDeletePolicy policy);
+		// Called once a loaded texture or mesh has no references left.
+		void ReleaseLoadedAsset(AssetID assetID, AssetData& assetData, AssetLoadType type, AssetDeletePolicy policy);
+
+		// Unreferenced texture/mesh cache: a loaded asset whose refCount drops to 0 is kept until
+		// it's too old, the cache is over budget, or it's loaded again.
+		void AddUnreferencedAsset(AssetID assetID, const AssetData& assetData, AssetLoadType type);
+		void ReuseUnreferencedAsset(AssetID assetID, const AssetData& assetData);
+		void EvictUnreferencedAssets();
+		void DeleteUnreferencedAssetResources(const UnreferencedAsset& entry);
 
 		HashMap<AssetID, AssetData> m_AssetMap;
 		LocalObjectPool<Location, 9, ResetObjectPolicy> m_LocationPool;
@@ -120,9 +148,14 @@ namespace tyr
 		// AssetIDs whose delete call arrived while still loading - tearing down renderer
 		// resources mid-load would race the in-flight load. refCount drops to 0 immediately
 		// (so a fresh load naturally resurrects the entry) and teardown is deferred until loading finishes.
-		Array<AssetID> m_PendingTextureDeletes;
-		Array<AssetID> m_PendingMaterialDeletes;
-		Array<AssetID> m_PendingMeshDeletes;
+		Array<PendingAssetDelete> m_PendingTextureDeletes;
+		Array<PendingAssetDelete> m_PendingMaterialDeletes;
+		Array<PendingAssetDelete> m_PendingMeshDeletes;
+		// Oldest release first.
+		Array<UnreferencedAsset> m_UnreferencedAssets;
+		size_t m_UnreferencedAssetsSize = 0;
+		// Seconds since startup, for unreferenced asset ages.
+		float m_Time = 0.0f;
 		Handle m_CurrentBatch;
 		Device* m_Device;
 		RendererAPI* m_RendererAPI;

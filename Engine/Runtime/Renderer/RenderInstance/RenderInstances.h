@@ -19,18 +19,15 @@ namespace tyr
 	struct DirectionalLight
 	{
 		DirectionalLightInfo info;
-		uint renderIndex = c_InvalidRenderIndex;
 	};
 
 	struct PointLight
 	{
 		PointLightInfo info;
-		uint renderIndex = c_InvalidRenderIndex;
 	};
 
 	struct SpotLight
 	{
 		SpotLightInfo info;
-		uint renderIndex = c_InvalidRenderIndex;
 	};
 }

@@ -1,5 +1,7 @@
 #include "AssetBrowserPanel.h"
 #include "EditorIcons.h"
+#include "EditorPathUtil.h"
+#include "EditorWidgets.h"
 #include "AssetSystem/AssetManager.h"
 #include "AssetSystem/AssetRegistry.h"
 #include "AssetSystem/AssetUtil.h"
@@ -16,6 +18,8 @@ namespace tyr
 	namespace
 	{
 		constexpr float c_FolderTreeWidth = 260.0f;
+		// Characters Windows doesn't allow in file names, plus the path separator.
+		constexpr const char* c_InvalidFileNameCharacters = "\\/:*?\"<>|";
 		constexpr float c_TileSize = 72.0f;
 		constexpr float c_TilePadding = 8.0f;
 		constexpr float c_TileRounding = 4.0f;
@@ -65,64 +69,6 @@ namespace tyr
 				return AssetKind::Mesh;
 			}
 			return AssetKind::Other;
-		}
-
-		// Orders paths with '/' below every other character, so a folder sorts directly before
-		// its own subfolders and assets.
-		bool PathLess(const char* a, const char* b)
-		{
-			for (;; ++a, ++b)
-			{
-				const uint8 charA = *a == '/' ? 1 : static_cast<uint8>(*a);
-				const uint8 charB = *b == '/' ? 1 : static_cast<uint8>(*b);
-				if (charA != charB)
-				{
-					return charA < charB;
-				}
-				if (charA == 0)
-				{
-					return false;
-				}
-			}
-		}
-
-		// True when path is directly inside the folder rather than in one of its subfolders.
-		bool IsDirectlyInFolder(const char* path, const char* folderPath, size_t folderLength)
-		{
-			if (folderLength > 0)
-			{
-				if (strncmp(path, folderPath, folderLength) != 0 || path[folderLength] != '/')
-				{
-					return false;
-				}
-				path += folderLength + 1;
-			}
-			return strchr(path, '/') == nullptr;
-		}
-
-		bool IsSubfolder(const char* folderPath, const char* parentPath)
-		{
-			const size_t parentLength = strlen(parentPath);
-			return strncmp(folderPath, parentPath, parentLength) == 0 && folderPath[parentLength] == '/';
-		}
-
-		uint GetFolderDepth(const char* folderPath)
-		{
-			uint depth = 1;
-			for (const char* c = folderPath; *c != '\0'; ++c)
-			{
-				if (*c == '/')
-				{
-					++depth;
-				}
-			}
-			return depth;
-		}
-
-		const char* GetLastPathPart(const char* path)
-		{
-			const char* lastSlash = strrchr(path, '/');
-			return lastSlash ? lastSlash + 1 : path;
 		}
 
 		// Adds an invisible button covering the tile and its name, returning the tile's top left.
@@ -225,7 +171,7 @@ namespace tyr
 
 		std::sort(m_Folders.begin(), m_Folders.end(), [](const RelativePath& a, const RelativePath& b)
 		{
-			return PathLess(a.CStr(), b.CStr());
+			return EditorPathUtil::PathLess(a.CStr(), b.CStr());
 		});
 
 		// Removes duplicates, which are next to each other after sorting.
@@ -250,7 +196,7 @@ namespace tyr
 		m_Subfolders.Clear();
 		for (uint i = 0; i < m_Folders.Size(); ++i)
 		{
-			if (IsDirectlyInFolder(m_Folders[i].CStr(), folderPath, folderLength))
+			if (EditorPathUtil::IsDirectlyInFolder(m_Folders[i].CStr(), folderPath, folderLength))
 			{
 				m_Subfolders.Add(i);
 			}
@@ -259,7 +205,7 @@ namespace tyr
 		m_FolderAssets.Clear();
 		for (std::pair<const AssetID&, const RegAssetData&> asset : registry.GetAssets())
 		{
-			if (IsDirectlyInFolder(asset.second.filePath.CStr(), folderPath, folderLength))
+			if (EditorPathUtil::IsDirectlyInFolder(asset.second.filePath.CStr(), folderPath, folderLength))
 			{
 				m_FolderAssets.Add(asset.first);
 			}
@@ -267,7 +213,7 @@ namespace tyr
 
 		std::sort(m_FolderAssets.begin(), m_FolderAssets.end(), [&registry](AssetID a, AssetID b)
 		{
-			return PathLess(registry.GetAssetData(a).filePath.CStr(), registry.GetAssetData(b).filePath.CStr());
+			return EditorPathUtil::PathLess(registry.GetAssetData(a).filePath.CStr(), registry.GetAssetData(b).filePath.CStr());
 		});
 	}
 
@@ -279,6 +225,7 @@ namespace tyr
 		}
 		m_SelectedFolder = folderPath;
 		m_RevealSelectedFolder = reveal;
+		m_RenamingAsset = {};
 		RebuildFolderContents();
 	}
 
@@ -291,7 +238,7 @@ namespace tyr
 			for (uint i = 0; i < m_Folders.Size(); ++i)
 			{
 				const char* folderPath = m_Folders[i].CStr();
-				const uint depth = GetFolderDepth(folderPath);
+				const uint depth = EditorPathUtil::GetFolderDepth(folderPath);
 				if (depth > openDepth)
 				{
 					continue;
@@ -301,8 +248,8 @@ namespace tyr
 					ImGui::TreePop();
 				}
 
-				const bool hasSubfolders = i + 1 < m_Folders.Size() && IsSubfolder(m_Folders[i + 1].CStr(), folderPath);
-				if (DrawFolderNode(GetLastPathPart(folderPath), folderPath, !hasSubfolders, false) && hasSubfolders)
+				const bool hasSubfolders = i + 1 < m_Folders.Size() && EditorPathUtil::IsSubfolder(m_Folders[i + 1].CStr(), folderPath);
+				if (DrawFolderNode(EditorPathUtil::GetLastPathPart(folderPath), folderPath, !hasSubfolders, false) && hasSubfolders)
 				{
 					++openDepth;
 				}
@@ -335,7 +282,7 @@ namespace tyr
 
 		// Opens the parents of a folder that was opened from the grid.
 		const bool isRoot = folderPath[0] == '\0';
-		if (m_RevealSelectedFolder && !isLeaf && (isRoot || IsSubfolder(m_SelectedFolder.CStr(), folderPath)))
+		if (m_RevealSelectedFolder && !isLeaf && (isRoot || EditorPathUtil::IsSubfolder(m_SelectedFolder.CStr(), folderPath)))
 		{
 			ImGui::SetNextItemOpen(true);
 		}
@@ -356,9 +303,11 @@ namespace tyr
 		const float available = ImGui::GetContentRegionAvail().x + style.ItemSpacing.x;
 		const uint columns = std::max(1u, static_cast<uint>(available / (c_TileSize + style.ItemSpacing.x)));
 
-		// Opening and deleting are left until after the loops since they change the lists being drawn.
+		// Opening, moving and deleting are left until after the loops since they change the lists
+		// being drawn.
 		const char* folderToOpen = nullptr;
-		AssetID assetToDelete;
+		PendingAssetEdit edit;
+		m_RenameTileDrawn = false;
 		uint tileIndex = 0;
 
 		for (uint folderIndex : m_Subfolders)
@@ -382,20 +331,24 @@ namespace tyr
 				ImGui::SameLine();
 			}
 			ImGui::PushID(static_cast<int>(tileIndex));
-			if (DrawAssetTile(assetID))
-			{
-				assetToDelete = assetID;
-			}
+			DrawAssetTile(assetID, edit);
 			ImGui::PopID();
 		}
+
+		// Drawn after the tiles so it doesn't shift where the next tile goes.
+		DrawRenameBox();
 
 		if (folderToOpen)
 		{
 			SelectFolder(folderToOpen, true);
 		}
-		else if (AssetUtil::IsValidAssetID(assetToDelete))
+		else if (AssetUtil::IsValidAssetID(edit.assetToDelete))
 		{
-			DeleteAsset(assetToDelete);
+			DeleteAsset(edit.assetToDelete);
+		}
+		else if (AssetUtil::IsValidAssetID(edit.assetToMove))
+		{
+			MoveAsset(edit.assetToMove, edit.moveFolder.CStr());
 		}
 	}
 
@@ -414,12 +367,12 @@ namespace tyr
 			ImGui::GetWindowDrawList()->AddImage(textureID, min, ImVec2(min.x + c_TileSize, min.y + c_TileSize));
 		}
 		DrawTileOutline(min, false, hovered);
-		DrawTileName(min, GetLastPathPart(folderPath));
+		DrawTileName(min, EditorPathUtil::GetLastPathPart(folderPath));
 
 		return open ? folderPath : nullptr;
 	}
 
-	bool AssetBrowserPanel::DrawAssetTile(AssetID assetID)
+	void AssetBrowserPanel::DrawAssetTile(AssetID assetID, PendingAssetEdit& edit)
 	{
 		const char* path = AssetRegistry::Instance().GetAssetData(assetID).filePath.CStr();
 		const AssetKind kind = GetAssetKind(path);
@@ -441,17 +394,82 @@ namespace tyr
 			ImGui::EndDragDropSource();
 		}
 
-		bool deleteChosen = false;
-		if (ImGui::BeginPopupContextItem("##TileMenu"))
-		{
-			deleteChosen = ImGui::MenuItem("Delete");
-			ImGui::EndPopup();
-		}
+		DrawAssetMenu(assetID, path, edit);
 
 		DrawAssetTileBody(min, kind);
 		DrawTileOutline(min, assetID == m_SelectedAsset, hovered);
-		DrawTileName(min, name);
-		return deleteChosen;
+		if (assetID == m_RenamingAsset)
+		{
+			// The rename box covers the name once the grid is drawn.
+			m_RenameTileDrawn = true;
+			m_RenameTileX = min.x;
+			m_RenameTileY = min.y;
+		}
+		else
+		{
+			DrawTileName(min, name);
+		}
+	}
+
+	void AssetBrowserPanel::DrawAssetMenu(AssetID assetID, const char* path, PendingAssetEdit& edit)
+	{
+		if (!ImGui::BeginPopupContextItem("##TileMenu"))
+		{
+			return;
+		}
+
+		if (ImGui::MenuItem("Rename"))
+		{
+			m_RenamingAsset = assetID;
+			m_RenameFocusPending = true;
+			PathUtil::GetFileNameWithoutExtension(path, m_RenameBuffer);
+		}
+
+		// Every other folder, starting with the root.
+		if (ImGui::BeginMenu("Move To"))
+		{
+			const char* currentFolderEnd = strrchr(path, '/');
+			const RelativePath currentFolder = currentFolderEnd ? RelativePath(path, static_cast<size_t>(currentFolderEnd - path)) : RelativePath();
+			if (ImGui::MenuItem("Assets", nullptr, false, currentFolder.Size() != 0))
+			{
+				edit.assetToMove = assetID;
+				edit.moveFolder = {};
+			}
+			for (const RelativePath& folder : m_Folders)
+			{
+				if (ImGui::MenuItem(folder.CStr(), nullptr, false, !(folder == currentFolder)))
+				{
+					edit.assetToMove = assetID;
+					edit.moveFolder = folder;
+				}
+			}
+			ImGui::EndMenu();
+		}
+
+		if (ImGui::MenuItem("Delete"))
+		{
+			edit.assetToDelete = assetID;
+		}
+		ImGui::EndPopup();
+	}
+
+	void AssetBrowserPanel::DrawRenameBox()
+	{
+		if (!AssetUtil::IsValidAssetID(m_RenamingAsset) || !m_RenameTileDrawn)
+		{
+			return;
+		}
+
+		ImGui::SetCursorScreenPos(ImVec2(m_RenameTileX, m_RenameTileY + c_TileSize));
+		const EditorWidgets::RenameResult result = EditorWidgets::DrawRenameBox(m_RenameBuffer, sizeof(m_RenameBuffer), m_RenameFocusPending, c_TileSize);
+		if (result == EditorWidgets::RenameResult::Committed)
+		{
+			RenameAsset(m_RenamingAsset, m_RenameBuffer);
+		}
+		if (result != EditorWidgets::RenameResult::Editing)
+		{
+			m_RenamingAsset = {};
+		}
 	}
 
 	void AssetBrowserPanel::AcceptAssetDrop(const char* folderPath)
@@ -475,25 +493,55 @@ namespace tyr
 
 	void AssetBrowserPanel::MoveAsset(AssetID assetID, const char* folderPath)
 	{
+		const char* fileName = EditorPathUtil::GetLastPathPart(AssetRegistry::Instance().GetAssetData(assetID).filePath.CStr());
+
+		char newPath[PathConstants::c_MaxAssetPathTotalSize];
+		const int length = folderPath[0] != '\0'
+			? snprintf(newPath, sizeof(newPath), "%s/%s", folderPath, fileName)
+			: snprintf(newPath, sizeof(newPath), "%s", fileName);
+		if (length < 0 || length >= static_cast<int>(sizeof(newPath)))
+		{
+			TYR_LOG_WARNING("Can't move %s, the new path would be too long.", fileName);
+			return;
+		}
+		RelocateAsset(assetID, newPath);
+	}
+
+	void AssetBrowserPanel::RenameAsset(AssetID assetID, const char* newName)
+	{
+		if (newName[0] == '\0' || strpbrk(newName, c_InvalidFileNameCharacters))
+		{
+			TYR_LOG_WARNING("Can't rename an asset to \"%s\", names can't be empty or use any of %s", newName, c_InvalidFileNameCharacters);
+			return;
+		}
+
+		// Stays in the same folder with the same extension.
+		const char* oldPath = AssetRegistry::Instance().GetAssetData(assetID).filePath.CStr();
+		const char* fileName = EditorPathUtil::GetLastPathPart(oldPath);
+		const char* extension = strrchr(fileName, '.');
+		const int folderLength = static_cast<int>(fileName - oldPath);
+
+		char newPath[PathConstants::c_MaxAssetPathTotalSize];
+		const int length = snprintf(newPath, sizeof(newPath), "%.*s%s%s", folderLength, oldPath, newName, extension ? extension : "");
+		if (length < 0 || length >= static_cast<int>(sizeof(newPath)))
+		{
+			TYR_LOG_WARNING("Can't rename %s, the new path would be too long.", oldPath);
+			return;
+		}
+		RelocateAsset(assetID, newPath);
+	}
+
+	void AssetBrowserPanel::RelocateAsset(AssetID assetID, const char* newPath)
+	{
 		// Its file is still being read.
 		if (m_AssetManager.GetLoadState(assetID) == AssetLoadState::Loading)
 		{
-			TYR_LOG_WARNING("Can't move an asset while it's loading.");
+			TYR_LOG_WARNING("Can't move or rename an asset while it's loading.");
 			return;
 		}
 
 		AssetRegistry& registry = AssetRegistry::Instance();
 		const AssetPath oldPath = registry.GetAssetData(assetID).filePath;
-
-		char newPath[PathConstants::c_MaxAssetPathTotalSize];
-		const int length = folderPath[0] != '\0'
-			? snprintf(newPath, sizeof(newPath), "%s/%s", folderPath, GetLastPathPart(oldPath.CStr()))
-			: snprintf(newPath, sizeof(newPath), "%s", GetLastPathPart(oldPath.CStr()));
-		if (length < 0 || length >= static_cast<int>(sizeof(newPath)))
-		{
-			TYR_LOG_WARNING("Can't move %s, the new path would be too long.", oldPath.CStr());
-			return;
-		}
 		if (oldPath == newPath)
 		{
 			return;
@@ -509,7 +557,9 @@ namespace tyr
 			return;
 		}
 
+		// The destination folder may not exist yet on disk.
 		std::error_code ec;
+		fs::create_directories(fs::path(absNewPath).parent_path(), ec);
 		fs::rename(absOldPath, absNewPath, ec);
 		if (ec)
 		{
@@ -526,6 +576,7 @@ namespace tyr
 		AssetRegistry& registry = AssetRegistry::Instance();
 		const AssetPath path = registry.GetAssetData(assetID).filePath;
 
+		m_AssetManager.EvictUnreferencedAsset(assetID);
 		if (m_AssetManager.GetLoadState(assetID) != AssetLoadState::Unloaded)
 		{
 			TYR_LOG_WARNING("Can't delete %s while it's in use.", path.CStr());

@@ -5,7 +5,7 @@
 
 namespace tyr
 {
-	void TypeInfoUtil::AddField(TypeInfo& info, const char* name, const Id64& typeID, const CustomObjectSerializer* customSerializer, size_t countOffset, size_t dataOffset, bool isVisible, bool isEditable, bool isFinal, bool isCArray)
+	void TypeInfoUtil::AddField(TypeInfo& info, const char* name, const Id64& typeID, const CustomObjectSerializer* customSerializer, const CustomObjectPropertiesReflector* customPropertiesReflector, size_t countOffset, size_t dataOffset, bool isVisible, bool isEditable, bool isFinal, bool isCArray)
 	{
 		// Don't add editor-only / debug fields to the type in final mode as they won't be serialized for final build
 #if TYR_FINAL
@@ -16,6 +16,7 @@ namespace tyr
 			field.name = name;
 			field.typeID = typeID;
 			field.customSerializer = customSerializer;
+			field.customPropertiesReflector = customPropertiesReflector;
 			field.id = Id32(name);
 			field.countOffset = static_cast<uint>(countOffset);
 			field.dataOffset = static_cast<uint>(dataOffset);

@@ -26,6 +26,8 @@ namespace tyr
 		ViewArea viewArea;
 		// The world is provided the camera (will be a component later) but its dimensions will be updated by the world manager when the window resizes
 		Camera* camera = nullptr;
+		// Off for a world being edited in the level editor, so physics and audio don't run in it.
+		bool simulate = true;
 	};
 
 	constexpr uint c_MaxActorInstanceEntities = 32;
@@ -57,6 +59,8 @@ namespace tyr
 		// lifetime, regardless of whether this world is currently the active one.
 		RenderViewportHandle renderViewportHandle;
 		bool visible = true;
+		// Physics and audio only run in simulated worlds.
+		bool simulate = true;
 		EntitySystem entities;
 		// The entities version the renderer-side mesh instances and lights were last synced at.
 		uint syncedEntitiesVersion = 0;
@@ -75,6 +79,7 @@ namespace tyr
 			sceneHandle = {};
 			renderViewportHandle = {};
 			visible = true;
+			simulate = true;
 			entities.Reset();
 			syncedEntitiesVersion = 0;
 			actorInstances.Clear();

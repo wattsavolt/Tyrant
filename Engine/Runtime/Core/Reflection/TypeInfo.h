@@ -7,11 +7,13 @@
 namespace tyr
 {
 	class CustomObjectSerializer;
+	class CustomObjectPropertiesReflector;
 	struct Field
 	{
 		const char* name;
 		Id64 typeID;
 		const CustomObjectSerializer* customSerializer = nullptr;
+		const CustomObjectPropertiesReflector* customPropertiesReflector = nullptr;
 		Id32 id;
 		// Count offset only used when the field is a C-style array
 		uint countOffset;
@@ -38,7 +40,7 @@ namespace tyr
 	class TYR_CORE_API TypeInfoUtil
 	{
 	public:
-		static void AddField(TypeInfo& info, const char* name, const Id64& typeID, const CustomObjectSerializer* customSerializer, size_t countOffset, size_t dataOffset, bool isVisible, bool isEditable, bool isFinal, bool isCArray);
+		static void AddField(TypeInfo& info, const char* name, const Id64& typeID, const CustomObjectSerializer* customSerializer, const CustomObjectPropertiesReflector* customPropertiesReflector, size_t countOffset, size_t dataOffset, bool isVisible, bool isEditable, bool isFinal, bool isCArray);
 	};
 
 }

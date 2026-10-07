@@ -449,9 +449,9 @@ namespace tyr
         void EraseFromFront(uint count)
         {
             TYR_ASSERT(count <= m_Size);
-            for (uint i = 0; i < count; ++i)
+            for (uint i = count; i < m_Size; ++i)
             {
-                m_Data[i] = std::move(m_Data[i + count]);
+                m_Data[i - count] = std::move(m_Data[i]);
             }
             EraseFromEnd(count);
         }

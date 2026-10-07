@@ -48,6 +48,9 @@
 // The viewport grid's storage-image output, one per buffered RenderFrame slot - same shape as
 // TYR_BINDING_TAA_RESOLVE_OUTPUT.
 #define TYR_BINDING_EDITOR_GRID_OUTPUT 24
+// The active scene's lights this frame, as slots in the light buffers above: directional, then
+// point (from TYR_MAX_DIR_LIGHTS), then spot (from TYR_MAX_DIR_LIGHTS + TYR_MAX_POINT_LIGHTS).
+#define TYR_BINDING_LIGHT_INDICES 25
 
 // How many copies of the per-frame render targets TYR_BINDING_LIGHTING_OUTPUT holds, one
 // per buffered frame slot - kept in sync with the matching C++ constant.
@@ -56,6 +59,9 @@
 // Where spot-light entries start in TYR_BINDING_SHADOW_LIGHT_SLOT_MAP (point entries come
 // first) - kept in sync with RenderConstants::c_MaxPointLights.
 #define TYR_MAX_POINT_LIGHTS 16
+// Where point-light entries start in TYR_BINDING_LIGHT_INDICES - kept in sync with
+// RenderConstants::c_MaxDirLights.
+#define TYR_MAX_DIR_LIGHTS 2
 
 // Must match ModelImporter's meshlet build limits.
 #define TYR_MAX_MESHLET_VERTICES 64

@@ -41,26 +41,36 @@ namespace tyr
 		// needs its own instance data to avoid a cross-frame GPU race.
 		static constexpr size_t c_TLASInstanceBufferSize = sizeof(AccelerationStructureInstance) * c_MaxMeshInstances;
 		static constexpr uint c_MaxSkeletalMeshInstances = 96;
-		// Realistically only ever 1 (the sun) - 2 leaves headroom for a stylized second light
-		// (e.g. a moon) without needing a resize.
+		// The most lights of each type one scene can have. Realistically only ever 1 directional
+		// light (the sun) - 2 leaves headroom for a stylized second light (e.g. a moon).
 		static constexpr uint c_MaxDirLights = 2;
+		static_assert(c_MaxDirLights == TYR_MAX_DIR_LIGHTS, "Keep in sync with ShaderTypes.h's TYR_MAX_DIR_LIGHTS.");
 		static constexpr uint c_MaxPointLights = 16;
 		static_assert(c_MaxPointLights == TYR_MAX_POINT_LIGHTS,
 			"Keep in sync with ShaderTypes.h's TYR_MAX_POINT_LIGHTS - DeferredLightingCS.hlsl's "
 			"shadow light slot map indexes spot-light entries starting at that offset.");
 		static constexpr uint c_MaxSpotLights = 16;
+		// Lights from this many scenes can exist at once, such as the level being edited and the
+		// game being played. Only the active scene's lights are drawn.
+		static constexpr uint c_LightPoolSceneCount = 2;
+		static constexpr uint c_DirLightPoolSize = c_MaxDirLights * c_LightPoolSceneCount;
+		static constexpr uint c_PointLightPoolSize = c_MaxPointLights * c_LightPoolSceneCount;
+		static constexpr uint c_SpotLightPoolSize = c_MaxSpotLights * c_LightPoolSceneCount;
+		// The active scene's lights each frame, as their pool slots: directional, then point,
+		// then spot.
+		static constexpr uint c_LightIndexCount = c_MaxDirLights + c_MaxPointLights + c_MaxSpotLights;
 		// Sized to Ultra's own ray-traced-shadow local-light cap (16 - the conventional ceiling
 		// for simultaneous hardware-ray-traced local-light shadows in current real-time
 		// implementations, meaningfully more expensive per light than a shadow map) - lower
 		// quality tiers just select fewer lights into the same fixed-size slot array each tick.
 		static constexpr uint c_MaxShadowCastingLocalLights = 16;
-		// One shadow-mask array layer per directional light (a stable layer, matching that
-		// light's own pool index - up to c_MaxDirLights of them, always traced when shadow-
-		// casting, never selected/evicted) plus one per this tick's selected local light.
+		// One shadow-mask array layer per directional light (matching that light's position in
+		// the scene's list - up to c_MaxDirLights of them, always traced when shadow-casting,
+		// never selected/evicted) plus one per this tick's selected local light.
 		static constexpr uint c_MaxShadowSlots = c_MaxDirLights + c_MaxShadowCastingLocalLights;
 		// DeferredLightingCS's own light-index -> shadow-slot lookup for point/spot lights only -
-		// directional lights don't need one, since a directional light's own pool index already
-		// is its shadow slot. Point entries first, then spot.
+		// directional lights don't need one, since a directional light's position in the scene's
+		// list already is its shadow slot. Point entries first, then spot.
 		static constexpr uint c_ShadowLightSlotMapEntryCount = c_MaxPointLights + c_MaxSpotLights;
 		static constexpr uint c_MaxTextureDimension = 4096;
 		static constexpr uint c_MaxMips = TextureUtil::CalculateMaxMipsForBlockCompressed(c_MaxTextureDimension, c_MaxTextureDimension);

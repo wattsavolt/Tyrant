@@ -46,15 +46,9 @@ namespace tyr
 		Array<SkeletalMeshInstanceHandle> skeletalMeshInstancesToAdd;
 		Array<SkeletalMeshInstanceHandle> skeletalMeshInstancesToUpdate;
 		Array<SkeletalMeshInstanceHandle> skeletalMeshInstancesToRemove;
-		Array<DirLightHandle> dirLightsToAdd;
 		Array<DirLightUpdate> dirLightsToUpdate;
-		Array<DirLightHandle> dirLightsToRemove;
-		Array<PointLightHandle> pointLightsToAdd;
 		Array<PointLightUpdate> pointLightsToUpdate;
-		Array<PointLightHandle> pointLightsToRemove;
-		Array<SpotLightHandle> spotLightsToAdd;
 		Array<SpotLightUpdate> spotLightsToUpdate;
-		Array<SpotLightHandle> spotLightsToRemove;
 		RenderWindowHandle newWindow{};
 		// Set via RendererAPI::SetSceneRenderViewport - merged into Scene::renderViewport by
 		// RenderAsync, the same way newWindow is merged into Scene::windowHandle.
@@ -68,15 +62,9 @@ namespace tyr
 			skeletalMeshInstancesToAdd.Reserve(RenderConstants::c_MaxSkeletalMeshInstances);
 			skeletalMeshInstancesToUpdate.Reserve(RenderConstants::c_MaxSkeletalMeshInstances);
 			skeletalMeshInstancesToRemove.Reserve(RenderConstants::c_MaxSkeletalMeshInstances);
-			dirLightsToAdd.Reserve(RenderConstants::c_MaxDirLights);
 			dirLightsToUpdate.Reserve(RenderConstants::c_MaxDirLights);
-			dirLightsToRemove.Reserve(RenderConstants::c_MaxDirLights);
-			pointLightsToAdd.Reserve(RenderConstants::c_MaxPointLights);
 			pointLightsToUpdate.Reserve(RenderConstants::c_MaxPointLights);
-			pointLightsToRemove.Reserve(RenderConstants::c_MaxPointLights);
-			spotLightsToAdd.Reserve(RenderConstants::c_MaxSpotLights);
 			spotLightsToUpdate.Reserve(RenderConstants::c_MaxSpotLights);
-			spotLightsToRemove.Reserve(RenderConstants::c_MaxSpotLights);
 		}
 
 		void Clear()
@@ -89,15 +77,9 @@ namespace tyr
 			skeletalMeshInstancesToAdd.Clear();
 			skeletalMeshInstancesToUpdate.Clear();
 			skeletalMeshInstancesToRemove.Clear();
-			dirLightsToAdd.Clear();
 			dirLightsToUpdate.Clear();
-			dirLightsToRemove.Clear();
-			pointLightsToAdd.Clear();
 			pointLightsToUpdate.Clear();
-			pointLightsToRemove.Clear();
-			spotLightsToAdd.Clear();
 			spotLightsToUpdate.Clear();
-			spotLightsToRemove.Clear();
 			newWindow = {};
 			newRenderViewport = {};
 		}
@@ -181,6 +163,9 @@ namespace tyr
 		// since the grid is drawn after TAA.
 		ViewportGridDesc viewportGrid;
 		Matrix4 gridInvViewProj;
+		// The active scene's lights this frame, in the same order as the light index list the
+		// lighting shader reads, so shadow slots match it.
+		SceneLights activeLights;
 		// Frame update for the active scene
 		SceneFrame sceneFrame;
 
@@ -240,6 +225,7 @@ namespace tyr
 			hasQualityLevelOverride = false;
 			hasTaaEnabledOverride = false;
 			viewportGrid = {};
+			activeLights.Clear();
 			guiDrawData.Clear();
 			guiVertexCursor = 0;
 			guiIndexCursor = 0;

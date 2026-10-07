@@ -17,6 +17,11 @@ namespace tyr
 			Pause,
 			Stop,
 			Folder,
+			Translate,
+			Rotate,
+			Scale,
+			World,
+			Local,
 			IconCount
 		};
 

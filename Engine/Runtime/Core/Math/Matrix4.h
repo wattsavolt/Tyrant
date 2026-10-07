@@ -266,6 +266,9 @@ namespace tyr
 		/// @note	The transformation is applied in scale->rotation->translation order. 
 		void SetTRS(const Vector3& translation, const Quaternion& rotation, const Vector3& scale);
 
+		/// The reverse of SetTRS. Only exact for matrices without shear.
+		void DecomposeTRS(Vector3& translation, Quaternion& rotation, Vector3& scale) const;
+
 		/// Creates a matrix from inverse translation, rotation and scale.
 		/// @note	This is cheaper than setTRS() and then performing inverse().
 		void SetInverseTRS(const Vector3& translation, const Quaternion& rotation, const Vector3& scale);

@@ -19,6 +19,9 @@ cbuffer SceneInfoCBuffer : register(b0)
 TYR_VK_BINDING(TYR_BINDING_DIR_LIGHT, 0) StructuredBuffer<DirectionalLight> dirLights : register(t8);
 TYR_VK_BINDING(TYR_BINDING_POINT_LIGHT, 0) StructuredBuffer<PointLight> pointLights : register(t9);
 TYR_VK_BINDING(TYR_BINDING_SPOT_LIGHT, 0) StructuredBuffer<SpotLight> spotLights : register(t10);
+// The active scene's lights, as slots in the three buffers above: directional, then point, then
+// spot. Lights from other scenes stay in the buffers but aren't listed.
+TYR_VK_BINDING(TYR_BINDING_LIGHT_INDICES, 0) StructuredBuffer<uint> lightIndices : register(t1, space1);
 
 TYR_VK_BINDING(TYR_BINDING_TEXTURES, 0) Texture2D textures[] : register(t11);
 // One entry per buffered RenderFrame slot - this dispatch only ever writes its own
@@ -26,7 +29,7 @@ TYR_VK_BINDING(TYR_BINDING_TEXTURES, 0) Texture2D textures[] : register(t11);
 // can safely be in flight on the GPU at once.
 TYR_VK_BINDING(TYR_BINDING_LIGHTING_OUTPUT, 0) RWTexture2D<float4> outputImages[TYR_BUFFERED_FRAME_COUNT] : register(u14);
 // Denoised ray-traced shadow visibility, one array layer per shadow-casting light slot this
-// tick - see ShadowDenoiseCS.hlsl. A directional light's own pool index is directly its layer;
+// tick - see ShadowDenoiseCS.hlsl. A directional light's position in the list is its layer;
 // point/spot go through shadowLightSlotMap below instead, since there can be more of them than
 // affordable shadow slots.
 TYR_VK_BINDING(TYR_BINDING_SHADOW_MASKS, 0) RWTexture2DArray<float2> shadowMasks[TYR_BUFFERED_FRAME_COUNT] : register(u20);
@@ -95,11 +98,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
 	for (uint i = 0; i < dirLightCount; ++i)
 	{
-		// A directional light's own pool index is directly its shadow slot - ShadowRTCS.hlsl
+		// A directional light's position in the list is its shadow slot - ShadowRTCS.hlsl
 		// always writes every one of them a fresh value each tick, real or a trivial "fully lit"
 		// fallback, so this is always safe to sample with no further lookup.
 		const float shadow = shadowMasks[g_PushConstants.renderFrameIndex][uint3(shadowPixelCoord.xy, i)].r;
-		colour += ComputeDirectionalLightEffect(dirLights[i], materialData, pixelPos, normal, viewDir) * shadow;
+		colour += ComputeDirectionalLightEffect(dirLights[lightIndices[i]], materialData, pixelPos, normal, viewDir) * shadow;
 	}
 
 	for (uint j = 0; j < pointLightCount; ++j)
@@ -108,7 +111,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 		const float shadow = (shadowSlot != c_ShadowSlotNone)
 			? shadowMasks[g_PushConstants.renderFrameIndex][uint3(shadowPixelCoord.xy, shadowSlot)].r
 			: 1.0f;
-		colour += ComputePointLightEffect(pointLights[j], materialData, pixelPos, normal, viewDir) * shadow;
+		colour += ComputePointLightEffect(pointLights[lightIndices[TYR_MAX_DIR_LIGHTS + j]], materialData, pixelPos, normal, viewDir) * shadow;
 	}
 
 	for (uint k = 0; k < spotLightCount; ++k)
@@ -117,7 +120,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 		const float shadow = (shadowSlot != c_ShadowSlotNone)
 			? shadowMasks[g_PushConstants.renderFrameIndex][uint3(shadowPixelCoord.xy, shadowSlot)].r
 			: 1.0f;
-		colour += ComputeSpotLightEffect(spotLights[k], materialData, pixelPos, normal, viewDir) * shadow;
+		colour += ComputeSpotLightEffect(spotLights[lightIndices[TYR_MAX_DIR_LIGHTS + TYR_MAX_POINT_LIGHTS + k]], materialData, pixelPos, normal, viewDir) * shadow;
 	}
 
 	// This output texture is UNORM, not SRGB (SRGB doesn't support storage image usage on all

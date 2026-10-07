@@ -25,7 +25,7 @@ namespace tyr
 		m_Pipeline = args.pipeline;
 	}
 
-	void ShadowRTPass::Setup(RenderGraphBuilder& builder, const Scene& scene, Vector3 cameraPosition,
+	void ShadowRTPass::Setup(RenderGraphBuilder& builder, const SceneLights& lights, Vector3 cameraPosition,
 		const RenderQualitySettings& qualitySettings, uint renderFrameIndex,
 		TextureHandle depthBuffer, TextureHandle gbufferNormalRoughMetal, TextureHandle shadowMasksRaw)
 	{
@@ -40,17 +40,17 @@ namespace tyr
 			m_ActiveDirLights[i] = {};
 		}
 
-		// Only slots with an actual directional light get dispatched (a real trace if it casts
-		// shadows, a cheap "fully lit" fallback if not) - this still keeps every slot
-		// DeferredLightingCS's dirLightCount-bounded loop could ever read fresh, without wasting
-		// dispatches on pool slots with no light in them at all.
-		for (DirLightHandle handle : scene.content.dirLights)
+		// Every directional light gets dispatched at its position in the list (a real trace if
+		// it casts shadows, a cheap "fully lit" fallback if not), which keeps every slot
+		// DeferredLightingCS's dirLightCount-bounded loop reads fresh.
+		for (uint i = 0; i < lights.dirLights.Size(); ++i)
 		{
-			m_PresentDirLightSlots.Add(handle.h.index);
-			m_ActiveSlots.Add(handle.h.index);
+			const DirLightHandle handle = lights.dirLights[i];
+			m_PresentDirLightSlots.Add(i);
+			m_ActiveSlots.Add(i);
 			if (m_Registry->GetDirectionalLight(handle).info.castsShadow)
 			{
-				m_ActiveDirLights[handle.h.index] = handle;
+				m_ActiveDirLights[i] = handle;
 			}
 		}
 
@@ -68,28 +68,30 @@ namespace tyr
 		};
 		LocalArray<Candidate, RenderConstants::c_MaxPointLights + RenderConstants::c_MaxSpotLights> candidates;
 
-		for (PointLightHandle handle : scene.content.pointLights)
+		for (uint i = 0; i < lights.pointLights.Size(); ++i)
 		{
+			const PointLightHandle handle = lights.pointLights[i];
 			const PointLightInfo& info = m_Registry->GetPointLight(handle).info;
 			if (info.castsShadow)
 			{
 				Candidate& candidate = candidates.ExpandOne();
 				candidate.isSpot = false;
 				candidate.pointHandle = handle;
-				candidate.lightIndex = handle.h.index;
+				candidate.lightIndex = i;
 				const Vector3 toLight = info.position - cameraPosition;
 				candidate.distanceSquared = toLight.Dot(toLight);
 			}
 		}
-		for (SpotLightHandle handle : scene.content.spotLights)
+		for (uint i = 0; i < lights.spotLights.Size(); ++i)
 		{
+			const SpotLightHandle handle = lights.spotLights[i];
 			const SpotLightInfo& info = m_Registry->GetSpotLight(handle).info;
 			if (info.castsShadow)
 			{
 				Candidate& candidate = candidates.ExpandOne();
 				candidate.isSpot = true;
 				candidate.spotHandle = handle;
-				candidate.lightIndex = handle.h.index;
+				candidate.lightIndex = i;
 				const Vector3 toLight = info.position - cameraPosition;
 				candidate.distanceSquared = toLight.Dot(toLight);
 			}

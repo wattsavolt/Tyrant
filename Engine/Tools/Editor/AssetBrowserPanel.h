@@ -9,7 +9,8 @@ namespace tyr
 	class AssetManager;
 	class EditorIcons;
 
-	// Bottom panel for browsing, moving and deleting the project's assets.
+	// Bottom panel for browsing, renaming, moving and deleting the project's assets. Renaming and
+	// moving keep an asset's ID, so everything referencing it still finds it.
 	class TYR_EDITOR_EXPORT AssetBrowserPanel final
 	{
 	public:
@@ -24,6 +25,16 @@ namespace tyr
 		void Draw();
 
 	private:
+		// Changes chosen from an asset's menu, applied once the grid is drawn since they change
+		// the lists being drawn.
+		struct PendingAssetEdit
+		{
+			AssetID assetToDelete;
+			AssetID assetToMove;
+			// Where to move it, empty for the root folder.
+			RelativePath moveFolder;
+		};
+
 		// Rebuilds the folder and asset lists when the registry has changed.
 		void RefreshIfNeeded();
 		void RebuildFolders();
@@ -37,12 +48,18 @@ namespace tyr
 		void DrawGrid();
 		// Returns the folder to open when the tile is double clicked, otherwise null.
 		const char* DrawFolderTile(uint folderIndex);
-		// Returns true when Delete was chosen from the tile's menu.
-		bool DrawAssetTile(AssetID assetID);
+		void DrawAssetTile(AssetID assetID, PendingAssetEdit& edit);
+		void DrawAssetMenu(AssetID assetID, const char* path, PendingAssetEdit& edit);
+		// Draws the rename box over the name of the asset being renamed, if it's on screen.
+		void DrawRenameBox();
 
 		// Moves an asset dropped onto the last drawn item into the folder.
 		void AcceptAssetDrop(const char* folderPath);
 		void MoveAsset(AssetID assetID, const char* folderPath);
+		// newName has no extension, since it keeps its own.
+		void RenameAsset(AssetID assetID, const char* newName);
+		// Moves the asset's file to newPath and points its registry entry there.
+		void RelocateAsset(AssetID assetID, const char* newPath);
 		void DeleteAsset(AssetID assetID);
 
 		AssetManager& m_AssetManager;
@@ -58,5 +75,13 @@ namespace tyr
 		AssetID m_SelectedAsset;
 		uint m_RegistryVersion = 0;
 		bool m_RevealSelectedFolder = false;
+
+		// The asset being renamed in place, if any, and where its tile was drawn this frame.
+		AssetID m_RenamingAsset;
+		bool m_RenameFocusPending = false;
+		bool m_RenameTileDrawn = false;
+		float m_RenameTileX = 0.0f;
+		float m_RenameTileY = 0.0f;
+		char m_RenameBuffer[PathConstants::c_MaxFileNameTotalSize] = {};
 	};
 }

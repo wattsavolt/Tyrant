@@ -13,7 +13,7 @@ namespace tyr
 	class CommandList;
 	class RenderRegistry;
 	class RenderGraphBuilder;
-	struct Scene;
+	struct SceneLights;
 	struct RenderResources;
 
 	struct ShadowRTPassArgs
@@ -71,9 +71,8 @@ namespace tyr
 			// index) so Execute's registry lookup goes through the normal generation check.
 			PointLightHandle pointHandle;
 			SpotLightHandle spotHandle;
-			// The flat index DeferredLightingCS's own point/spot light loops use - safe to use
-			// as a bare index there since it's only ever an array position, never a registry
-			// lookup key.
+			// The light's position in the scene's point or spot list, which is the index
+			// DeferredLightingCS's own point/spot light loops use.
 			uint lightIndex;
 			uint slot;
 		};
@@ -86,7 +85,7 @@ namespace tyr
 		// Builds this tick's local-light selection and declares every resource this tick's
 		// dispatches will touch. Also caches depthBuffer/gbufferNormalRoughMetal for Execute,
 		// the same way RenderGraph's own Setup-then-Execute ordering lets other passes do.
-		void Setup(RenderGraphBuilder& builder, const Scene& scene, Vector3 cameraPosition,
+		void Setup(RenderGraphBuilder& builder, const SceneLights& lights, Vector3 cameraPosition,
 			const RenderQualitySettings& qualitySettings, uint renderFrameIndex,
 			TextureHandle depthBuffer, TextureHandle gbufferNormalRoughMetal, TextureHandle shadowMasksRaw);
 
@@ -99,7 +98,7 @@ namespace tyr
 			return m_SelectedLocalLights;
 		}
 		bool IsDirLightActive(uint dirLightIndex) const { return (bool)m_ActiveDirLights[dirLightIndex]; }
-		// Flat union of active directional slots (by pool index) and selected local-light slots -
+		// Flat union of active directional slots (by list position) and selected local-light slots -
 		// every layer ShadowDenoisePass needs to process this tick, with no need for it to repeat
 		// the same directional/local iteration logic.
 		const LocalArray<uint, RenderConstants::c_MaxShadowSlots>& GetActiveSlots() const { return m_ActiveSlots; }
@@ -112,11 +111,11 @@ namespace tyr
 		// This tick's selection - rebuilt fresh every Setup call, read back by Renderer (for the
 		// lighting-integration slot lookup) and by this same pass's own Execute.
 		LocalArray<SelectedLocalLight, RenderConstants::c_MaxShadowCastingLocalLights> m_SelectedLocalLights;
-		// Indexed by pool slot - default-constructs invalid/falsy, set to the real handle (so
-		// Execute's registry lookup goes through the normal generation check) when that slot's
-		// directional light is active and shadow-casting this tick.
+		// Indexed by shadow slot, which is the light's position in the scene's list - default-
+		// constructs invalid/falsy, set to the real handle (so Execute's registry lookup goes
+		// through the normal generation check) when that light is shadow-casting this tick.
 		DirLightHandle m_ActiveDirLights[RenderConstants::c_MaxDirLights] = {};
-		// Every pool slot with a directional light present this tick, shadow-casting or not -
+		// Every shadow slot with a directional light present this tick, shadow-casting or not -
 		// Execute only ever dispatches for these (a real trace, or a cheap "fully lit" fallback),
 		// never for a slot with no light at all, since DeferredLightingCS's dirLightCount-bounded
 		// loop will never read a slot beyond the active light count anyway.

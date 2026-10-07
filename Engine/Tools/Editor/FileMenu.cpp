@@ -4,6 +4,7 @@
 #include "Utility/PathUtil.h"
 #include "Math/Math.h"
 #include "Importing/ModelImporter.h"
+#include "AssetSystem/AssetRegistry.h"
 #include "RenderResource/MeshDesc.h"
 
 namespace tyr
@@ -71,6 +72,8 @@ namespace tyr
 				options.forceLodGeneration = m_ForceLodRegeneration;
 
 				ModelImporter::Instance().ImportModel(m_PendingFilePath, m_PendingOutputFolder, m_PendingModelName, options);
+				// Saved straight away so the import is never lost if the editor doesn't close cleanly.
+				AssetRegistry::Instance().Save();
 				m_ShowImportOptions = false;
 			}
 			ImGui::SameLine();

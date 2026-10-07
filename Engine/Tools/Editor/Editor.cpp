@@ -23,6 +23,7 @@
 #include "Importing/MaterialImporter.h"
 #include "Config/Config.h"
 #include "Actor/ActorUtil.h"
+#include "Actor/ActorRegistry.h"
 #include "AssetSystem/MeshAsset.h"
 #include "Utility/PathUtil.h"
 #include "Math/Math.h"
@@ -120,6 +121,31 @@ namespace tyr
 			outMin = center - extents;
 			outMax = center + extents;
 		}
+
+		// The nearest actor box the ray hits.
+		bool RaycastActors(World& world, const ViewportRay& ray, RayHit& nearestHit, Entity& hitEntity)
+		{
+			nearestHit.distance = FLT_MAX;
+			hitEntity = c_InvalidEntity;
+			world.entities.ForEach<BoxComponent>([&](Entity entity, BoxComponent& box)
+			{
+				if (!world.entities.HasComponent<ComponentTransform>(entity))
+				{
+					return;
+				}
+
+				Vector3 boxMin;
+				Vector3 boxMax;
+				CalculateWorldBounds(box, world.entities.GetComponent<ComponentTransform>(entity).world, boxMin, boxMax);
+				RayHit hit;
+				if (IntersectBox(ray.origin, ray.direction, boxMin, boxMax, hit) && hit.distance < nearestHit.distance)
+				{
+					nearestHit = hit;
+					hitEntity = entity;
+				}
+			});
+			return hitEntity != c_InvalidEntity;
+		}
 	}
 
 	Editor::Editor(GUIModule& guiModule, AppBase& app)
@@ -162,6 +188,8 @@ namespace tyr
 
 		WorldConfig worldParams{};
 		worldParams.camera = m_Camera.get();
+		// The level is only being edited, so nothing in it simulates.
+		worldParams.simulate = false;
 
 		m_LevelEditorWorld = CreatePrimaryWorld(*m_WindowModule, *m_WorldManager, desc, worldParams, m_PrimaryWindow);
 		m_GUIModule->SetPrimaryWindow(m_WindowModule, m_PrimaryWindow);
@@ -171,11 +199,12 @@ namespace tyr
 		m_InputManager = inputModule->GetInputManager();
 		m_InputManager->SetWindow(m_WindowModule, m_PrimaryWindow);
 
-		// Before the test cube below, which needs it imported.
+		// Before the UI, which loads the editor icons it imports.
 		ImportDefaultAssetsIfNeeded();
 
-		m_EditorViewport = MakeURef<EditorViewport>(*m_RendererAPI);
-		m_EditorUI = MakeURef<EditorUI>(*m_GUIModule, *m_RendererAPI, *m_AssetManager);
+		m_EditorUI = MakeURef<EditorUI>(*m_GUIModule, *m_RendererAPI, *m_AssetManager, *m_WorldManager, m_LevelEditorWorld);
+		m_EditorViewport = MakeURef<EditorViewport>(*m_RendererAPI, m_EditorUI->GetIcons());
+		m_EditorUI->ApplyRenderSettings(true);
 
 		// TODO: Temporary test light until lights can be placed from the editor.
 		{
@@ -225,11 +254,12 @@ namespace tyr
 		defaultMaterialDesc.heightSource = TextureSource{ heightPath };
 		defaultMaterialDesc.occlusionSource = TextureSource{ occlusionPath };
 		defaultMaterialDesc.roughnessMetallicSource = TextureSource{ roughnessMetallicPath };
+		bool imported = true;
 		AssetID defaultMaterialID;
 		if (!MaterialImporter::Instance().ImportPbrMaterial(defaultMaterialDesc, defaultMaterialID))
 		{
 			TYR_LOG_ERROR("Failed to import the default material from SourceAssets.");
-			return;
+			imported = false;
 		}
 
 		EditorIcons::Import();
@@ -239,22 +269,30 @@ namespace tyr
 		if (!ModelImporter::Instance().ImportModel(sourcePath, "Models/Cube", "Cube"))
 		{
 			TYR_LOG_ERROR("Failed to import the test cube from SourceAssets.");
-			return;
+			imported = false;
 		}
 
+		// Saved straight away so what was imported is never lost if the editor doesn't close cleanly.
+		AssetRegistry::Instance().Save();
+
 		// Cleared so this doesn't repeat on every subsequent startup.
-		editorConfig.SetValueAsBool("ImportDefaultAssets", false);
-		editorConfig.Save();
+		if (imported)
+		{
+			editorConfig.SetValueAsBool("ImportDefaultAssets", false);
+			editorConfig.Save();
+		}
 	}
 
 	void Editor::Update(float deltaTime)
 	{
 		PlayState requestedState = m_PlayState;
-		const PanelRect viewportRect = m_EditorUI->Draw(requestedState);
+		EditorRequests requests;
+		const PanelRect viewportRect = m_EditorUI->Draw(requestedState, m_SelectedActor, requests);
 		if (requestedState != m_PlayState)
 		{
 			SetPlayState(requestedState);
 		}
+		HandleRequests(requests);
 
 		if (m_PlayState == PlayState::Playing)
 		{
@@ -263,14 +301,55 @@ namespace tyr
 
 		UpdateGrid();
 
+		const ViewSettings& viewSettings = m_EditorUI->GetViewSettings();
+		EditorViewport::EditState editState;
+		editState.editing = m_PlayState == PlayState::Editing;
+		editState.selectedActor = m_SelectedActor;
+		editState.snapToGrid = viewSettings.snapToGrid;
+		editState.gridCellSize = m_Grid.cellSize;
+
 		// Shows whichever world is active - the game's while playing, the level's otherwise.
-		const World& activeWorld = m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld());
-		EditorViewport::MeshDrop drop;
-		if (m_EditorViewport->Draw(viewportRect, activeWorld, *m_InputManager, m_PlayState == PlayState::Editing, deltaTime, drop))
+		World& activeWorld = m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld());
+		EditorViewport::Events events;
+		m_EditorViewport->Draw(viewportRect, activeWorld, *m_InputManager, deltaTime, editState, events);
+
+		if (events.meshDropped)
 		{
-			AddMeshDrop(drop);
+			AddMeshDrop(events.drop, "");
+		}
+		if (events.clicked)
+		{
+			m_SelectedActor = PickActor(events.clickRay);
+		}
+		if (events.transformChanged)
+		{
+			m_WorldManager->SetActorTransform(m_LevelEditorWorld, m_SelectedActor, events.transform);
 		}
 		ProcessPendingMeshDrops();
+	}
+
+	Entity Editor::PickActor(const ViewportRay& ray)
+	{
+		World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
+		RayHit hit;
+		Entity hitEntity;
+		if (!RaycastActors(world, ray, hit, hitEntity))
+		{
+			return c_InvalidEntity;
+		}
+
+		// Any of an actor's entities selects the whole actor.
+		for (const ActorInstance& actor : world.actorInstances)
+		{
+			for (Entity entity : actor.entities)
+			{
+				if (entity == hitEntity)
+				{
+					return actor.RootEntity();
+				}
+			}
+		}
+		return c_InvalidEntity;
 	}
 
 	void Editor::UpdateGrid()
@@ -286,7 +365,29 @@ namespace tyr
 		m_RendererAPI->SetRenderViewportGrid(levelWorld.renderViewportHandle, m_Grid);
 	}
 
-	void Editor::AddMeshDrop(const EditorViewport::MeshDrop& drop)
+	void Editor::HandleRequests(const EditorRequests& requests)
+	{
+		if (m_PlayState != PlayState::Editing)
+		{
+			return;
+		}
+
+		if (requests.placeActor)
+		{
+			PlaceActor(requests.actorType, requests.folder.CStr());
+		}
+
+		// A mesh dropped onto a hierarchy folder goes where the camera is looking.
+		if (requests.placeMesh)
+		{
+			EditorViewport::MeshDrop drop;
+			drop.mesh = requests.mesh;
+			drop.ray = GetCameraRay();
+			AddMeshDrop(drop, requests.folder.CStr());
+		}
+	}
+
+	void Editor::AddMeshDrop(const EditorViewport::MeshDrop& drop, const char* folderPath)
 	{
 		if (m_PendingMeshDrops.Size() == c_MaxPendingMeshDrops)
 		{
@@ -298,7 +399,64 @@ namespace tyr
 		m_AssetManager->LoadMesh(drop.mesh);
 		PendingMeshDrop& pending = m_PendingMeshDrops.ExpandOne();
 		pending.drop = drop;
+		pending.folder = folderPath;
 		pending.entity = c_InvalidEntity;
+	}
+
+	void Editor::PlaceActor(const Id64& actorType, const char* folderPath)
+	{
+		const ActorTypeDesc* actorTypeDesc = ActorRegistry::Instance().FindActorType(actorType);
+		if (!actorTypeDesc)
+		{
+			return;
+		}
+
+		// The renderer only supports so many of each type of light.
+		if (!m_WorldManager->HasRoomForActorLights(m_LevelEditorWorld, *actorTypeDesc))
+		{
+			TYR_LOG_WARNING("Can't add a %s, the level already has as many of its lights as the renderer supports.", actorTypeDesc->name.CStr());
+			return;
+		}
+
+		World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
+		const LocalArray<Entity, c_MaxActorTypeEntities> entities = ActorRegistry::Instance().InstantiateActor(actorType, world.entities);
+		if (entities.IsEmpty())
+		{
+			return;
+		}
+
+		const Name name = MakeUniqueActorName(world, actorTypeDesc->name.CStr());
+		m_WorldManager->AddActorInstance(m_LevelEditorWorld, name.CStr(), folderPath, entities);
+
+		const Entity rootEntity = entities[0];
+		if (world.entities.HasComponent<ComponentTransform>(rootEntity))
+		{
+			Transform transform = world.entities.GetComponent<ComponentTransform>(rootEntity).local;
+			transform.position = GetBackgroundDropPosition(GetCameraRay());
+			m_WorldManager->SetActorTransform(m_LevelEditorWorld, rootEntity, transform);
+		}
+		m_SelectedActor = rootEntity;
+	}
+
+	Vector3 Editor::GetBackgroundDropPosition(const ViewportRay& ray) const
+	{
+		Vector3 position = ray.origin + ray.direction * c_BackgroundDropDistance;
+		if (m_EditorUI->GetViewSettings().snapToGrid)
+		{
+			for (uint i = 0; i < 3; ++i)
+			{
+				position[i] = SnapToGrid(position[i], m_Grid.cellSize);
+			}
+		}
+		return position;
+	}
+
+	ViewportRay Editor::GetCameraRay() const
+	{
+		ViewportRay ray;
+		ray.origin = m_Camera->GetPosition();
+		ray.direction = m_Camera->GetForward();
+		return ray;
 	}
 
 	void Editor::ProcessPendingMeshDrops()
@@ -314,7 +472,8 @@ namespace tyr
 				{
 					continue;
 				}
-				pending.entity = SpawnStaticMeshActor(pending.drop, *header);
+				pending.entity = SpawnStaticMeshActor(pending, *header);
+				m_SelectedActor = pending.entity;
 			}
 
 			// Released once the actor's mesh instance has its own reference, or the actor is gone.
@@ -327,39 +486,21 @@ namespace tyr
 		}
 	}
 
-	Entity Editor::SpawnStaticMeshActor(const EditorViewport::MeshDrop& drop, const MeshHeader& header)
+	Entity Editor::SpawnStaticMeshActor(const PendingMeshDrop& pending, const MeshHeader& header)
 	{
 		World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
 		const bool snap = m_EditorUI->GetViewSettings().snapToGrid;
 		const float cellSize = m_Grid.cellSize;
+		const EditorViewport::MeshDrop& drop = pending.drop;
+		const ViewportRay& ray = drop.ray;
 
-		// The nearest existing actor the ray hits.
 		RayHit nearestHit;
-		nearestHit.distance = FLT_MAX;
-		bool hasHit = false;
-		world.entities.ForEach<BoxComponent>([&](Entity entity, BoxComponent& box)
-		{
-			if (!world.entities.HasComponent<ComponentTransform>(entity))
-			{
-				return;
-			}
-
-			Vector3 boxMin;
-			Vector3 boxMax;
-			CalculateWorldBounds(box, world.entities.GetComponent<ComponentTransform>(entity).world, boxMin, boxMax);
-			RayHit hit;
-			if (IntersectBox(drop.rayOrigin, drop.rayDirection, boxMin, boxMax, hit) && hit.distance < nearestHit.distance)
-			{
-				nearestHit = hit;
-				hasHit = true;
-			}
-		});
-
+		Entity hitEntity;
 		Vector3 position;
-		if (hasHit)
+		if (RaycastActors(world, ray, nearestHit, hitEntity))
 		{
 			// Flush against the face that was hit, sliding along it in grid steps.
-			position = drop.rayOrigin + drop.rayDirection * nearestHit.distance;
+			position = ray.origin + ray.direction * nearestHit.distance;
 			for (uint i = 0; i < 3; ++i)
 			{
 				if (snap && i != nearestHit.axis)
@@ -372,12 +513,7 @@ namespace tyr
 		}
 		else
 		{
-			// Like Unreal, a drop onto nothing goes a set distance in front of the camera.
-			position = drop.rayOrigin + drop.rayDirection * c_BackgroundDropDistance;
-			for (uint i = 0; snap && i < 3; ++i)
-			{
-				position[i] = SnapToGrid(position[i], cellSize);
-			}
+			position = GetBackgroundDropPosition(ray);
 		}
 
 		StaticMeshActorMeshDesc desc;
@@ -391,26 +527,55 @@ namespace tyr
 		LocalArray<Entity, c_MaxActorInstanceEntities> entities;
 		entities.Add(ActorUtil::BuildStaticMeshActor(world.entities, desc));
 
-		// Named after the mesh file, cut short if it doesn't fit.
+		// Named after the mesh file.
 		const char* meshPath = AssetRegistry::Instance().GetAssetData(drop.mesh).filePath.CStr();
 		char fileName[PathConstants::c_MaxFileNameTotalSize];
 		PathUtil::GetFileNameWithoutExtension(meshPath, fileName);
-		fileName[std::min<size_t>(strlen(fileName), NameConstants::c_MaxName)] = '\0';
+		const Name name = MakeUniqueActorName(world, fileName);
 
-		m_WorldManager->AddActorInstance(m_LevelEditorWorld, fileName, "", entities);
+		m_WorldManager->AddActorInstance(m_LevelEditorWorld, name.CStr(), pending.folder.CStr(), entities);
 		return entities[0];
+	}
+
+	Name Editor::MakeUniqueActorName(const World& world, const char* baseName)
+	{
+		// Like Unreal, "Cube", then "Cube2", "Cube3" and so on, cut short to fit.
+		char name[Name::c_Capacity];
+		for (uint number = 1;; ++number)
+		{
+			char suffix[12] = {};
+			if (number > 1)
+			{
+				snprintf(suffix, sizeof(suffix), "%u", number);
+			}
+			const size_t suffixLength = strlen(suffix);
+			const size_t baseLength = std::min(strlen(baseName), NameConstants::c_MaxName - suffixLength);
+			snprintf(name, sizeof(name), "%.*s%s", static_cast<int>(baseLength), baseName, suffix);
+
+			bool taken = false;
+			for (const ActorInstance& actor : world.actorInstances)
+			{
+				taken |= actor.name == name;
+			}
+			if (!taken)
+			{
+				return Name(name);
+			}
+		}
 	}
 
 	void Editor::SetPlayState(PlayState state)
 	{
 		if (m_PlayState == PlayState::Editing)
 		{
+			m_EditorUI->ApplyRenderSettings(false);
 			m_App.Initialize();
 		}
 		else if (state == PlayState::Editing)
 		{
 			m_App.Shutdown();
 			m_WorldManager->SetActiveWorld(m_LevelEditorWorld);
+			m_EditorUI->ApplyRenderSettings(true);
 		}
 		m_PlayState = state;
 	}
@@ -428,7 +593,9 @@ namespace tyr
 		}
 		m_PendingMeshDrops.Clear();
 
-		// Destroyed here, while the asset manager it releases icons back to still exists.
+		// Destroyed here, while the asset manager the UI releases icons back to still exists. The
+		// viewport goes first since it uses the UI's icons.
+		m_EditorViewport.reset();
 		m_EditorUI.reset();
 
 		DestroyPrimaryWorld(*m_WindowModule, *m_WorldManager, m_LevelEditorWorld, m_PrimaryWindow);

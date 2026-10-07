@@ -9,6 +9,29 @@
 
 namespace tyr
 {
+	namespace
+	{
+		template<typename LightHandleType, uint N>
+		void AddSceneLight(LocalArray<LightHandleType, N>& lights, LightHandleType handle)
+		{
+			TYR_ASSERT(lights.Size() < N);
+			lights.Add(handle);
+		}
+
+		template<typename LightHandleType, uint N>
+		void RemoveSceneLight(LocalArray<LightHandleType, N>& lights, LightHandleType handle)
+		{
+			for (uint i = 0; i < lights.Size(); ++i)
+			{
+				if (lights[i] == handle)
+				{
+					lights.SwapAndPopBack(i);
+					return;
+				}
+			}
+		}
+	}
+
 	RendererAPI::RendererAPI(Renderer& renderer)
 		: m_Renderer(renderer)
 		, m_Registry(*RenderRegistry::Instance())
@@ -426,11 +449,9 @@ namespace tyr
 
 	DirLightHandle RendererAPI::CreateDirectionalLight(SceneHandle scene, const DirectionalLightDesc& desc)
 	{
-		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		const DirLightHandle handle = m_Registry.CreateDirectionalLight(desc);
 		UploadDirectionalLight(desc.info, handle.h.index);
-		renderFrame.sceneFrame.dirLightsToAdd.Add(handle);
-		m_Renderer.GetImmediateSceneData(scene).dirLightCount++;
+		AddSceneLight(m_Renderer.GetImmediateSceneData(scene).lights.dirLights, handle);
 		return handle;
 	}
 
@@ -444,18 +465,15 @@ namespace tyr
 	void RendererAPI::DeleteDirectionalLight(SceneHandle scene, DirLightHandle handle)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
-		renderFrame.sceneFrame.dirLightsToRemove.Add(handle);
+		RemoveSceneLight(m_Renderer.GetImmediateSceneData(scene).lights.dirLights, handle);
 		renderFrame.dirLightsToDelete.Add(handle);
-		m_Renderer.GetImmediateSceneData(scene).dirLightCount--;
 	}
 
 	PointLightHandle RendererAPI::CreatePointLight(SceneHandle scene, const PointLightDesc& desc)
 	{
-		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		const PointLightHandle handle = m_Registry.CreatePointLight(desc);
 		UploadPointLight(desc.info, handle.h.index);
-		renderFrame.sceneFrame.pointLightsToAdd.Add(handle);
-		m_Renderer.GetImmediateSceneData(scene).pointLightCount++;
+		AddSceneLight(m_Renderer.GetImmediateSceneData(scene).lights.pointLights, handle);
 		return handle;
 	}
 
@@ -469,18 +487,15 @@ namespace tyr
 	void RendererAPI::DeletePointLight(SceneHandle scene, PointLightHandle handle)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
-		renderFrame.sceneFrame.pointLightsToRemove.Add(handle);
+		RemoveSceneLight(m_Renderer.GetImmediateSceneData(scene).lights.pointLights, handle);
 		renderFrame.pointLightsToDelete.Add(handle);
-		m_Renderer.GetImmediateSceneData(scene).pointLightCount--;
 	}
 
 	SpotLightHandle RendererAPI::CreateSpotLight(SceneHandle scene, const SpotLightDesc& desc)
 	{
-		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		const SpotLightHandle handle = m_Registry.CreateSpotLight(desc);
 		UploadSpotLight(desc.info, handle.h.index);
-		renderFrame.sceneFrame.spotLightsToAdd.Add(handle);
-		m_Renderer.GetImmediateSceneData(scene).spotLightCount++;
+		AddSceneLight(m_Renderer.GetImmediateSceneData(scene).lights.spotLights, handle);
 		return handle;
 	}
 
@@ -494,9 +509,8 @@ namespace tyr
 	void RendererAPI::DeleteSpotLight(SceneHandle scene, SpotLightHandle handle)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
-		renderFrame.sceneFrame.spotLightsToRemove.Add(handle);
+		RemoveSceneLight(m_Renderer.GetImmediateSceneData(scene).lights.spotLights, handle);
 		renderFrame.spotLightsToDelete.Add(handle);
-		m_Renderer.GetImmediateSceneData(scene).spotLightCount--;
 	}
 
 	void RendererAPI::UploadDirectionalLight(const DirectionalLightInfo& info, uint index)

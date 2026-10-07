@@ -30,4 +30,9 @@ namespace tyr
 	{
 		return GetType(Id64(name));
 	}
+
+	const TypeInfo* TypeRegistry::FindType(const Id64& id) const
+	{
+		return m_TypeMap.Find(id);
+	}
 }

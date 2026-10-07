@@ -8,6 +8,7 @@ namespace tyr
 		if (ImGui::BeginMenu("View"))
 		{
 			ImGui::MenuItem("Hierarchy", nullptr, &settings.hierarchyOpen);
+			ImGui::MenuItem("Actors", nullptr, &settings.actorsOpen);
 			ImGui::Separator();
 			ImGui::MenuItem("Grid", nullptr, &settings.showGrid);
 			ImGui::MenuItem("Snap to Grid", nullptr, &settings.snapToGrid);

@@ -42,7 +42,9 @@ namespace tyr
 			m_Resources->tlasInstanceBuffer,
 			// This tick's light-index -> shadow-slot lookup, built once ShadowRTPass's selection
 			// is known.
-			m_Resources->shadowLightSlotMapBuffer
+			m_Resources->shadowLightSlotMapBuffer,
+			// The active scene's lights this tick.
+			m_Resources->lightIndexBuffer
 		};
 
 		for (RenderBufferHandle buffer : buffers)

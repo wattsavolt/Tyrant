@@ -194,6 +194,26 @@ namespace tyr
 		m[3][3] = 1;
 	}
 
+	void Matrix4::DecomposeTRS(Vector3& translation, Quaternion& rotation, Vector3& scale) const
+	{
+		translation = Vector3(m[3][0], m[3][1], m[3][2]);
+
+		// SetTRS scales each rotation row, so each row's length is that axis's scale.
+		Vector3 rows[3];
+		for (uint row = 0; row < 3; ++row)
+		{
+			rows[row] = Vector3(m[row][0], m[row][1], m[row][2]);
+			scale[row] = rows[row].Length();
+			if (scale[row] > 0.0f)
+			{
+				rows[row] = rows[row] / scale[row];
+			}
+		}
+
+		rotation.FromRotationMatrix(Matrix3(rows[0], rows[1], rows[2]));
+		rotation.Normalize();
+	}
+
 	void Matrix4::SetInverseTRS(const Vector3& translation, const Quaternion& rotation, const Vector3& scale)
 	{
 		// Invert the parameters

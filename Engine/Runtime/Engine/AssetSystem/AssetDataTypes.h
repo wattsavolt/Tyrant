@@ -43,6 +43,31 @@ namespace tyr
 		// default-material list once it's known, without waiting for its geometry to finish
 		// uploading too. Unused by every other asset type.
 		Handle assetHeader{};
+		// GPU bytes the loaded texture or mesh uses. Unused by every other asset type.
+		size_t gpuSize = 0;
+	};
+
+	// What happens to a texture or mesh once its last reference is deleted.
+	enum class AssetDeletePolicy : uint8
+	{
+		// Kept loaded for a while in case it's loaded again.
+		KeepUnreferenced = 0,
+		// Freed straight away, e.g. when its file is about to be replaced.
+		Immediate
+	};
+
+	struct PendingAssetDelete
+	{
+		AssetID assetID;
+		AssetDeletePolicy policy;
+	};
+
+	// A loaded texture or mesh with no references left, kept around in case it's loaded again.
+	struct UnreferencedAsset
+	{
+		AssetID assetID;
+		float releaseTime;
+		AssetLoadType type;
 	};
 
 	struct TextureHeaderLoadData

@@ -312,11 +312,12 @@ namespace tyr
 			// this scene actually renders/uploads this tick.
 			if (immediateSceneData.visible)
 			{
+				const SceneLights& sceneLights = immediateSceneData.lights;
 				ShaderSceneInfo sceneInfo{};
 				sceneInfo.ambient = immediateSceneData.ambient;
-				sceneInfo.dirLightCount = immediateSceneData.dirLightCount;
-				sceneInfo.pointLightCount = immediateSceneData.pointLightCount;
-				sceneInfo.spotLightCount = immediateSceneData.spotLightCount;
+				sceneInfo.dirLightCount = sceneLights.dirLights.Size();
+				sceneInfo.pointLightCount = sceneLights.pointLights.Size();
+				sceneInfo.spotLightCount = sceneLights.spotLights.Size();
 
 				const RenderWindowHandle windowHandle = immediateSceneData.windowHandle;
 				if (!windowHandle)
@@ -469,6 +470,41 @@ namespace tyr
 					request.size = sizeof(ShaderSceneInfo);
 				}
 
+				// The active scene's lights as their slots in the light buffers, so the lighting
+				// shader only sees this scene's lights, in order, whatever else is in the pools.
+				renderFrame.activeLights = sceneLights;
+				{
+					uint lightIndices[RenderConstants::c_LightIndexCount] = {};
+					uint count = 0;
+					for (DirLightHandle handle : sceneLights.dirLights)
+					{
+						lightIndices[count++] = handle.h.index;
+					}
+					count = RenderConstants::c_MaxDirLights;
+					for (PointLightHandle handle : sceneLights.pointLights)
+					{
+						lightIndices[count++] = handle.h.index;
+					}
+					count = RenderConstants::c_MaxDirLights + RenderConstants::c_MaxPointLights;
+					for (SpotLightHandle handle : sceneLights.spotLights)
+					{
+						lightIndices[count++] = handle.h.index;
+					}
+
+					UploadBufferAllocation alloc;
+					const bool allocSuccess = m_AllocManager.RequestFrameUploadAllocation(sizeof(lightIndices), alloc);
+					TYR_ASSERT(allocSuccess);
+
+					RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), *m_Ctx.device, alloc.offset, lightIndices, sizeof(lightIndices));
+
+					BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
+					request.srcBuffer = alloc.buffer;
+					request.srcOffset = alloc.offset;
+					request.dstBuffer = m_Resources.lightIndexBuffer;
+					request.dstOffset = 0;
+					request.size = sizeof(lightIndices);
+				}
+
 				// Clear and update to get rid of old views
 				m_ViewIdIndexMap.Clear();
 				for (uint i = 0; i < sceneFrame.views.Size(); ++i)
@@ -481,7 +517,7 @@ namespace tyr
 
 		if (m_FirstRender)
 		{
-			constexpr uint bindingCount = 17;
+			constexpr uint bindingCount = 18;
 			BufferBindingInfo bindingInfos[bindingCount];
 			BufferBindingUpdate bindingUpdates[bindingCount];
 
@@ -510,6 +546,7 @@ namespace tyr
 			SetBinding(14, TYR_BINDING_INDIRECT_DRAW_COMMANDS, m_Resources.indirectDrawCommandBuffer);
 			SetBinding(15, TYR_BINDING_DRAW_COUNT, m_Resources.drawCountBuffer);
 			SetBinding(16, TYR_BINDING_SHADOW_LIGHT_SLOT_MAP, m_Resources.shadowLightSlotMapBuffer);
+			SetBinding(17, TYR_BINDING_LIGHT_INDICES, m_Resources.lightIndexBuffer);
 
 			m_Ctx.device->UpdateDescriptorSet(m_Resources.descriptorSet, bindingUpdates, bindingCount);
 
@@ -868,73 +905,19 @@ namespace tyr
 			m_TLASInstanceCount = tlasInstanceCount;
 		}
 
-		for (DirLightHandle handle : sceneFrame.dirLightsToRemove)
-		{
-			const uint renderIndex = registry.GetDirectionalLight(handle).renderIndex;
-			scene.content.dirLights.SwapAndPopBack(renderIndex);
-			if (!scene.content.dirLights.IsEmpty())
-			{
-				const DirLightHandle swapped = scene.content.dirLights[renderIndex];
-				registry.GetDirectionalLight(swapped).renderIndex = renderIndex;
-			}
-		}
-
+		// Light data lives in the registry for the shadow pass to read. Which lights are drawn is
+		// decided each frame on the main thread, from the scene's light lists.
 		for (const DirLightUpdate& update : sceneFrame.dirLightsToUpdate)
 		{
 			registry.GetDirectionalLight(update.handle).info = update.desc.info;
 		}
-
-		scene.content.dirLights.Reserve(scene.content.dirLights.Size() + sceneFrame.dirLightsToAdd.Size());
-		for (DirLightHandle handle : sceneFrame.dirLightsToAdd)
-		{
-			registry.GetDirectionalLight(handle).renderIndex = scene.content.dirLights.Size();
-			scene.content.dirLights.Add(handle);
-		}
-
-		for (PointLightHandle handle : sceneFrame.pointLightsToRemove)
-		{
-			const uint renderIndex = registry.GetPointLight(handle).renderIndex;
-			scene.content.pointLights.SwapAndPopBack(renderIndex);
-			if (!scene.content.pointLights.IsEmpty())
-			{
-				const PointLightHandle swapped = scene.content.pointLights[renderIndex];
-				registry.GetPointLight(swapped).renderIndex = renderIndex;
-			}
-		}
-
 		for (const PointLightUpdate& update : sceneFrame.pointLightsToUpdate)
 		{
 			registry.GetPointLight(update.handle).info = update.desc.info;
 		}
-
-		scene.content.pointLights.Reserve(scene.content.pointLights.Size() + sceneFrame.pointLightsToAdd.Size());
-		for (PointLightHandle handle : sceneFrame.pointLightsToAdd)
-		{
-			registry.GetPointLight(handle).renderIndex = scene.content.pointLights.Size();
-			scene.content.pointLights.Add(handle);
-		}
-
-		for (SpotLightHandle handle : sceneFrame.spotLightsToRemove)
-		{
-			const uint renderIndex = registry.GetSpotLight(handle).renderIndex;
-			scene.content.spotLights.SwapAndPopBack(renderIndex);
-			if (!scene.content.spotLights.IsEmpty())
-			{
-				const SpotLightHandle swapped = scene.content.spotLights[renderIndex];
-				registry.GetSpotLight(swapped).renderIndex = renderIndex;
-			}
-		}
-
 		for (const SpotLightUpdate& update : sceneFrame.spotLightsToUpdate)
 		{
 			registry.GetSpotLight(update.handle).info = update.desc.info;
-		}
-
-		scene.content.spotLights.Reserve(scene.content.spotLights.Size() + sceneFrame.spotLightsToAdd.Size());
-		for (SpotLightHandle handle : sceneFrame.spotLightsToAdd)
-		{
-			registry.GetSpotLight(handle).renderIndex = scene.content.spotLights.Size();
-			scene.content.spotLights.Add(handle);
 		}
 
 		// No merge needed for the upload request lists - TransferPass reads them straight off
@@ -1400,7 +1383,7 @@ namespace tyr
 			m_Resources.spotLightBuffer, m_Resources.sceneInfoBuffer,
 			m_Resources.activeMeshInstanceIndexBuffer, m_Resources.visibleInstanceIndexBuffer,
 			m_Resources.indirectDrawCommandBuffer, m_Resources.drawCountBuffer,
-			m_Resources.tlasInstanceBuffer, m_Resources.shadowLightSlotMapBuffer
+			m_Resources.tlasInstanceBuffer, m_Resources.shadowLightSlotMapBuffer, m_Resources.lightIndexBuffer
 		};
 		constexpr uint bufferCount = (uint)(sizeof(graphBuffers) / sizeof(graphBuffers[0]));
 
@@ -1585,10 +1568,11 @@ namespace tyr
 				const uint shadowViewportWidth = viewportData->width;
 				const uint shadowViewportHeight = viewportData->height;
 
+				const SceneLights& shadowLights = renderFrame.activeLights;
 				graph.AddPass("ShadowRT",
-					[this, &shadowScene, cameraPosition, shadowDepthBuffer, shadowGBufferNormalRoughMetal, shadowMasksRawHandle, renderFrameIndex](RenderGraphBuilder& builder)
+					[this, &shadowLights, cameraPosition, shadowDepthBuffer, shadowGBufferNormalRoughMetal, shadowMasksRawHandle, renderFrameIndex](RenderGraphBuilder& builder)
 					{
-						m_ShadowRTPass->Setup(builder, shadowScene, cameraPosition, m_QualitySettings, renderFrameIndex,
+						m_ShadowRTPass->Setup(builder, shadowLights, cameraPosition, m_QualitySettings, renderFrameIndex,
 							shadowDepthBuffer, shadowGBufferNormalRoughMetal, shadowMasksRawHandle);
 					},
 					[this, renderFrameIndex, shadowViewportWidth, shadowViewportHeight](CommandList& cl)
@@ -1676,6 +1660,7 @@ namespace tyr
 						builder.ReadTexture(*shadowMasks, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
 					}
 					builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.shadowLightSlotMapBuffer), PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT);
+					builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.lightIndexBuffer), PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT);
 				},
 				[this, renderFrameIndex](CommandList& cl) { RecordLightingPass(cl, renderFrameIndex); },
 				RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
@@ -2261,7 +2246,8 @@ namespace tyr
 		ImageBindingInfo outputImageInfo;
 		outputImageInfo.imageView = texture.imageView;
 		outputImageInfo.hasSampler = false;
-		outputImageInfo.layout = texture.imageLayout;
+		// Always accessed in the general layout, whatever layout the texture is in now.
+		outputImageInfo.layout = IMAGE_LAYOUT_GENERAL;
 		QueueImageBindingUpdate(TYR_BINDING_LIGHTING_OUTPUT, renderFrameIndex, outputImageInfo);
 
 		m_LightingOutputBoundTextures[renderFrameIndex] = colourTexture;
@@ -2275,7 +2261,8 @@ namespace tyr
 			ImageBindingInfo bindingInfo;
 			bindingInfo.imageView = texture.imageView;
 			bindingInfo.hasSampler = false;
-			bindingInfo.layout = texture.imageLayout;
+			// Always accessed in the general layout, whatever layout the texture is in now.
+			bindingInfo.layout = IMAGE_LAYOUT_GENERAL;
 			QueueImageBindingUpdate(TYR_BINDING_SHADOW_MASKS_RAW, renderFrameIndex, bindingInfo);
 			m_ShadowMasksRawBoundTextures[renderFrameIndex] = shadowMasksRaw;
 		}
@@ -2286,7 +2273,8 @@ namespace tyr
 			ImageBindingInfo bindingInfo;
 			bindingInfo.imageView = texture.imageView;
 			bindingInfo.hasSampler = false;
-			bindingInfo.layout = texture.imageLayout;
+			// Always accessed in the general layout, whatever layout the texture is in now.
+			bindingInfo.layout = IMAGE_LAYOUT_GENERAL;
 			QueueImageBindingUpdate(TYR_BINDING_SHADOW_MASKS, renderFrameIndex, bindingInfo);
 			m_ShadowMasksBoundTextures[renderFrameIndex] = shadowMasks;
 		}
@@ -2303,7 +2291,8 @@ namespace tyr
 		ImageBindingInfo bindingInfo;
 		bindingInfo.imageView = texture.imageView;
 		bindingInfo.hasSampler = false;
-		bindingInfo.layout = texture.imageLayout;
+		// Always accessed in the general layout, whatever layout the texture is in now.
+		bindingInfo.layout = IMAGE_LAYOUT_GENERAL;
 		QueueImageBindingUpdate(TYR_BINDING_TAA_RESOLVE_OUTPUT, renderFrameIndex, bindingInfo);
 		m_TaaResolveOutputBoundTextures[renderFrameIndex] = resolvedColourTexture;
 	}
@@ -2319,7 +2308,8 @@ namespace tyr
 		ImageBindingInfo bindingInfo;
 		bindingInfo.imageView = texture.imageView;
 		bindingInfo.hasSampler = false;
-		bindingInfo.layout = texture.imageLayout;
+		// Always accessed in the general layout, whatever layout the texture is in now.
+		bindingInfo.layout = IMAGE_LAYOUT_GENERAL;
 		QueueImageBindingUpdate(TYR_BINDING_EDITOR_GRID_OUTPUT, renderFrameIndex, bindingInfo);
 		m_EditorGridOutputBoundTextures[renderFrameIndex] = overlayColourTexture;
 	}
@@ -2588,8 +2578,8 @@ namespace tyr
 				poolSize.descriptorType = DescriptorType::StorageBuffer;
 				// 11 original + activeMeshInstanceIndexBuffer/visibleInstanceIndexBuffer/
 				// indirectDrawCommandBuffer/drawCountBuffer for GPU-driven instance culling +
-				// shadowLightSlotMapBuffer for ray-traced shadows.
-				poolSize.descriptorCount = 16;
+				// shadowLightSlotMapBuffer for ray-traced shadows + lightIndexBuffer.
+				poolSize.descriptorCount = 17;
 			}
 			{
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
@@ -2695,6 +2685,7 @@ namespace tyr
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 			AddBinding(TYR_BINDING_EDITOR_GRID_OUTPUT, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
+			AddBinding(TYR_BINDING_LIGHT_INDICES, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 
 			m_Resources.descriptorSetLayout = m_Ctx.device->CreateDescriptorSetLayout(layoutDesc);
 
@@ -2994,21 +2985,21 @@ namespace tyr
 		{
 			RenderBufferDesc desc{};
 			desc.debugName = "Dir light Buffer";
-			desc.size = sizeof(ShaderDirectionalLight) * RenderConstants::c_MaxDirLights;
+			desc.size = sizeof(ShaderDirectionalLight) * RenderConstants::c_DirLightPoolSize;
 			desc.usage = RenderBufferUsage::Storage;
 			m_Resources.directionalLightBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
 			RenderBufferDesc desc{};
 			desc.debugName = "Point light Buffer";
-			desc.size = sizeof(ShaderPointLight) * RenderConstants::c_MaxPointLights;
+			desc.size = sizeof(ShaderPointLight) * RenderConstants::c_PointLightPoolSize;
 			desc.usage = RenderBufferUsage::Storage;
 			m_Resources.pointLightBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
 			RenderBufferDesc desc{};
 			desc.debugName = "Spot light Buffer";
-			desc.size = sizeof(ShaderSpotLight) * RenderConstants::c_MaxSpotLights;
+			desc.size = sizeof(ShaderSpotLight) * RenderConstants::c_SpotLightPoolSize;
 			desc.usage = RenderBufferUsage::Storage;
 			m_Resources.spotLightBuffer = m_Registry.CreateBuffer(desc);
 		}
@@ -3075,6 +3066,13 @@ namespace tyr
 		}
 		{
 			RenderBufferDesc desc;
+			desc.debugName = "Light Index Buffer";
+			desc.size = sizeof(uint) * RenderConstants::c_LightIndexCount;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.lightIndexBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
 			desc.debugName = "TLAS Instance Buffer";
 			// One c_BufferedFrameCount-th per buffered RenderFrame slot.
 			desc.size = RenderConstants::c_TLASInstanceBufferSize * RenderConstants::c_BufferedFrameCount;
@@ -3119,6 +3117,7 @@ namespace tyr
 		m_Registry.DeleteBuffer(m_Resources.indirectDrawCommandBuffer);
 		m_Registry.DeleteBuffer(m_Resources.drawCountBuffer);
 		m_Registry.DeleteBuffer(m_Resources.shadowLightSlotMapBuffer);
+		m_Registry.DeleteBuffer(m_Resources.lightIndexBuffer);
 		m_Registry.DeleteBuffer(m_Resources.tlasInstanceBuffer);
 		m_Registry.DeleteBuffer(m_Resources.rtCullingStagingBuffer);
 		m_Registry.DeleteBuffer(m_Resources.blasStorageBuffer);

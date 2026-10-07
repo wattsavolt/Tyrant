@@ -50,16 +50,25 @@ namespace tyr
 		m_PendingTextureDeletes.Reserve(16);
 		m_PendingMaterialDeletes.Reserve(16);
 		m_PendingMeshDeletes.Reserve(16);
+		m_UnreferencedAssets.Reserve(c_MaxUnreferencedAssets);
 	}
 
 	AssetManager::~AssetManager()
 	{
+		for (const UnreferencedAsset& entry : m_UnreferencedAssets)
+		{
+			DeleteUnreferencedAssetResources(entry);
+		}
+		m_UnreferencedAssets.Clear();
+
 		AssetRegistry::Instance().Save();
 	}
 
 	void AssetManager::Update(float deltaTime)
 	{
+		m_Time += deltaTime;
 		ProcessPendingAssets();
+		EvictUnreferencedAssets();
 	}
 
 	void AssetManager::ProcessPendingAssets()
@@ -170,6 +179,7 @@ namespace tyr
 	{
 		if (AssetData* assetData = m_AssetMap.Find(assetID))
 		{
+			ReuseUnreferencedAsset(assetID, *assetData);
 			assetData->refCount++;
 		}
 		else
@@ -196,7 +206,7 @@ namespace tyr
 		}
 	}
 
-	void AssetManager::DeleteTexture(AssetID assetID)
+	void AssetManager::DeleteTexture(AssetID assetID, AssetDeletePolicy policy)
 	{
 		AssetData* assetData = m_AssetMap.Find(assetID);
 		TYR_ASSERT(assetData);
@@ -205,14 +215,14 @@ namespace tyr
 			assetData->refCount = 0;
 			if (assetData->loadState == AssetLoadState::Loaded)
 			{
-				DeleteTextureResources(assetID, *assetData);
+				ReleaseLoadedAsset(assetID, *assetData, AssetLoadType::Texture, policy);
 			}
 			else
 			{
 				// Still loading (pixel data not read in yet) - the main-thread follow-up reads
 				// this same AssetData and the renderer's pool slot, so freeing either now
 				// could race with it.
-				m_PendingTextureDeletes.Add(assetID);
+				AddPendingDelete(m_PendingTextureDeletes, assetID, policy);
 			}
 		}
 		else
@@ -237,6 +247,117 @@ namespace tyr
 		return assetData ? assetData->loadState : AssetLoadState::Unloaded;
 	}
 
+	void AssetManager::EvictUnreferencedAsset(AssetID assetID)
+	{
+		for (uint i = 0; i < m_UnreferencedAssets.Size(); ++i)
+		{
+			if (m_UnreferencedAssets[i].assetID == assetID)
+			{
+				DeleteUnreferencedAssetResources(m_UnreferencedAssets[i]);
+				m_UnreferencedAssets.Erase(i);
+				return;
+			}
+		}
+	}
+
+	void AssetManager::AddPendingDelete(Array<PendingAssetDelete>& pendingDeletes, AssetID assetID, AssetDeletePolicy policy)
+	{
+		// Already pending when it was deleted, loaded and deleted again before finishing loading.
+		for (PendingAssetDelete& pending : pendingDeletes)
+		{
+			if (pending.assetID == assetID)
+			{
+				if (policy == AssetDeletePolicy::Immediate)
+				{
+					pending.policy = policy;
+				}
+				return;
+			}
+		}
+		pendingDeletes.Add({ assetID, policy });
+	}
+
+	void AssetManager::ReleaseLoadedAsset(AssetID assetID, AssetData& assetData, AssetLoadType type, AssetDeletePolicy policy)
+	{
+		if (policy == AssetDeletePolicy::KeepUnreferenced)
+		{
+			AddUnreferencedAsset(assetID, assetData, type);
+		}
+		else if (type == AssetLoadType::Texture)
+		{
+			DeleteTextureResources(assetID, assetData);
+		}
+		else
+		{
+			DeleteMeshResources(assetID, assetData);
+		}
+	}
+
+	void AssetManager::AddUnreferencedAsset(AssetID assetID, const AssetData& assetData, AssetLoadType type)
+	{
+		m_UnreferencedAssets.Add({ assetID, m_Time, type });
+		// Eviction waits for Update, since callers may still hold AssetData references.
+		m_UnreferencedAssetsSize += assetData.gpuSize;
+	}
+
+	void AssetManager::ReuseUnreferencedAsset(AssetID assetID, const AssetData& assetData)
+	{
+		// Only a loaded asset with no references can be in the cache.
+		if (assetData.refCount != 0 || assetData.loadState != AssetLoadState::Loaded)
+		{
+			return;
+		}
+
+		// Not found when its pending delete hasn't been processed yet this frame.
+		for (uint i = 0; i < m_UnreferencedAssets.Size(); ++i)
+		{
+			if (m_UnreferencedAssets[i].assetID == assetID)
+			{
+				m_UnreferencedAssetsSize -= assetData.gpuSize;
+				// Erase rather than swap to keep the oldest-first order.
+				m_UnreferencedAssets.Erase(i);
+				return;
+			}
+		}
+	}
+
+	void AssetManager::EvictUnreferencedAssets()
+	{
+		uint evictCount = 0;
+		for (; evictCount < m_UnreferencedAssets.Size(); ++evictCount)
+		{
+			const UnreferencedAsset& entry = m_UnreferencedAssets[evictCount];
+			const bool tooOld = m_Time - entry.releaseTime >= c_UnreferencedAssetMaxAge;
+			const bool overBudget = m_UnreferencedAssetsSize > c_UnreferencedAssetBudget;
+			const bool overCount = m_UnreferencedAssets.Size() - evictCount > c_MaxUnreferencedAssets;
+			if (!tooOld && !overBudget && !overCount)
+			{
+				break;
+			}
+			DeleteUnreferencedAssetResources(entry);
+		}
+
+		if (evictCount > 0)
+		{
+			m_UnreferencedAssets.EraseFromFront(evictCount);
+		}
+	}
+
+	void AssetManager::DeleteUnreferencedAssetResources(const UnreferencedAsset& entry)
+	{
+		AssetData& assetData = m_AssetMap[entry.assetID];
+		TYR_ASSERT(assetData.refCount == 0 && assetData.loadState == AssetLoadState::Loaded);
+		m_UnreferencedAssetsSize -= assetData.gpuSize;
+		if (entry.type == AssetLoadType::Texture)
+		{
+			DeleteTextureResources(entry.assetID, assetData);
+		}
+		else
+		{
+			DeleteMeshResources(entry.assetID, assetData);
+		}
+	}
+
 	const MeshHeader* AssetManager::GetMeshHeader(AssetID assetID) const
 	{
 		const AssetData* assetData = m_AssetMap.Find(assetID);
@@ -245,6 +366,18 @@ namespace tyr
 			return nullptr;
 		}
 		return &m_MeshHeaderPool[assetData->assetHeader];
+	}
+
+	MeshHandle AssetManager::GetMesh(AssetID assetID) const
+	{
+		const AssetData* assetData = m_AssetMap.Find(assetID);
+		return assetData && static_cast<bool>(assetData->assetHeader) ? MeshHandle(assetData->resourceHandle) : MeshHandle{};
+	}
+
+	MaterialHandle AssetManager::GetMaterial(AssetID assetID) const
+	{
+		const AssetData* assetData = m_AssetMap.Find(assetID);
+		return assetData && assetData->loadState == AssetLoadState::Loaded ? MaterialHandle(assetData->resourceHandle) : MaterialHandle{};
 	}
 
 	void AssetManager::DeleteTextureResources(AssetID assetID, AssetData& assetData)
@@ -257,8 +390,8 @@ namespace tyr
 	{
 		for (uint i = 0; i < m_PendingTextureDeletes.Size();)
 		{
-			const AssetID assetID = m_PendingTextureDeletes[i];
-			AssetData* assetData = m_AssetMap.Find(assetID);
+			const PendingAssetDelete pending = m_PendingTextureDeletes[i];
+			AssetData* assetData = m_AssetMap.Find(pending.assetID);
 			// A missing entry, or a refCount that's no longer 0, means something else (a fresh
 			// Load* call) already resolved this one way or another - nothing left to do here.
 			if (!assetData || assetData->refCount != 0)
@@ -269,7 +402,7 @@ namespace tyr
 
 			if (assetData->loadState == AssetLoadState::Loaded)
 			{
-				DeleteTextureResources(assetID, *assetData);
+				ReleaseLoadedAsset(pending.assetID, *assetData, AssetLoadType::Texture, pending.policy);
 				m_PendingTextureDeletes.SwapAndPopBack(i);
 			}
 			else
@@ -296,6 +429,7 @@ namespace tyr
 		AssetData& assetData = m_AssetMap[ld->assetID];
 		const TextureHandle textureHandle = m_RendererAPI->CreateTexture(desc);
 		assetData.resourceHandle = textureHandle.h;
+		assetData.gpuSize = ld->header.dataSize;
 
 		TexturePixelLoadData* pixelLD = TempNew<TexturePixelLoadData>();
 		pixelLD->assetID = ld->assetID;
@@ -378,7 +512,7 @@ namespace tyr
 		}
 	}
 
-	void AssetManager::DeleteMaterial(AssetID assetID)
+	void AssetManager::DeleteMaterial(AssetID assetID, AssetDeletePolicy policy)
 	{
 		AssetData* assetData = m_AssetMap.Find(assetID);
 		TYR_ASSERT(assetData);
@@ -387,14 +521,14 @@ namespace tyr
 			assetData->refCount = 0;
 			if (assetData->loadState == AssetLoadState::Loaded)
 			{
-				DeleteMaterialResources(assetID, *assetData);
+				DeleteMaterialResources(assetID, *assetData, policy);
 			}
 			else
 			{
 				// Still loading (file parse/texture-dependency resolution in flight) - the
 				// renderer resource doesn't exist yet, and tearing down now could race with
 				// the main-thread follow-up still reading each texture dependency's AssetData.
-				m_PendingMaterialDeletes.Add(assetID);
+				AddPendingDelete(m_PendingMaterialDeletes, assetID, policy);
 			}
 		}
 		else
@@ -403,15 +537,17 @@ namespace tyr
 		}
 	}
 
-	void AssetManager::DeleteMaterialResources(AssetID assetID, AssetData& assetData)
+	void AssetManager::DeleteMaterialResources(AssetID assetID, AssetData& assetData, AssetDeletePolicy policy)
 	{
+		// Read first, since freeing a texture below erases from the map that holds assetData.
+		const MaterialHandle material(assetData.resourceHandle);
 		uint depCount;
 		const AssetID* dependencies = AssetRegistry::Instance().GetAssetDependencies(assetID, depCount);
 		for (uint i = 0; i < depCount; ++i)
 		{
-			DeleteTexture(dependencies[i]);
+			DeleteTexture(dependencies[i], policy);
 		}
-		m_RendererAPI->DeleteMaterial(MaterialHandle(assetData.resourceHandle));
+		m_RendererAPI->DeleteMaterial(material);
 		m_AssetMap.Erase(assetID);
 	}
 
@@ -419,8 +555,8 @@ namespace tyr
 	{
 		for (uint i = 0; i < m_PendingMaterialDeletes.Size();)
 		{
-			const AssetID assetID = m_PendingMaterialDeletes[i];
-			AssetData* assetData = m_AssetMap.Find(assetID);
+			const PendingAssetDelete pending = m_PendingMaterialDeletes[i];
+			AssetData* assetData = m_AssetMap.Find(pending.assetID);
 			if (!assetData || assetData->refCount != 0)
 			{
 				m_PendingMaterialDeletes.SwapAndPopBack(i);
@@ -429,7 +565,7 @@ namespace tyr
 
 			if (assetData->loadState == AssetLoadState::Loaded)
 			{
-				DeleteMaterialResources(assetID, *assetData);
+				DeleteMaterialResources(pending.assetID, *assetData, pending.policy);
 				m_PendingMaterialDeletes.SwapAndPopBack(i);
 			}
 			else
@@ -477,6 +613,7 @@ namespace tyr
 	{
 		if (AssetData* assetData = m_AssetMap.Find(assetID))
 		{
+			ReuseUnreferencedAsset(assetID, *assetData);
 			assetData->refCount++;
 		}
 		else
@@ -505,7 +642,7 @@ namespace tyr
 		}
 	}
 
-	void AssetManager::DeleteMesh(AssetID assetID)
+	void AssetManager::DeleteMesh(AssetID assetID, AssetDeletePolicy policy)
 	{
 		AssetData* assetData = m_AssetMap.Find(assetID);
 		TYR_ASSERT(assetData);
@@ -514,14 +651,14 @@ namespace tyr
 			assetData->refCount = 0;
 			if (assetData->loadState == AssetLoadState::Loaded)
 			{
-				DeleteMeshResources(assetID, *assetData);
+				ReleaseLoadedAsset(assetID, *assetData, AssetLoadType::Mesh, policy);
 			}
 			else
 			{
 				// Still loading (header and/or LOD geometry not finished yet) - the main-thread
 				// follow-up still reads/writes this same AssetData, and freeing the header pool
 				// slot now would leave it working with a deleted (or since-reused) slot.
-				m_PendingMeshDeletes.Add(assetID);
+				AddPendingDelete(m_PendingMeshDeletes, assetID, policy);
 			}
 		}
 		else
@@ -541,8 +678,8 @@ namespace tyr
 	{
 		for (uint i = 0; i < m_PendingMeshDeletes.Size();)
 		{
-			const AssetID assetID = m_PendingMeshDeletes[i];
-			AssetData* assetData = m_AssetMap.Find(assetID);
+			const PendingAssetDelete pending = m_PendingMeshDeletes[i];
+			AssetData* assetData = m_AssetMap.Find(pending.assetID);
 			if (!assetData || assetData->refCount != 0)
 			{
 				m_PendingMeshDeletes.SwapAndPopBack(i);
@@ -551,7 +688,7 @@ namespace tyr
 
 			if (assetData->loadState == AssetLoadState::Loaded)
 			{
-				DeleteMeshResources(assetID, *assetData);
+				ReleaseLoadedAsset(pending.assetID, *assetData, AssetLoadType::Mesh, pending.policy);
 				m_PendingMeshDeletes.SwapAndPopBack(i);
 			}
 			else
@@ -578,6 +715,11 @@ namespace tyr
 		// wait on anything else, but resolving pending mesh instances does wait on this being set.
 		assetData.assetHeader = ld->header;
 		assetData.pendingLodCount = header.lods.Size();
+		assetData.gpuSize = 0;
+		for (const MeshChunkHeader& chunkHeader : header.chunks)
+		{
+			assetData.gpuSize += chunkHeader.decompressedVerticesSize + chunkHeader.decompressedIndicesSize + chunkHeader.decompressedMeshletsSize;
+		}
 
 		// Running byte offset into the file, starting right after the header - advances by
 		// each chunk's compressed size as we walk them in the order they were written

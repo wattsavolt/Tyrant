@@ -6,6 +6,7 @@ namespace tyr
 	struct ViewSettings
 	{
 		bool hierarchyOpen = true;
+		bool actorsOpen = true;
 		bool showGrid = true;
 		bool snapToGrid = true;
 	};

@@ -11,8 +11,9 @@ namespace tyr
 
 	TYR_COMPONENT_START(ComponentTransform, 0);
 		TYR_COMPONENT_FIELD(&ComponentTransform::local, "Local", true, true, true);
-		TYR_COMPONENT_FIELD(&ComponentTransform::world, "World", true, true, true);
-		TYR_COMPONENT_FIELD(&ComponentTransform::parentEntity, "Parent Entity", true, true, true);
+		// Worked out from the local transform and parent, so not edited directly.
+		TYR_COMPONENT_FIELD(&ComponentTransform::world, "World", false, false, true);
+		TYR_COMPONENT_FIELD(&ComponentTransform::parentEntity, "Parent Entity", false, false, true);
 	TYR_COMPONENT_END();
 
 	TYR_COMPONENT_START(MeshComponent, 0);
@@ -30,5 +31,22 @@ namespace tyr
 		TYR_COMPONENT_FIELD(&DirLightComponent::colour, "Colour", true, true, true);
 		TYR_COMPONENT_FIELD(&DirLightComponent::intensity, "Intensity", true, true, true);
 		TYR_COMPONENT_FIELD(&DirLightComponent::castsShadow, "Casts Shadow", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(PointLightComponent, 0);
+		TYR_COMPONENT_FIELD(&PointLightComponent::colour, "Colour", true, true, true);
+		TYR_COMPONENT_FIELD(&PointLightComponent::intensity, "Intensity", true, true, true);
+		TYR_COMPONENT_FIELD(&PointLightComponent::range, "Range", true, true, true);
+		TYR_COMPONENT_FIELD(&PointLightComponent::attenuation, "Attenuation", true, true, true);
+		TYR_COMPONENT_FIELD(&PointLightComponent::castsShadow, "Casts Shadow", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(SpotLightComponent, 0);
+		TYR_COMPONENT_FIELD(&SpotLightComponent::colour, "Colour", true, true, true);
+		TYR_COMPONENT_FIELD(&SpotLightComponent::intensity, "Intensity", true, true, true);
+		TYR_COMPONENT_FIELD(&SpotLightComponent::range, "Range", true, true, true);
+		TYR_COMPONENT_FIELD(&SpotLightComponent::coneFalloff, "Cone Falloff", true, true, true);
+		TYR_COMPONENT_FIELD(&SpotLightComponent::attenuation, "Attenuation", true, true, true);
+		TYR_COMPONENT_FIELD(&SpotLightComponent::castsShadow, "Casts Shadow", true, true, true);
 	TYR_COMPONENT_END();
 }

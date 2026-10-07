@@ -5,6 +5,7 @@
 #include "Containers/LocalArray.h"
 #include "String/Name.h"
 #include "Identifiers/Identifiers.h"
+#include "Reflection/ReflectionUtil.h"
 #include "ECS/EntitySystem.h"
 #include <type_traits>
 #include <cstring>
@@ -31,6 +32,8 @@ namespace tyr
 	// not through a capture - so a plain function pointer is enough here.
 	struct ActorComponentDesc
 	{
+		// The component's reflection type ID, so its type is known without adding it.
+		Id64 typeID;
 		void (*addFn)(EntitySystem&, Entity, const void*) = nullptr;
 		uint8 data[c_MaxActorComponentDataSize];
 	};
@@ -50,6 +53,7 @@ namespace tyr
 			static_assert(sizeof(T) <= c_MaxActorComponentDataSize, "Component too large for ActorComponentDesc::data - bump c_MaxActorComponentDataSize");
 
 			ActorComponentDesc& componentDesc = components.ExpandOne();
+			componentDesc.typeID = GetTypeID<T>();
 			memcpy(componentDesc.data, &value, sizeof(T));
 			componentDesc.addFn = [](EntitySystem& entities, Entity entity, const void* data)
 			{

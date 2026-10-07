@@ -61,4 +61,34 @@ namespace tyr
 		DirLightHandle lightHandle;
 	};
 
+	// A light shining in every direction from the entity's position.
+	struct PointLightComponent
+	{
+		Vector3 colour;
+		float intensity;
+		// Nothing further away than this is lit.
+		float range;
+		// How the light fades with distance: constant, linear and squared.
+		Vector3 attenuation;
+		bool castsShadow;
+		// Invalid until the light has been created in the renderer.
+		PointLightHandle lightHandle;
+	};
+
+	// A light shining in a cone from the entity's position, along its Z axis.
+	struct SpotLightComponent
+	{
+		Vector3 colour;
+		float intensity;
+		// Nothing further away than this is lit.
+		float range;
+		// How quickly the light fades away from the centre of the cone. Higher is narrower.
+		float coneFalloff;
+		// How the light fades with distance: constant, linear and squared.
+		Vector3 attenuation;
+		bool castsShadow;
+		// Invalid until the light has been created in the renderer.
+		SpotLightHandle lightHandle;
+	};
+
 }

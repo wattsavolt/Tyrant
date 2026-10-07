@@ -16,6 +16,8 @@ namespace tyr
 		TypeInfo& AddType(const char* name);
 		const TypeInfo& GetType(const Id64& id) const;
 		const TypeInfo& GetType(const char* name) const;
+		// Null when the type hasn't been registered.
+		const TypeInfo* FindType(const Id64& id) const;
 
 	private:
 		TypeRegistry() = default;

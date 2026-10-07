@@ -151,9 +151,9 @@ namespace tyr
 		LocalObjectPool<SkeletalMesh, RenderConstants::c_MaxSkeletalMeshes> m_SkeletalMeshPool;
 		LocalObjectPool<MeshInstance, RenderConstants::c_MaxMeshInstances> m_MeshInstancePool;
 		LocalObjectPool<SkeletalMeshInstance, RenderConstants::c_MaxSkeletalMeshInstances> m_SkeletalMeshInstancePool;
-		LocalObjectPool<DirectionalLight, RenderConstants::c_MaxDirLights> m_DirLightPool;
-		LocalObjectPool<PointLight, RenderConstants::c_MaxPointLights> m_PointLightPool;
-		LocalObjectPool<SpotLight, RenderConstants::c_MaxSpotLights> m_SpotLightPool;
+		LocalObjectPool<DirectionalLight, RenderConstants::c_DirLightPoolSize> m_DirLightPool;
+		LocalObjectPool<PointLight, RenderConstants::c_PointLightPoolSize> m_PointLightPool;
+		LocalObjectPool<SpotLight, RenderConstants::c_SpotLightPoolSize> m_SpotLightPool;
 
 		static RenderRegistry* s_Instance;
 	};

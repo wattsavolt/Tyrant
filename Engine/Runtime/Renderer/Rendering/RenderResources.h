@@ -91,6 +91,8 @@ namespace tyr
 		// tick (not buffered per RenderFrame slot - written and consumed within the same tick, no
 		// different than activeMeshInstanceIndexBuffer).
 		RenderBufferHandle shadowLightSlotMapBuffer;
+		// The active scene's lights this frame, as slots in the light buffers.
+		RenderBufferHandle lightIndexBuffer;
 
 		// TAA resolve - optional (Renderer::m_TaaEnabled), blends this tick's lit colour with the
 		// previous buffered viewport slot's own resolved history.

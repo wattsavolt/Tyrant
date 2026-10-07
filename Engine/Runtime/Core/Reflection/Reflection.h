@@ -4,6 +4,7 @@
 #include "TypeRegistry.h"
 #include "ReflectionUtil.h"
 #include "Serializer.h"
+#include "CustomObjectPropertiesReflector.h"
 
 namespace tyr
 {
@@ -30,9 +31,9 @@ namespace tyr
         } \
     } TYR_REFL_CONCAT(metaClassInst_, __LINE__); 
 
-#define TYR_REFL_FIELD(fieldPtr, name, isVisible, isEditable, isFinal) TypeInfoUtil::AddField(info, name, GetFieldTypeID(fieldPtr), GetFieldBuiltInCustomObjectSerializer(fieldPtr), 0, GetFieldOffset(fieldPtr), isVisible, isEditable, isFinal, false);
+#define TYR_REFL_FIELD(fieldPtr, name, isVisible, isEditable, isFinal) TypeInfoUtil::AddField(info, name, GetFieldTypeID(fieldPtr), GetFieldBuiltInCustomObjectSerializer(fieldPtr), GetFieldBuiltInCustomObjectPropertiesReflector(fieldPtr), 0, GetFieldOffset(fieldPtr), isVisible, isEditable, isFinal, false);
 
-#define TYR_REFL_ARRAY_FIELD(countFieldPtr, dataFieldPtr, name, isVisible, isEditable, isFinal) TypeInfoUtil::AddField(info, name, GetFieldTypeID(dataFieldPtr), nullptr, GetFieldOffset(countFieldPtr), GetFieldOffset(dataFieldPtr), isVisible, isEditable, isFinal, true);
+#define TYR_REFL_ARRAY_FIELD(countFieldPtr, dataFieldPtr, name, isVisible, isEditable, isFinal) TypeInfoUtil::AddField(info, name, GetFieldTypeID(dataFieldPtr), nullptr, nullptr, GetFieldOffset(countFieldPtr), GetFieldOffset(dataFieldPtr), isVisible, isEditable, isFinal, true);
 }
 
 

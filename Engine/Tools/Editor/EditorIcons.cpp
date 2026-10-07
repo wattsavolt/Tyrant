@@ -12,7 +12,7 @@ namespace tyr
 	{
 		constexpr const char* c_IconFolder = "Editor";
 		// Indexed by EditorIcons::Icon, matching each icon's PNG name.
-		constexpr const char* c_IconNames[] = { "Play", "Pause", "Stop", "Folder" };
+		constexpr const char* c_IconNames[] = { "Play", "Pause", "Stop", "Folder", "Translate", "Rotate", "Scale", "World", "Local" };
 		static_assert(sizeof(c_IconNames) / sizeof(c_IconNames[0]) == EditorIcons::IconCount);
 	}
 

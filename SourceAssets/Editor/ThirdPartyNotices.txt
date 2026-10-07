@@ -1,4 +1,5 @@
-Folder.png
-  "folder" from Google Material Icons, recoloured.
+Folder.png, Translate.png, Rotate.png, Scale.png, World.png, Local.png
+  Google Material Icons (folder, open_with, rotate_right, open_in_full, public, view_in_ar),
+  recoloured.
   https://github.com/google/material-design-icons
   Licensed under the Apache License, Version 2.0.

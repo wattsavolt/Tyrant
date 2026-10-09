@@ -44,7 +44,8 @@ namespace tyr
 			// is known.
 			m_Resources->shadowLightSlotMapBuffer,
 			// The active scene's lights this tick.
-			m_Resources->lightIndexBuffer
+			m_Resources->lightIndexBuffer,
+			m_Resources->debugLineVertexBuffer
 		};
 
 		for (RenderBufferHandle buffer : buffers)

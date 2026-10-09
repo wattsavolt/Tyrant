@@ -28,6 +28,9 @@ namespace tyr
 		// Looks up the ID we already gave a component type.
 		ComponentTypeID GetComponentTypeID(const Id64& typeID) const;
 
+		// False when typeID isn't a registered component type, such as one that's been removed.
+		bool FindComponentTypeID(const Id64& typeID, ComponentTypeID& outComponentTypeID) const;
+
 		template<typename T>
 		static ComponentTypeID GetComponentTypeID()
 		{

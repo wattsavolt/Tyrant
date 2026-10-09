@@ -18,7 +18,8 @@ struct PushConstants
 	uint renderFrameIndex;
 	uint majorLineEvery;
 	float cellSize;
-	float _pad0;
+	// Zero just copies the image, for when only debug lines are drawn over it.
+	uint gridEnabled;
 };
 TYR_VK_PUSH_CONSTANT PushConstants g_PushConstants;
 
@@ -113,7 +114,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 	const float2 pixel = float2(dispatchThreadId.xy) + 0.5f;
 	float3 rayOrigin;
 	float3 hit;
-	if (IntersectGround(pixel, rayOrigin, hit))
+	if (g_PushConstants.gridEnabled != 0 && IntersectGround(pixel, rayOrigin, hit))
 	{
 		// Hidden behind anything the scene drew closer to the camera. The small bias keeps the
 		// grid on top of surfaces lying exactly on the plane.

@@ -9,6 +9,7 @@
 #include "ECS/EntitySystem.h"
 #include "Window/WindowHandle.h"
 #include "String/Path.h"
+#include "Level/LevelSettings.h"
 
 namespace tyr
 {
@@ -31,12 +32,18 @@ namespace tyr
 	};
 
 	constexpr uint c_MaxActorInstanceEntities = 32;
+	constexpr uint c_MaxActorName = 63;
+	using ActorName = LocalString<c_MaxActorName>;
 
 	// An actor placed in a world, with the name and folder it's shown under in the editor.
 	// Identify it by its root entity rather than its index, since indices change on removal.
 	struct ActorInstance
 	{
-		Name name;
+		// Made from a GUID when the actor is placed and kept for good, unlike its name.
+		Id64 id;
+		// The actor type it was made from.
+		Id64 typeID;
+		ActorName name;
 		// Folder in the level hierarchy, e.g. "Enemies/Boss".
 		RelativePath folderPath;
 		LocalArray<Entity, c_MaxActorInstanceEntities> entities;
@@ -65,12 +72,20 @@ namespace tyr
 		// The entities version the renderer-side mesh instances and lights were last synced at.
 		uint syncedEntitiesVersion = 0;
 		Array<ActorInstance> actorInstances;
+		// Hierarchy folders, including ones with nothing in them.
+		Array<RelativePath> folders;
+		LevelSettings settings;
+		// Goes up with every edit to the level, so the editor can tell when there are unsaved changes.
+		uint changeCount = 0;
 
 		// Puts a recycled pool slot back to a blank state before it's filled in again for a
 		// new world. entities.Reset() drops every entity/archetype from whatever level was
 		// previously using this slot.
 		void Reset()
 		{
+			folders.Clear();
+			settings = {};
+			changeCount = 0;
 			name = {};
 			camera = nullptr;
 			viewArea = {};

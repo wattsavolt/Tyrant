@@ -132,6 +132,13 @@ namespace tyr
 
 		size_t GetImageAllocationSize(ImageHandle handle);
 
+		// How much GPU-local memory the app uses and may use, as the OS reports it when it can.
+		// Changes over time, since other apps share the GPU.
+		void GetDeviceMemoryBudget(size_t& outUsage, size_t& outBudget);
+
+		// Once a frame, so the memory budget stays up to date.
+		void SetCurrentFrameIndex(uint frameIndex);
+
 		void UpdateDescriptorSet(DescriptorSetHandle handle, const BufferBindingUpdate* bufferUpdates, uint bufferUpdateCount, const ImageBindingUpdate* imageUpdates = nullptr,
 			uint imageUpdateCount = 0, const AccelerationStructureBindingUpdate* accelerationStructureUpdates = nullptr, uint accelerationStructureUpdateCount = 0);
 

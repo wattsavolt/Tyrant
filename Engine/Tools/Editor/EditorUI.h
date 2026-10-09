@@ -23,12 +23,16 @@ namespace tyr
 	{
 	public:
 		// levelWorld is the world being edited.
-		EditorUI(GUIModule& guiModule, RendererAPI& rendererAPI, AssetManager& assetManager, WorldManager& worldManager, Handle levelWorld);
+		EditorUI(GUIModule& guiModule, RendererAPI& rendererAPI, AssetManager& assetManager, WorldManager& worldManager, Handle levelWorld, const EditorSettings& settings);
 
 		// Returns where the viewport should be drawn this frame. playState changes when a
 		// toolbar button is clicked. selectedActor is the selected actor's root entity, or
-		// c_InvalidEntity. requests is filled with anything the panels ask the editor to do.
-		PanelRect Draw(PlayState& playState, Entity& selectedActor, EditorRequests& requests);
+		// c_InvalidEntity. openLevel is the level being edited and levelDirty whether it has
+		// unsaved changes. requests is filled with anything the panels ask the editor to do.
+		PanelRect Draw(PlayState& playState, Entity& selectedActor, AssetID openLevel, bool levelDirty, EditorRequests& requests);
+
+		// Exits the editor, first asking whether to save if the level has unsaved changes.
+		void RequestExit(bool levelDirty, EditorRequests& requests) { m_FileMenu.Exit(levelDirty, requests); }
 
 		// Sends the level editor's or the game's render settings to the renderer.
 		void ApplyRenderSettings(bool editing) { m_EditMenu.ApplyRenderSettings(editing); }

@@ -28,6 +28,24 @@ namespace tyr
 		return RenameResult::Editing;
 	}
 
+	bool EditorWidgets::ContainsIgnoreCase(const char* text, const char* search)
+	{
+		const size_t searchLength = strlen(search);
+		for (; *text != '\0'; ++text)
+		{
+			size_t i = 0;
+			while (i < searchLength && text[i] != '\0' && tolower(static_cast<unsigned char>(text[i])) == tolower(static_cast<unsigned char>(search[i])))
+			{
+				++i;
+			}
+			if (i == searchLength)
+			{
+				return true;
+			}
+		}
+		return searchLength == 0;
+	}
+
 	void EditorWidgets::MakeDisplayName(const char* typeName, char* displayName, size_t displayNameSize)
 	{
 		constexpr const char* c_ComponentWord = "Component";

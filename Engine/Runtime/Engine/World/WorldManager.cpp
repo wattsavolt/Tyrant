@@ -13,6 +13,8 @@
 #include "AssetSystem/AssetConstants.h"
 #include "Reflection/TypeRegistry.h"
 #include "Actor/ActorTypes.h"
+#include "Platform/Platform.h"
+#include "Debug/DebugDraw.h"
 #include <cstring>
 
 namespace tyr
@@ -143,6 +145,7 @@ namespace tyr
 
 		World& world = m_WorldPool[m_ActiveWorld];
 		UpdateWorld(m_ActiveWorld, world, deltaTime);
+		DebugDraw::Flush(m_ActiveWorld, deltaTime, *m_RendererAPI);
 	}
 
 	void WorldManager::UpdateWorld(Handle worldHandle, World& world, float deltaTime)
@@ -203,10 +206,7 @@ namespace tyr
 		// world's data up once the buffered slot it was last written to gets reused.
 		m_RendererAPI->SetActiveScene(world.sceneHandle, world.visible);
 
-		// TODO: Shoehorned flat ambient term until a proper scene/lighting-settings system
-		// exists to make this configurable per world. Called here every tick anyway since
-		// nothing else makes this value change yet.
-		m_RendererAPI->SetSceneAmbient(world.sceneHandle, 0.15f);
+		m_RendererAPI->SetSceneAmbient(world.sceneHandle, world.settings.ambient);
 
 		SceneView view;
 		view.viewArea = world.viewArea;
@@ -256,6 +256,7 @@ namespace tyr
 		}
 
 		m_ActiveWorld = worldHandle;
+		DebugDraw::SetWorld(worldHandle);
 
 		if (worldHandle)
 		{
@@ -295,6 +296,7 @@ namespace tyr
 
 		World& world = m_WorldPool[worldHandle];
 		ShutdownWorld(world);
+		DebugDraw::ClearWorld(worldHandle);
 		for (uint i = 0; i < m_Worlds.Size(); ++i)
 		{
 			if (worldHandle == m_Worlds[i])
@@ -314,6 +316,7 @@ namespace tyr
 		{
 			World& world = m_WorldPool[worldHandle];
 			ShutdownWorld(world);
+			DebugDraw::ClearWorld(worldHandle);
 			m_WorldPool.Delete(worldHandle);
 		}
 		m_Worlds.Clear();
@@ -346,7 +349,7 @@ namespace tyr
 				World& world = m_WorldPool[worldHandle];
 				MeshComponent& comp = world.entities.GetComponent<MeshComponent>(entity);
 				comp.meshInstance = handle;
-				comp.materials = materials;
+				comp.loadedMaterials = materials;
 
 				// An empty box, such as on a newly placed actor, takes the mesh's bounds.
 				if (world.entities.HasComponent<BoxComponent>(entity))
@@ -376,6 +379,7 @@ namespace tyr
 	bool WorldManager::SetComponentData(Handle worldHandle, Entity entity, ComponentTypeID typeID, const void* data)
 	{
 		World& world = m_WorldPool[worldHandle];
+		++world.changeCount;
 
 		if (typeID == ComponentRegistry::GetComponentTypeID<MeshComponent>())
 		{
@@ -492,6 +496,7 @@ namespace tyr
 		{
 			current.materials = meshComponent.materials;
 		}
+		current.loadedMaterials.Clear();
 		current.meshInstance = {};
 		current.meshInstanceRequested = false;
 
@@ -518,7 +523,7 @@ namespace tyr
 				MeshInstanceDesc desc;
 				desc.info.transform = Matrix4::CreateTRS(transform.position, transform.rotation, transform.scale);
 				desc.info.mesh = m_AssetManager->GetMesh(meshComponent.mesh);
-				for (AssetID materialID : meshComponent.materials)
+				for (AssetID materialID : meshComponent.loadedMaterials)
 				{
 					desc.info.materials.Add(m_AssetManager->GetMaterial(materialID));
 				}
@@ -555,6 +560,8 @@ namespace tyr
 				continue;
 			}
 
+			++world.changeCount;
+
 			// The root has no parent, so its local and world transforms are the same.
 			ComponentTransform& root = world.entities.GetComponent<ComponentTransform>(rootEntity);
 			root.local = transform;
@@ -586,7 +593,7 @@ namespace tyr
 		// One that's still loading is released by its creation callback once it finishes.
 		if (meshComponent.meshInstance)
 		{
-			ReleaseMeshInstance(meshComponent.meshInstance, meshComponent.mesh, meshComponent.materials);
+			ReleaseMeshInstance(meshComponent.meshInstance, meshComponent.mesh, meshComponent.loadedMaterials);
 		}
 	}
 
@@ -600,14 +607,36 @@ namespace tyr
 		m_AssetManager->DeleteMesh(meshID);
 	}
 
-	void WorldManager::AddActorInstance(Handle worldHandle, const char* name, const char* folderPath, const LocalArray<Entity, c_MaxActorInstanceEntities>& entities)
+	Id64 WorldManager::CreateActorInstanceID()
+	{
+		Guid guid;
+		Platform::CreateGuid(guid);
+		return Id64(guid);
+	}
+
+	void WorldManager::AddActorInstance(Handle worldHandle, const Id64& id, const Id64& typeID, const char* name, const char* folderPath, const LocalArray<Entity, c_MaxActorInstanceEntities>& entities)
 	{
 		World& world = m_WorldPool[worldHandle];
 
 		ActorInstance& instance = world.actorInstances.ExpandOne();
+		instance.id = id;
+		instance.typeID = typeID;
 		instance.name = name;
 		instance.folderPath = folderPath;
 		instance.entities = entities;
+		++world.changeCount;
+	}
+
+	void WorldManager::ClearWorld(Handle worldHandle)
+	{
+		World& world = m_WorldPool[worldHandle];
+		while (!world.actorInstances.IsEmpty())
+		{
+			RemoveActorInstance(worldHandle, world.actorInstances.Back().RootEntity());
+		}
+		world.folders.Clear();
+		world.settings = {};
+		++world.changeCount;
 	}
 
 	void WorldManager::RemoveActorInstance(Handle worldHandle, Entity rootEntity)
@@ -643,6 +672,7 @@ namespace tyr
 			}
 
 			world.actorInstances.SwapAndPopBack(i);
+			++world.changeCount;
 			return;
 		}
 	}

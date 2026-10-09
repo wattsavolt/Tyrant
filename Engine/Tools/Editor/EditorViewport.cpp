@@ -5,6 +5,7 @@
 #include "Input/InputManager.h"
 #include "World/Camera.h"
 #include "World/World.h"
+#include "Debug/DebugDraw.h"
 #include "imgui.h"
 
 namespace tyr
@@ -44,6 +45,7 @@ namespace tyr
 		const ImVec2 imageMin = ImGui::GetCursorScreenPos();
 		ImGui::Image(texID, ImVec2((float)width, (float)height));
 		const bool imageHovered = ImGui::IsItemHovered();
+		DrawDebugTexts(world, imageMin.x, imageMin.y, width, height);
 
 		if (state.editing)
 		{
@@ -90,6 +92,42 @@ namespace tyr
 		view = Matrix4::CreateView(camera.GetPosition(), camera.GetForward(), camera.GetUp());
 		// Reverse-Z, the same as the renderer.
 		projection = Matrix4::CreatePerspective(camera.GetFOV(), aspect, camera.GetFarZ(), camera.GetNearZ());
+	}
+
+	void EditorViewport::DrawDebugTexts(const World& world, float imageX, float imageY, uint width, uint height)
+	{
+		uint textCount;
+		const DebugText* texts = DebugDraw::GetTexts(textCount);
+		if (textCount == 0)
+		{
+			return;
+		}
+
+		Matrix4 view;
+		Matrix4 projection;
+		CalculateViewProjection(world, width, height, view, projection);
+		const Matrix4 viewProj = view * projection;
+		const ViewArea& viewArea = world.viewArea;
+		ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+		for (uint i = 0; i < textCount; ++i)
+		{
+			const DebugText& text = texts[i];
+			const Vector4 clip = viewProj.Multiply(Vector4(text.position.x, text.position.y, text.position.z, 1.0f));
+			// Behind the camera.
+			if (clip.w <= 0.0f)
+			{
+				continue;
+			}
+
+			// Centred on the point, with +Y up in normalized device coordinates.
+			const float u = viewArea.x + (clip.x / clip.w * 0.5f + 0.5f) * viewArea.width;
+			const float v = viewArea.y + (0.5f - clip.y / clip.w * 0.5f) * viewArea.height;
+			const ImVec2 textSize = ImGui::CalcTextSize(text.text.CStr());
+			const ImVec2 position(imageX + u * (float)width - textSize.x * 0.5f, imageY + v * (float)height - textSize.y * 0.5f);
+			// The same packing as ImGui's colours, with R in the lowest byte.
+			drawList->AddText(position, text.colour, text.text.CStr());
+		}
 	}
 
 	ViewportRay EditorViewport::CalculateMouseRay(const World& world, float mouseX, float mouseY, uint width, uint height)

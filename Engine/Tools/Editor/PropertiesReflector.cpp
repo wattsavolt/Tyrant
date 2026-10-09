@@ -16,6 +16,8 @@ namespace tyr
 		constexpr uint c_MaxStringFieldSize = 512;
 		constexpr float c_AxisBarWidth = 3.0f;
 		const ImU32 c_AxisColours[3] = { IM_COL32(220, 60, 60, 255), IM_COL32(90, 200, 70, 255), IM_COL32(60, 110, 235, 255) };
+		// Labels of values changed from the actor type's default.
+		const ImU32 c_OverriddenColour = IM_COL32(255, 196, 70, 255);
 
 		// The ImGui number type for a base type, or false if it isn't one.
 		bool GetNumberType(const Id64& typeID, ImGuiDataType& dataType)
@@ -87,8 +89,23 @@ namespace tyr
 		m_CustomReflectors[typeID] = function;
 	}
 
-	bool PropertiesReflector::ReflectObject(void* object, const TypeInfo& typeInfo)
+	void PropertiesReflector::RegisterFieldReflector(const Id64& objectTypeID, const Id32& fieldKey, FieldReflectFunction function, void* userData)
 	{
+		m_FieldReflectors.Add({ objectTypeID, fieldKey, function, userData });
+	}
+
+	bool PropertiesReflector::TakeResetRequest()
+	{
+		const bool requested = m_ResetRequested;
+		m_ResetRequested = false;
+		return requested;
+	}
+
+	bool PropertiesReflector::ReflectObject(void* object, const TypeInfo& typeInfo, const void* defaults)
+	{
+		// The same ID the type was registered under, only worked out when a field reflector could match.
+		const Id64 objectTypeID = m_FieldReflectors.IsEmpty() ? Id64() : Id64(typeInfo.name.CStr());
+
 		bool changed = false;
 		for (uint i = 0; i < typeInfo.fieldCount; ++i)
 		{
@@ -100,14 +117,44 @@ namespace tyr
 
 			ImGui::PushID(field.name);
 			ImGui::BeginDisabled(!field.isEditable);
-			changed |= ReflectField(static_cast<uint8*>(object), field);
+			// Values that can't be edited can't be overridden either.
+			const uint8* fieldDefaults = field.isEditable ? static_cast<const uint8*>(defaults) : nullptr;
+			const FieldReflectorEntry* fieldReflector = nullptr;
+			for (const FieldReflectorEntry& entry : m_FieldReflectors)
+			{
+				if (entry.objectTypeID == objectTypeID && entry.fieldKey == field.key)
+				{
+					fieldReflector = &entry;
+					break;
+				}
+			}
+			if (fieldReflector)
+			{
+				m_ResetRequested = false;
+				changed |= fieldReflector->function(*this, field, static_cast<uint8*>(object), fieldDefaults, fieldReflector->userData);
+				m_RowOverridden = false;
+			}
+			else
+			{
+				changed |= ReflectField(static_cast<uint8*>(object), field, fieldDefaults);
+			}
 			ImGui::EndDisabled();
 			ImGui::PopID();
 		}
 		return changed;
 	}
 
-	bool PropertiesReflector::ReflectField(uint8* object, const Field& field)
+	bool PropertiesReflector::IsGroup(const Field& field) const
+	{
+		if (field.customPropertiesReflector || field.isCArray || m_CustomReflectors.Find(field.typeID))
+		{
+			return false;
+		}
+		const TypeInfo* typeInfo = TypeRegistry::Instance().FindType(field.typeID);
+		return typeInfo && typeInfo->fieldCount > 0;
+	}
+
+	bool PropertiesReflector::ReflectField(uint8* object, const Field& field, const uint8* defaults)
 	{
 		uint8* data = object + field.dataOffset;
 		if (field.isCArray)
@@ -116,10 +163,29 @@ namespace tyr
 			memcpy(&count, object + field.countOffset, sizeof(uint));
 			return ReflectCArray(field.name, data, count, field.typeID);
 		}
-		return ReflectValue(field.name, data, field.typeID, field.customPropertiesReflector);
+
+		// A struct's own fields are marked individually, so only whole values are marked here.
+		const uint8* fieldDefault = defaults ? defaults + field.dataOffset : nullptr;
+		if (fieldDefault && !IsGroup(field))
+		{
+			m_RowOverridden = field.customPropertiesReflector
+				? !field.customPropertiesReflector->Equals(data, fieldDefault)
+				: memcmp(data, fieldDefault, field.size) != 0;
+		}
+
+		m_ResetRequested = false;
+		bool changed = ReflectValue(field.name, data, field.typeID, field.customPropertiesReflector, fieldDefault);
+		if (m_ResetRequested && fieldDefault)
+		{
+			memcpy(data, fieldDefault, field.size);
+			changed = true;
+		}
+		m_ResetRequested = false;
+		m_RowOverridden = false;
+		return changed;
 	}
 
-	bool PropertiesReflector::ReflectValue(const char* label, void* data, const Id64& typeID, const CustomObjectPropertiesReflector* customReflector)
+	bool PropertiesReflector::ReflectValue(const char* label, void* data, const Id64& typeID, const CustomObjectPropertiesReflector* customReflector, const void* defaults)
 	{
 		if (const CustomReflectFunction* function = m_CustomReflectors.Find(typeID))
 		{
@@ -159,7 +225,7 @@ namespace tyr
 			bool changed = false;
 			if (BeginGroupRow(label))
 			{
-				changed = ReflectObject(data, *typeInfo);
+				changed = ReflectObject(data, *typeInfo, defaults);
 				EndGroupRow();
 			}
 			return changed;
@@ -204,7 +270,7 @@ namespace tyr
 				char elementLabel[24];
 				snprintf(elementLabel, sizeof(elementLabel), "Index %u", i);
 				ImGui::PushID(static_cast<int>(i));
-				changed |= ReflectValue(elementLabel, reflector.GetElement(data, i), reflector.GetElementTypeID(), reflector.GetElementReflector());
+				changed |= ReflectValue(elementLabel, reflector.GetElement(data, i), reflector.GetElementTypeID(), reflector.GetElementReflector(), nullptr);
 				ImGui::PopID();
 			}
 			EndGroupRow();
@@ -247,7 +313,7 @@ namespace tyr
 				char elementLabel[24];
 				snprintf(elementLabel, sizeof(elementLabel), "Index %u", i);
 				ImGui::PushID(static_cast<int>(i));
-				changed |= ReflectValue(elementLabel, data + i * elementType->size, elementTypeID, nullptr);
+				changed |= ReflectValue(elementLabel, data + i * elementType->size, elementTypeID, nullptr, nullptr);
 				ImGui::PopID();
 			}
 		}
@@ -255,16 +321,16 @@ namespace tyr
 		return changed;
 	}
 
-	bool PropertiesReflector::ReflectVector3(PropertiesReflector& /*reflector*/, const char* label, void* data)
+	bool PropertiesReflector::ReflectVector3(PropertiesReflector& reflector, const char* label, void* data)
 	{
-		BeginValueRow(label);
+		reflector.BeginValueRow(label);
 		Vector3& vector = *static_cast<Vector3*>(data);
 		return DrawAxisFloats(&vector.x, 0.01f, "%.3f");
 	}
 
 	bool PropertiesReflector::ReflectQuaternion(PropertiesReflector& reflector, const char* label, void* data)
 	{
-		BeginValueRow(label);
+		reflector.BeginValueRow(label);
 		Quaternion& rotation = *static_cast<Quaternion*>(data);
 
 		// Unique to this field wherever it's drawn.
@@ -312,50 +378,15 @@ namespace tyr
 		return true;
 	}
 
-	bool PropertiesReflector::ReflectAssetID(PropertiesReflector& /*reflector*/, const char* label, void* data)
+	bool PropertiesReflector::ReflectAssetID(PropertiesReflector& reflector, const char* label, void* data)
 	{
-		BeginValueRow(label);
+		reflector.BeginValueRow(label);
 		AssetID& assetID = *static_cast<AssetID*>(data);
 
-		// The asset's file name, which can be swapped by dropping another asset on it.
-		char name[PathConstants::c_MaxFileNameTotalSize];
-		const char* path = nullptr;
-		if (!AssetUtil::IsValidAssetID(assetID))
-		{
-			strcpy_s(name, "None");
-		}
-		else if (const RegAssetData* assetData = AssetRegistry::Instance().GetAssets().Find(assetID))
-		{
-			path = assetData->filePath.CStr();
-			PathUtil::GetFileNameWithoutExtension(path, name);
-		}
-		else
-		{
-			strcpy_s(name, "Missing");
-		}
-
+		// Any kind of asset, since the field's type doesn't say which kind it wants.
 		const float clearWidth = ImGui::GetFrameHeight();
 		const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
-		char buttonLabel[PathConstants::c_MaxFileNameTotalSize + 16];
-		snprintf(buttonLabel, sizeof(buttonLabel), "%s##asset", name);
-		ImGui::Button(buttonLabel, ImVec2(ImGui::GetContentRegionAvail().x - clearWidth - spacing, 0.0f));
-		ImGui::SetItemTooltip("%s", path ? path : "Drop an asset here from the Asset Browser");
-
-		bool changed = false;
-		if (ImGui::BeginDragDropTarget())
-		{
-			const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(AssetBrowserPanel::c_AssetPayload);
-			if (!payload)
-			{
-				payload = ImGui::AcceptDragDropPayload(AssetBrowserPanel::c_MeshPayload);
-			}
-			if (payload)
-			{
-				assetID = *static_cast<const AssetID*>(payload->Data);
-				changed = true;
-			}
-			ImGui::EndDragDropTarget();
-		}
+		bool changed = reflector.m_AssetPicker.Draw(assetID, nullptr, ImGui::GetContentRegionAvail().x - clearWidth - spacing);
 
 		ImGui::SameLine(0.0f, spacing);
 		if (ImGui::Button("X##clear", ImVec2(clearWidth, 0.0f)))
@@ -372,7 +403,7 @@ namespace tyr
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
 		ImGui::AlignTextToFramePadding();
-		ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanFullWidth);
+		DrawRowLabel(label, ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanFullWidth);
 		ImGui::TableSetColumnIndex(1);
 		ImGui::SetNextItemWidth(-FLT_MIN);
 	}
@@ -382,8 +413,32 @@ namespace tyr
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
 		ImGui::AlignTextToFramePadding();
-		const bool open = ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_DefaultOpen);
+		const bool open = DrawRowLabel(label, ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_DefaultOpen);
 		ImGui::TableSetColumnIndex(1);
+		return open;
+	}
+
+	bool PropertiesReflector::DrawRowLabel(const char* label, int treeNodeFlags)
+	{
+		const bool overridden = m_RowOverridden;
+		m_RowOverridden = false;
+		if (!overridden)
+		{
+			return ImGui::TreeNodeEx(label, treeNodeFlags);
+		}
+
+		ImGui::PushStyleColor(ImGuiCol_Text, c_OverriddenColour);
+		const bool open = ImGui::TreeNodeEx(label, treeNodeFlags);
+		ImGui::PopStyleColor();
+		ImGui::SetItemTooltip("Changed from the actor type's default. Right-click to reset it.");
+		if (ImGui::BeginPopupContextItem("##ResetMenu"))
+		{
+			if (ImGui::MenuItem("Reset to Default"))
+			{
+				m_ResetRequested = true;
+			}
+			ImGui::EndPopup();
+		}
 		return open;
 	}
 

@@ -295,9 +295,8 @@ namespace tyr
 
 	void AssetManager::AddUnreferencedAsset(AssetID assetID, const AssetData& assetData, AssetLoadType type)
 	{
-		m_UnreferencedAssets.Add({ assetID, m_Time, type });
 		// Eviction waits for Update, since callers may still hold AssetData references.
-		m_UnreferencedAssetsSize += assetData.gpuSize;
+		m_UnreferencedAssets.Add({ assetID, m_Time, type });
 	}
 
 	void AssetManager::ReuseUnreferencedAsset(AssetID assetID, const AssetData& assetData)
@@ -313,7 +312,6 @@ namespace tyr
 		{
 			if (m_UnreferencedAssets[i].assetID == assetID)
 			{
-				m_UnreferencedAssetsSize -= assetData.gpuSize;
 				// Erase rather than swap to keep the oldest-first order.
 				m_UnreferencedAssets.Erase(i);
 				return;
@@ -323,31 +321,53 @@ namespace tyr
 
 	void AssetManager::EvictUnreferencedAssets()
 	{
-		uint evictCount = 0;
-		for (; evictCount < m_UnreferencedAssets.Size(); ++evictCount)
+		// A texture deleted in the last few frames only gives its memory back once the GPU has
+		// finished with it, so what those freed is counted as gone already.
+		m_EvictedBytesIndex = (m_EvictedBytesIndex + 1) % c_EvictionDelayFrames;
+		m_EvictedBytes[m_EvictedBytesIndex] = 0;
+		size_t pendingFree = 0;
+		for (size_t evicted : m_EvictedBytes)
 		{
-			const UnreferencedAsset& entry = m_UnreferencedAssets[evictCount];
-			const bool tooOld = m_Time - entry.releaseTime >= c_UnreferencedAssetMaxAge;
-			const bool overBudget = m_UnreferencedAssetsSize > c_UnreferencedAssetBudget;
-			const bool overCount = m_UnreferencedAssets.Size() - evictCount > c_MaxUnreferencedAssets;
-			if (!tooOld && !overBudget && !overCount)
-			{
-				break;
-			}
-			DeleteUnreferencedAssetResources(entry);
+			pendingFree += evicted;
 		}
 
-		if (evictCount > 0)
+		size_t usage;
+		size_t budget;
+		m_Device->GetDeviceMemoryBudget(usage, budget);
+		size_t remainingUsage = usage > pendingFree ? usage - pendingFree : 0;
+		const size_t threshold = static_cast<size_t>(static_cast<double>(budget) * c_BudgetThreshold);
+
+		// Kept entries are packed down in place, so the oldest-first order holds.
+		const uint count = m_UnreferencedAssets.Size();
+		uint keptCount = 0;
+		for (uint i = 0; i < count; ++i)
 		{
-			m_UnreferencedAssets.EraseFromFront(evictCount);
+			const UnreferencedAsset entry = m_UnreferencedAssets[i];
+			const bool tooOld = m_Time - entry.releaseTime >= c_UnreferencedAssetMaxAge;
+			const bool overCount = keptCount + (count - i) > c_MaxUnreferencedAssets;
+			// Only textures count against the budget, since meshes live in shared buffers.
+			const bool overBudget = entry.type == AssetLoadType::Texture && remainingUsage > threshold;
+			if (!tooOld && !overCount && !overBudget)
+			{
+				m_UnreferencedAssets[keptCount++] = entry;
+				continue;
+			}
+
+			const size_t freed = DeleteUnreferencedAssetResources(entry);
+			if (entry.type == AssetLoadType::Texture)
+			{
+				m_EvictedBytes[m_EvictedBytesIndex] += freed;
+				remainingUsage = remainingUsage > freed ? remainingUsage - freed : 0;
+			}
 		}
+		m_UnreferencedAssets.EraseFromEnd(count - keptCount);
 	}
 
-	void AssetManager::DeleteUnreferencedAssetResources(const UnreferencedAsset& entry)
+	size_t AssetManager::DeleteUnreferencedAssetResources(const UnreferencedAsset& entry)
 	{
 		AssetData& assetData = m_AssetMap[entry.assetID];
 		TYR_ASSERT(assetData.refCount == 0 && assetData.loadState == AssetLoadState::Loaded);
-		m_UnreferencedAssetsSize -= assetData.gpuSize;
+		const size_t gpuSize = assetData.gpuSize;
 		if (entry.type == AssetLoadType::Texture)
 		{
 			DeleteTextureResources(entry.assetID, assetData);
@@ -356,6 +376,7 @@ namespace tyr
 		{
 			DeleteMeshResources(entry.assetID, assetData);
 		}
+		return gpuSize;
 	}
 
 	const MeshHeader* AssetManager::GetMeshHeader(AssetID assetID) const

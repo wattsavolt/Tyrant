@@ -9,10 +9,13 @@
 #include "ECS/EntitySystem.h"
 #include "Rendering/RenderViewport.h"
 #include "String/Name.h"
+#include "World/World.h"
+#include "EditorSettings.h"
 
 namespace tyr
 {
 	struct MeshHeader;
+	struct ActorTypeDesc;
 	class WindowModule;
 	class Camera;
 	class AssetManager;
@@ -44,6 +47,9 @@ namespace tyr
 		// Sends the View menu's grid setting to the level's viewport when it changes.
 		void UpdateGrid();
 
+		// The View menu's debug drawing over the level: actor bounds, light ranges and names.
+		void DrawDebugOverlays();
+
 		// A mesh dropped into the viewport, waiting for its header before it can be placed.
 		struct PendingMeshDrop
 		{
@@ -56,17 +62,33 @@ namespace tyr
 		};
 
 		void HandleRequests(const EditorRequests& requests);
+		void HandleLevelRequests(const EditorRequests& requests);
 		void AddMeshDrop(const EditorViewport::MeshDrop& drop, const char* folderPath);
 		void ProcessPendingMeshDrops();
 		// Places a static mesh actor where the drop's ray lands and returns its entity.
 		Entity SpawnStaticMeshActor(const PendingMeshDrop& pending, const MeshHeader& header);
 		// Places an actor of a registered type in front of the camera, and selects it.
 		void PlaceActor(const Id64& actorType, const char* folderPath);
+		// Adds an actor of the type to the level, named after it, and returns its root entity.
+		Entity AddActor(const ActorTypeDesc& actorType, const char* name, const char* folderPath);
 		// Like Unreal, where something dropped onto nothing goes - a set distance along the ray,
 		// snapped to the grid when snapping is on.
 		Vector3 GetBackgroundDropPosition(const ViewportRay& ray) const;
 		ViewportRay GetCameraRay() const;
-		static Name MakeUniqueActorName(const World& world, const char* baseName);
+		static ActorName MakeUniqueActorName(const World& world, const char* baseName);
+
+		// Opens the default level, or the first one there is, or makes one.
+		void OpenStartLevel();
+		// Makes the level the one opened on startup.
+		void SetDefaultLevel(AssetID level);
+		// Makes and saves a level holding just a directional light.
+		void NewLevel(const char* name);
+		void OpenLevel(AssetID level);
+		void SaveLevel();
+		void SaveLevelAs(const char* name);
+		void SaveAll();
+		bool WriteLevel(const char* levelPath);
+		bool IsLevelDirty() const;
 
 		// The root entity of the level actor the ray hits first, or c_InvalidEntity.
 		Entity PickActor(const ViewportRay& ray);
@@ -80,6 +102,9 @@ namespace tyr
 		WorldManager* m_WorldManager{};
 		RendererAPI* m_RendererAPI{};
 		Handle m_LevelEditorWorld{};
+		// The level being edited, and the world's change count when it was last saved or opened.
+		AssetID m_Level;
+		uint m_SavedChangeCount = 0;
 		GUIModule* m_GUIModule{};
 		InputManager* m_InputManager{};
 		// The selected actor's root entity, or c_InvalidEntity.
@@ -89,6 +114,7 @@ namespace tyr
 		// Shared by the grid's rendering and snapping. Starts disabled so the first update sends it.
 		ViewportGridDesc m_Grid;
 		// Constructed in Initialize() once the modules they need are available.
+		URef<EditorSettings> m_Settings;
 		URef<EditorUI> m_EditorUI;
 		URef<EditorViewport> m_EditorViewport;
 	};

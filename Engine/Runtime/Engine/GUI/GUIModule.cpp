@@ -312,11 +312,23 @@ namespace tyr
 					continue;
 				}
 
+				// Nuklear's clip rects can reach far past the screen, which a scissor can't.
+				const Vector2& displaySize = m_NuklearDrawData.displaySize;
+				const float clipMinX = std::max(cmd->clip_rect.x, 0.0f);
+				const float clipMinY = std::max(cmd->clip_rect.y, 0.0f);
+				const float clipMaxX = std::min(cmd->clip_rect.x + cmd->clip_rect.w, displaySize.x);
+				const float clipMaxY = std::min(cmd->clip_rect.y + cmd->clip_rect.h, displaySize.y);
+				if (clipMaxX <= clipMinX || clipMaxY <= clipMinY)
+				{
+					indexOffset += cmd->elem_count;
+					continue;
+				}
+
 				GUIDrawCommand& drawCommand = m_NuklearDrawData.commands.ExpandOne();
-				drawCommand.clipMinX = (uint)cmd->clip_rect.x;
-				drawCommand.clipMinY = (uint)cmd->clip_rect.y;
-				drawCommand.clipMaxX = (uint)(cmd->clip_rect.x + cmd->clip_rect.w);
-				drawCommand.clipMaxY = (uint)(cmd->clip_rect.y + cmd->clip_rect.h);
+				drawCommand.clipMinX = (uint)clipMinX;
+				drawCommand.clipMinY = (uint)clipMinY;
+				drawCommand.clipMaxX = (uint)clipMaxX;
+				drawCommand.clipMaxY = (uint)clipMaxY;
 				drawCommand.textureIndex = (uint)cmd->texture.id;
 				drawCommand.indexOffset = indexOffset;
 				drawCommand.indexCount = cmd->elem_count;
@@ -469,11 +481,22 @@ namespace tyr
 					continue;
 				}
 
+				// Clip rects can reach past the screen, such as a popup's at its edge, and the
+				// scissor they become can't, so they're clamped like ImGui's own backends do.
+				const float clipMinX = std::max(src.ClipRect.x - imDrawData->DisplayPos.x, 0.0f);
+				const float clipMinY = std::max(src.ClipRect.y - imDrawData->DisplayPos.y, 0.0f);
+				const float clipMaxX = std::min(src.ClipRect.z - imDrawData->DisplayPos.x, imDrawData->DisplaySize.x);
+				const float clipMaxY = std::min(src.ClipRect.w - imDrawData->DisplayPos.y, imDrawData->DisplaySize.y);
+				if (clipMaxX <= clipMinX || clipMaxY <= clipMinY)
+				{
+					continue;
+				}
+
 				GUIDrawCommand& drawCommand = m_ImGuiDrawData.commands.ExpandOne();
-				drawCommand.clipMinX = (uint)src.ClipRect.x;
-				drawCommand.clipMinY = (uint)src.ClipRect.y;
-				drawCommand.clipMaxX = (uint)src.ClipRect.z;
-				drawCommand.clipMaxY = (uint)src.ClipRect.w;
+				drawCommand.clipMinX = (uint)clipMinX;
+				drawCommand.clipMinY = (uint)clipMinY;
+				drawCommand.clipMaxX = (uint)clipMaxX;
+				drawCommand.clipMaxY = (uint)clipMaxY;
 				// ImGui 1.92+ dropped ImDrawCmd::TextureId in favour of this getter. -1 undoes
 				// the +1 offset ProcessImGuiTextures applies when calling SetTexID (see its
 				// comment) to keep a real index of 0 from looking like ImGui's "unset" sentinel.

@@ -8,6 +8,9 @@
 #include "World/WorldManager.h"
 #include "World/World.h"
 #include "Platform/Platform.h"
+#include "Level/LevelFile.h"
+#include "AssetSystem/AssetUtil.h"
+#include "Config/Config.h"
 
 using namespace tyr;
 
@@ -53,16 +56,30 @@ void App::Initialize()
 
 		m_MainWorld = m_WorldManager->AddWorld(worldParams);
 		m_WorldManager->SetActiveWorld(m_MainWorld);
-		return;
+	}
+	else
+	{
+		// Get project related properties from the config later
+		WindowDesc desc;
+		desc.showFlag = 1;
+		desc.name = c_AppName;
+		Platform::GetMaxWindowResolution(desc.width, desc.height);
+
+		m_MainWorld = CreatePrimaryWorld(*m_WindowModule, *m_WorldManager, desc, worldParams, m_PrimaryWindow);
+
+		char configPath[TYR_MAX_PATH_TOTAL_SIZE];
+		AssetUtil::CreateFullConfigPath(configPath, "GameConfig.ini");
+		const Config gameConfig(configPath);
+		if (gameConfig.HasValue("StartLevel"))
+		{
+			SetStartLevel(gameConfig.GetValue("StartLevel").CStr());
+		}
 	}
 
-	// Get project related properties from the config later
-	WindowDesc desc;
-	desc.showFlag = 1;
-	desc.name = c_AppName;
-	Platform::GetMaxWindowResolution(desc.width, desc.height);
-
-	m_MainWorld = CreatePrimaryWorld(*m_WindowModule, *m_WorldManager, desc, worldParams, m_PrimaryWindow);
+	if (m_StartLevel.Size() > 0)
+	{
+		LevelFile::Load(m_StartLevel.CStr(), *m_WorldManager, m_MainWorld);
+	}
 }
 
 void App::Update(float deltaTime)

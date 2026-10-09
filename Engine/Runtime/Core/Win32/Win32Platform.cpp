@@ -221,7 +221,41 @@ namespace tyr
 	void Platform::CloseFile(FileHandle handle)
 	{
 		TYR_ASSERT(handle);
-		TYR_ASSERT(CloseHandle(handle));
+		// Called outside the assert, which compiles to nothing in builds without asserts.
+		const BOOL closed = CloseHandle(handle);
+		TYR_ASSERT(closed);
+		(void)closed;
+	}
+
+	bool Platform::FileExists(const char* path)
+	{
+		return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+	}
+
+	bool Platform::MakeDirectory(const char* path)
+	{
+		return CreateDirectoryA(path, nullptr) || GetLastError() == ERROR_ALREADY_EXISTS;
+	}
+
+	bool Platform::RenameFile(const char* path, const char* newPath)
+	{
+		return MoveFileExA(path, newPath, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+	}
+
+	bool Platform::RemoveFile(const char* path)
+	{
+		return DeleteFileA(path) != 0;
+	}
+
+	bool Platform::GetFileWriteTime(const char* path, uint64& outWriteTime)
+	{
+		WIN32_FILE_ATTRIBUTE_DATA data;
+		if (!GetFileAttributesExA(path, GetFileExInfoStandard, &data))
+		{
+			return false;
+		}
+		outWriteTime = (static_cast<uint64>(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime;
+		return true;
 	}
 
 	void Platform::ShowAlertMessage(const char* msg)

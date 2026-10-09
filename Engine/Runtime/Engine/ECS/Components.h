@@ -28,9 +28,10 @@ namespace tyr
 	struct MeshComponent
 	{
 		AssetID mesh;
-		// One material per submesh. An invalid or missing entry uses the mesh's own material,
-		// and is filled in with it once the mesh instance has been created.
+		// One material per submesh. An invalid or missing entry uses the mesh's own material.
 		LocalArray<AssetID, MeshConstants::c_MaxSubmeshes> materials;
+		// The materials the mesh instance actually uses, once it's been created. Not saved.
+		LocalArray<AssetID, MeshConstants::c_MaxSubmeshes> loadedMaterials;
 		// Invalid until the mesh and its materials have loaded.
 		MeshInstanceHandle meshInstance;
 		// True once the mesh instance has been asked for, even if it hasn't been created yet.

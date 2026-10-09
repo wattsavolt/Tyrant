@@ -17,6 +17,7 @@
 #include "RenderResources.h"
 #include "RenderData.h"
 #include "RenderRegistry.h"
+#include "RenderTargetPool.h"
 #include "RenderAllocationManager.h"
 #include "Window/WindowConstants.h"
 
@@ -154,6 +155,8 @@ namespace tyr
 		void RecordTAAResolvePass(CommandList& cmdList, uint renderFrameIndex);
 		// Draws the viewport grid over sourceIndex's image into the slot's overlay texture.
 		void RecordEditorGridPass(CommandList& cmdList, uint renderFrameIndex, uint sourceIndex);
+		// Draws this frame's debug lines into the slot's overlay texture.
+		void RecordDebugLinePass(CommandList& cmdList, uint renderFrameIndex);
 		// Resolves the active scene's own RenderViewport down to this renderFrameIndex's own
 		// buffered slot - returns null if the active scene has no RenderViewport yet. Called
 		// from a RenderAsync worker thread - safe to read/write this slot without a lock.
@@ -194,7 +197,7 @@ namespace tyr
 		void EnsureTaaResolveOutputBound(uint renderFrameIndex, TextureHandle resolvedColourTexture);
 		// Same idea as EnsureLightingOutputBound, for the grid's overlay output.
 		void EnsureEditorGridOutputBound(uint renderFrameIndex, TextureHandle overlayColourTexture);
-		// Creates or deletes the slot's overlay texture to match whether the grid is enabled.
+		// Creates or deletes the slot's overlay texture to match whether anything draws into it.
 		void SyncViewportOverlay(RenderViewport& viewport, uint slot);
 		// Actually deletes every buffered slot's textures (if any were ever created) and frees the
 		// pool slot - shared by ProcessFrameDeleteLists' handling of renderViewportsToDelete,
@@ -248,6 +251,8 @@ namespace tyr
 		ShaderMaterial m_ShaderMaterial;
 		RendererConfig m_Config;
 		RenderRegistry m_Registry;
+		// After the registry it creates render targets in.
+		RenderTargetPool m_RenderTargetPool;
 		RenderAllocationManager m_AllocManager{};
 		RenderFrame m_RenderFrames[RenderConstants::c_BufferedFrameCount];
 		RenderSyncData m_SyncDatas[RenderConstants::c_BufferedFrameCount];

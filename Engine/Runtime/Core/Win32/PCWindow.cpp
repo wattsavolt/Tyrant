@@ -271,6 +271,14 @@ namespace tyr
             break;
         }
 
+        case WM_CLOSE:
+            if (window.interceptClose)
+            {
+                window.closeRequested = true;
+                break;
+            }
+            return DefWindowProc(hWnd, message, wParam, lParam);
+
         case WM_DESTROY:
             // The HWND (and anything tied to it) is no longer valid from this point on - mark
             // it dead immediately rather than waiting for WM_QUIT, which isn't guaranteed to be

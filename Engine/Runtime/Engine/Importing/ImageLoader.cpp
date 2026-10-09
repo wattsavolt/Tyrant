@@ -7,7 +7,10 @@ namespace tyr
 {
 	void ImageLoader::LoadImageInfo(const char* filePath, ImageInfo& fileInfo)
 	{
-		TYR_ASSERT(stbi_info(filePath, &fileInfo.width, &fileInfo.height, &fileInfo.channelCount) != 0);
+		// Called outside the assert, which compiles to nothing in builds without asserts.
+		const int infoRead = stbi_info(filePath, &fileInfo.width, &fileInfo.height, &fileInfo.channelCount);
+		TYR_ASSERT(infoRead != 0);
+		(void)infoRead;
 		if (stbi_is_16_bit(filePath))
 		{
 			fileInfo.bitDepth = ImageBitDepth::SixteenBit;
@@ -24,7 +27,9 @@ namespace tyr
 
 	void ImageLoader::LoadImageInfoFromMem(const uchar* mem, size_t size, ImageInfo& fileInfo)
 	{
-		TYR_ASSERT(stbi_info_from_memory(mem, size, &fileInfo.width, &fileInfo.height, &fileInfo.channelCount) != 0);
+		const int infoRead = stbi_info_from_memory(mem, static_cast<int>(size), &fileInfo.width, &fileInfo.height, &fileInfo.channelCount);
+		TYR_ASSERT(infoRead != 0);
+		(void)infoRead;
 		if (stbi_is_16_bit_from_memory(mem, size))
 		{
 			fileInfo.bitDepth = ImageBitDepth::SixteenBit;

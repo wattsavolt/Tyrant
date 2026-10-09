@@ -118,6 +118,8 @@ namespace tyr
 		Array<TextureHandle> texturesToAdd;
 		// Resources to be deleted when the frame has finished rendering
 		Array<TextureHandle> texturesToDelete;
+		// Render targets going back to the pool once the frame has finished rendering.
+		Array<TextureHandle> renderTargetsToRelease;
 		Array<MaterialHandle> materialsToDelete;
 		Array<MeshHandle> meshesToDelete;
 		// Meshes whose LOD0 geometry upload was just queued - drained into Renderer's own
@@ -159,10 +161,14 @@ namespace tyr
 		// own on/off switch isn't tied to any quality preset), same one-shot-request pattern.
 		bool hasTaaEnabledOverride = false;
 		bool taaEnabledOverride = true;
-		// The active viewport's grid, plus the camera's inverse viewProj without TAA jitter,
-		// since the grid is drawn after TAA.
+		// The active viewport's overlay, drawn after TAA: the grid and debug lines, with the
+		// camera's viewProj without TAA jitter.
+		bool hasOverlay = false;
 		ViewportGridDesc viewportGrid;
-		Matrix4 gridInvViewProj;
+		Matrix4 overlayViewProj;
+		// This frame's debug line vertices, depth-tested ones first, then ones drawn on top.
+		uint debugLineDepthTestedCount = 0;
+		uint debugLineOnTopCount = 0;
 		// The active scene's lights this frame, in the same order as the light index list the
 		// lighting shader reads, so shadow slots match it.
 		SceneLights activeLights;
@@ -185,6 +191,7 @@ namespace tyr
 			fileToTextureUploadRequests.Reserve(128);
 			texturesToAdd.Reserve(c_DefaultPendingListReserve);
 			texturesToDelete.Reserve(c_DefaultPendingListReserve);
+			renderTargetsToRelease.Reserve(c_DefaultPendingListReserve);
 			materialsToDelete.Reserve(c_DefaultPendingListReserve);
 			meshesToDelete.Reserve(c_DefaultPendingListReserve);
 			meshesToBuildBLAS.Reserve(c_DefaultPendingListReserve);
@@ -206,6 +213,7 @@ namespace tyr
 			fileToTextureUploadRequests.Clear();
 			texturesToAdd.Clear();
 			texturesToDelete.Clear();
+			renderTargetsToRelease.Clear();
 			materialsToDelete.Clear();
 			meshesToDelete.Clear();
 			meshesToBuildBLAS.Clear();
@@ -224,7 +232,10 @@ namespace tyr
 			activeScene = {};
 			hasQualityLevelOverride = false;
 			hasTaaEnabledOverride = false;
+			hasOverlay = false;
 			viewportGrid = {};
+			debugLineDepthTestedCount = 0;
+			debugLineOnTopCount = 0;
 			activeLights.Clear();
 			guiDrawData.Clear();
 			guiVertexCursor = 0;

@@ -73,6 +73,7 @@ namespace tyr
 		bool m_HasDefaultMaterial = false;
 		uint m_DefaultMaterialIndex = 0;
 
-		std::filesystem::path m_BaseDirectory;
+		// The model file's folder, which loose texture paths are relative to.
+		Path m_BaseDirectory;
 	};
 }

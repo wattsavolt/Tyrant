@@ -3,6 +3,7 @@
 #include "Core.h"
 #include "EngineMacros.h"
 #include "Window/WindowHandle.h"
+#include "String/Path.h"
 
 namespace tyr
 {
@@ -26,8 +27,13 @@ namespace tyr
 
 		virtual bool WantsExit() const = 0;
 
+		// The level to open on Initialize, relative to the assets folder. Empty for none.
+		void SetStartLevel(const char* levelPath) { m_StartLevel = levelPath; }
+
 	protected:
 		AppBase();
+
+		AssetPath m_StartLevel;
 
 		// Shared by Editor and App: creates an OS window, registers it with the renderer to get a
 		// RenderWindowHandle, then creates a world bound to that window. worldConfig.windowHandle is

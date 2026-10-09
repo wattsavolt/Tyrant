@@ -113,6 +113,7 @@ namespace tyr
 		// Enumerate supported extensions
 		bool dedicatedAllocExt = false;
 		bool getMemReqExt = false;
+		bool memoryBudgetExt = false;
 
 		uint numAvailableExtensions = 0;
 		vkEnumerateDeviceExtensionProperties(device, nullptr, &numAvailableExtensions, nullptr);
@@ -134,6 +135,12 @@ namespace tyr
 					{
 						extensions[numExtensions++] = VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME;
 						getMemReqExt = true;
+					}
+					// Lets the allocator report how much memory the OS currently allows this app.
+					else if (strcmp(entry.extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0)
+					{
+						extensions[numExtensions++] = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME;
+						memoryBudgetExt = true;
 					}
 				}
 			}
@@ -365,6 +372,11 @@ namespace tyr
 		// gives their memory no device-address capability, and binding them later fails.
 		allocatorCI.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
 
+		if (memoryBudgetExt)
+		{
+			allocatorCI.flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
+		}
+
 		TYR_GASSERT(vmaCreateAllocator(&allocatorCI, &m_Allocator));
 	}
 
@@ -505,5 +517,33 @@ namespace tyr
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
 		Image& image = device.GetImage(handle);
 		return static_cast<size_t>(image.allocation->GetSize());
+	}
+
+	void Device::SetCurrentFrameIndex(uint frameIndex)
+	{
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		vmaSetCurrentFrameIndex(device.GetAllocator(), frameIndex);
+	}
+
+	void Device::GetDeviceMemoryBudget(size_t& outUsage, size_t& outBudget)
+	{
+		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
+		const VkPhysicalDeviceMemoryProperties* memoryProperties = nullptr;
+		vmaGetMemoryProperties(device.GetAllocator(), &memoryProperties);
+
+		VmaBudget budgets[VK_MAX_MEMORY_HEAPS];
+		vmaGetHeapBudgets(device.GetAllocator(), budgets);
+
+		// Device-local heaps only, which is where textures and render targets live.
+		outUsage = 0;
+		outBudget = 0;
+		for (uint i = 0; i < memoryProperties->memoryHeapCount; ++i)
+		{
+			if (memoryProperties->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+			{
+				outUsage += static_cast<size_t>(budgets[i].usage);
+				outBudget += static_cast<size_t>(budgets[i].budget);
+			}
+		}
 	}
 }

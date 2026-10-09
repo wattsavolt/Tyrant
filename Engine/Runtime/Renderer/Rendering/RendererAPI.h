@@ -28,6 +28,7 @@ namespace tyr
 	struct PointLightInfo;
 	struct SpotLightInfo;
 	struct GUIDrawData;
+	struct DebugLineVertex;
 	struct ViewportGridDesc;
 	enum class QualityLevel : uint8;
 
@@ -158,6 +159,10 @@ namespace tyr
 		// Discards whatever GUI draw data is still sitting unrendered in the current render
 		// frame slot.
 		void ResetGUIDrawData();
+
+		// This frame's debug lines for the active viewport, as pairs of vertices. The depth-tested
+		// ones are hidden behind the scene, the others drawn on top. Call at most once a frame.
+		void SubmitDebugLines(const DebugLineVertex* depthTested, uint depthTestedCount, const DebugLineVertex* onTop, uint onTopCount);
 
 		// Takes effect from next tick's RenderAsync onward - queued through RenderFrame the same
 		// one-shot way SetSceneRenderViewport is, since RenderAsync runs on a worker thread.

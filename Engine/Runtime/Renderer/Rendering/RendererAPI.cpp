@@ -685,6 +685,46 @@ namespace tyr
 		renderFrame.guiIndexCursor += (uint)data.indices.Size();
 	}
 
+	void RendererAPI::SubmitDebugLines(const DebugLineVertex* depthTested, uint depthTestedCount, const DebugLineVertex* onTop, uint onTopCount)
+	{
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		TYR_ASSERT(renderFrame.debugLineDepthTestedCount + renderFrame.debugLineOnTopCount == 0);
+		TYR_ASSERT(depthTestedCount + onTopCount <= RenderConstants::c_MaxDebugLineVertices);
+		if (depthTestedCount + onTopCount == 0)
+		{
+			return;
+		}
+
+		const size_t depthTestedBytes = sizeof(DebugLineVertex) * depthTestedCount;
+		const size_t onTopBytes = sizeof(DebugLineVertex) * onTopCount;
+		UploadBufferAllocation alloc;
+		if (!m_AllocManager.RequestFrameUploadAllocation(depthTestedBytes + onTopBytes, alloc))
+		{
+			return;
+		}
+
+		// Both lists go into one allocation, depth-tested first, so one copy uploads them.
+		RenderBuffer& uploadBuffer = m_Registry.GetBuffer(alloc.buffer);
+		if (depthTestedCount > 0)
+		{
+			RenderResourceUtil::WriteUploadBuffer(uploadBuffer, m_Device, alloc.offset, (void*)depthTested, depthTestedBytes);
+		}
+		if (onTopCount > 0)
+		{
+			RenderResourceUtil::WriteUploadBuffer(uploadBuffer, m_Device, alloc.offset + depthTestedBytes, (void*)onTop, onTopBytes);
+		}
+
+		BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
+		request.srcBuffer = alloc.buffer;
+		request.srcOffset = alloc.offset;
+		request.dstBuffer = m_Renderer.GetRenderResources().debugLineVertexBuffer;
+		request.dstOffset = m_Renderer.GetRenderFrameIndex() * RenderConstants::c_DebugLineVertexBufferSize;
+		request.size = depthTestedBytes + onTopBytes;
+
+		renderFrame.debugLineDepthTestedCount = depthTestedCount;
+		renderFrame.debugLineOnTopCount = onTopCount;
+	}
+
 	void RendererAPI::ResetGUIDrawData()
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();

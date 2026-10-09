@@ -43,6 +43,9 @@ namespace tyr
 		// WindowModule::SetCursorCaptured. Tracked here so the platform layer only calls into the
 		// OS when the requested state actually changes.
 		bool cursorCaptured{};
+		// When set, closing the window only sets closeRequested, so the app can ask first.
+		bool interceptClose{};
+		bool closeRequested{};
 		WindowInputState input{};
 	};
 }

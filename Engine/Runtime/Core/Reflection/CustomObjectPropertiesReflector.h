@@ -50,6 +50,8 @@ namespace tyr
 		// The most elements, or characters not counting the null.
 		virtual uint GetCapacity() const = 0;
 		virtual uint GetSize(const void* object) const = 0;
+		// Compares only what's in use, not leftover data past the end.
+		virtual bool Equals(const void* a, const void* b) const = 0;
 
 	protected:
 		virtual ~CustomObjectPropertiesReflector() = default;
@@ -86,6 +88,26 @@ namespace tyr
 		uint GetSize(const void* object) const override
 		{
 			return static_cast<const LocalArray<T, C>*>(object)->Size();
+		}
+
+		bool Equals(const void* a, const void* b) const override
+		{
+			const LocalArray<T, C>& arrA = *static_cast<const LocalArray<T, C>*>(a);
+			const LocalArray<T, C>& arrB = *static_cast<const LocalArray<T, C>*>(b);
+			if (arrA.Size() != arrB.Size())
+			{
+				return false;
+			}
+			const CustomObjectPropertiesReflector* elementReflector = GetElementReflector();
+			for (uint i = 0; i < arrA.Size(); ++i)
+			{
+				const bool equal = elementReflector ? elementReflector->Equals(&arrA[i], &arrB[i]) : memcmp(&arrA[i], &arrB[i], sizeof(T)) == 0;
+				if (!equal)
+				{
+					return false;
+				}
+			}
+			return true;
 		}
 
 		Id64 GetElementTypeID() const override { return GetTypeID<T>(); }
@@ -132,6 +154,11 @@ namespace tyr
 		const char* GetString(const void* object) const override
 		{
 			return static_cast<const LocalString<N>*>(object)->CStr();
+		}
+
+		bool Equals(const void* a, const void* b) const override
+		{
+			return strcmp(GetString(a), GetString(b)) == 0;
 		}
 
 		void SetString(void* object, const char* value) const override

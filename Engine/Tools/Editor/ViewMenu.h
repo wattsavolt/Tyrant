@@ -9,6 +9,10 @@ namespace tyr
 		bool actorsOpen = true;
 		bool showGrid = true;
 		bool snapToGrid = true;
+		// Debug drawing over the level while editing.
+		bool showActorBounds = false;
+		bool showLightRanges = false;
+		bool showActorNames = false;
 	};
 
 	// Draws the View menu, which opens and closes the editor's tabs and viewport aids.

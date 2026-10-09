@@ -29,6 +29,17 @@ namespace tyr
 		return *m_ComponentTypeIDs.Find(typeID);
 	}
 
+	bool ComponentRegistry::FindComponentTypeID(const Id64& typeID, ComponentTypeID& outComponentTypeID) const
+	{
+		const ComponentTypeID* compTypeID = m_ComponentTypeIDs.Find(typeID);
+		if (!compTypeID)
+		{
+			return false;
+		}
+		outComponentTypeID = *compTypeID;
+		return true;
+	}
+
 	const Id64& ComponentRegistry::GetReflectionTypeID(ComponentTypeID componentTypeID) const
 	{
 		TYR_ASSERT(componentTypeID < m_NextID);

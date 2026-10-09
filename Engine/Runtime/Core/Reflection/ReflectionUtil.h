@@ -228,5 +228,12 @@ namespace tyr
     {
         return reinterpret_cast<size_t>(&(reinterpret_cast<Class*>(nullptr)->*fieldPtr));
     }
+
+    // The whole field, so a C-style array's size includes every element.
+    template<typename Class, typename FieldType>
+    constexpr size_t GetFieldSize(FieldType Class::* /*fieldPtr*/)
+    {
+        return sizeof(FieldType);
+    }
 }
 

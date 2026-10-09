@@ -245,6 +245,18 @@ namespace tyr
             return record.archetype->columns[typeID].GetElement(record.index);
         }
 
+        const void* GetComponentData(Entity entity, ComponentTypeID typeID) const
+        {
+            const EntityRecord* record = m_EntityRecords.Find(entity);
+            return record->archetype->columns[typeID].GetElement(record->index);
+        }
+
+        bool HasComponent(Entity entity, ComponentTypeID typeID) const
+        {
+            const EntityRecord* record = m_EntityRecords.Find(entity);
+            return record && record->archetype && record->archetype->key.Test(typeID);
+        }
+
         // Calls func(ComponentTypeID) for each component the entity has.
         template<typename Func>
         void ForEachComponentType(Entity entity, Func&& func) const

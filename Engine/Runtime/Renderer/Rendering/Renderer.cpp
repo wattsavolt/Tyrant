@@ -81,6 +81,7 @@ namespace tyr
 		, m_RenderAPI(renderAPI)
 		, m_ShaderCreator(*m_RenderAPI->GetDevice(), rendererConfig.shaderConfig)
 		, m_Registry(*m_RenderAPI->GetDevice())
+		, m_RenderTargetPool(m_Registry, *m_RenderAPI->GetDevice())
 		, m_ViewIdIndexMap(RenderConstants::c_MaxViewsPerFrame)
 	{
 		TYR_ASSERT(!s_Instantiated);
@@ -159,6 +160,7 @@ namespace tyr
 		// windows/scenes/meshes by this point, so whatever's still queued in any RenderFrame
 		// slot's delete lists can finally be flushed.
 		DeleteRemainingFrameResources();
+		m_RenderTargetPool.Clear();
 		DeleteQueues();
 
 		RenderGraphAllocator::Destroy();
@@ -179,6 +181,9 @@ namespace tyr
 
 		RenderFrame& renderFrame = GetRenderFrame();
 		renderFrame.deltaTime = deltaTime;
+
+		// Keeps the GPU memory budget the render target pool and asset cache go by up to date.
+		m_Ctx.device->SetCurrentFrameIndex(static_cast<uint>(m_FrameNumber));
 
 		// One-time per-mesh BLAS build requests, drained into a persistent queue here (main
 		// thread, same as where they were added) rather than in RenderAsync, since this doesn't
@@ -372,6 +377,7 @@ namespace tyr
 					// Only drawn once the slot has somewhere to draw it.
 					if (targets.overlayColourTexture)
 					{
+						renderFrame.hasOverlay = true;
 						renderFrame.viewportGrid = viewport.grid;
 					}
 
@@ -394,10 +400,7 @@ namespace tyr
 					const Matrix4 projection = Matrix4::CreatePerspective(sv.camera.fov, aspect, sv.camera.farZ, sv.camera.nearZ);
 
 					sceneInfo.viewProj = view * projection;
-					if (renderFrame.viewportGrid.enabled)
-					{
-						renderFrame.gridInvViewProj = sceneInfo.viewProj.Inverse();
-					}
+					renderFrame.overlayViewProj = sceneInfo.viewProj;
 
 					// TAA sub-pixel jitter - read via the main-thread-safe mirror, not
 					// m_TaaEnabled directly, since that's only safe to touch from inside
@@ -517,7 +520,7 @@ namespace tyr
 
 		if (m_FirstRender)
 		{
-			constexpr uint bindingCount = 18;
+			constexpr uint bindingCount = 19;
 			BufferBindingInfo bindingInfos[bindingCount];
 			BufferBindingUpdate bindingUpdates[bindingCount];
 
@@ -547,6 +550,7 @@ namespace tyr
 			SetBinding(15, TYR_BINDING_DRAW_COUNT, m_Resources.drawCountBuffer);
 			SetBinding(16, TYR_BINDING_SHADOW_LIGHT_SLOT_MAP, m_Resources.shadowLightSlotMapBuffer);
 			SetBinding(17, TYR_BINDING_LIGHT_INDICES, m_Resources.lightIndexBuffer);
+			SetBinding(18, TYR_BINDING_DEBUG_LINE_VERTEX, m_Resources.debugLineVertexBuffer);
 
 			m_Ctx.device->UpdateDescriptorSet(m_Resources.descriptorSet, bindingUpdates, bindingCount);
 
@@ -1100,7 +1104,17 @@ namespace tyr
 			uint renderFrameIndex;
 			uint majorLineEvery;
 			float cellSize;
-			float _pad0;
+			uint gridEnabled;
+		};
+
+		// Matches DebugLineVS.hlsl's push constant cbuffer byte-for-byte.
+		struct DebugLinePushConstants
+		{
+			Matrix4 viewProj;
+			uint firstVertex;
+			uint _pad0;
+			uint _pad1;
+			uint _pad2;
 		};
 	}
 
@@ -1200,7 +1214,8 @@ namespace tyr
 		cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.editorGridPipeline);
 
 		EditorGridPushConstants pushConstants{};
-		pushConstants.invViewProj = renderFrame.gridInvViewProj;
+		pushConstants.invViewProj = renderFrame.overlayViewProj.Inverse();
+		pushConstants.gridEnabled = renderFrame.viewportGrid.enabled ? 1u : 0u;
 		pushConstants.sourceIndex = sourceIndex;
 		pushConstants.depthIndex = viewportData->depthBuffer.h.index;
 		pushConstants.width = viewportData->width;
@@ -1213,6 +1228,75 @@ namespace tyr
 		const uint groupCountX = (viewportData->width + 7) / 8;
 		const uint groupCountY = (viewportData->height + 7) / 8;
 		cmdList.Dispatch(groupCountX, groupCountY, 1);
+	}
+
+	void Renderer::RecordDebugLinePass(CommandList& cmdList, uint renderFrameIndex)
+	{
+		const RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
+		if (!viewportData || !viewportData->overlayColourTexture || viewportData->width == 0 || viewportData->height == 0)
+		{
+			return;
+		}
+
+		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
+		const Texture& overlay = m_Registry.GetTexture(viewportData->overlayColourTexture);
+		const Texture& depthBuffer = m_Registry.GetTexture(viewportData->depthBuffer);
+
+		RenderingInfo renderingInfo{};
+		renderingInfo.renderArea.offset = { 0, 0 };
+		renderingInfo.renderArea.extents = { viewportData->width, viewportData->height };
+		renderingInfo.viewMask = 0;
+		renderingInfo.layerCount = 1;
+
+		// Drawn over what the grid pass already wrote.
+		RenderingAttachmentInfo colourAttachment;
+		colourAttachment.loadOp = AttachmentLoadOp::Load;
+		colourAttachment.storeOp = AttachmentStoreOp::Store;
+		colourAttachment.resolveMode = RESOLVE_MODE_NONE;
+		colourAttachment.imageLayout = overlay.imageLayout;
+		colourAttachment.imageView = overlay.imageView;
+		renderingInfo.colourAttachmentCount = 1;
+		renderingInfo.colourAttachments = &colourAttachment;
+
+		// The scene's depth, only read.
+		renderingInfo.hasDepthAttachment = true;
+		renderingInfo.depthAttachment.loadOp = AttachmentLoadOp::Load;
+		renderingInfo.depthAttachment.storeOp = AttachmentStoreOp::Store;
+		renderingInfo.depthAttachment.resolveMode = RESOLVE_MODE_NONE;
+		renderingInfo.depthAttachment.imageLayout = depthBuffer.imageLayout;
+		renderingInfo.depthAttachment.imageView = depthBuffer.imageView;
+
+		Viewport viewport;
+		viewport.width = viewportData->width;
+		viewport.height = viewportData->height;
+
+		cmdList.BeginRendering(renderingInfo);
+		cmdList.SetViewport(&viewport, 1);
+		cmdList.SetScissor(&renderingInfo.renderArea, 1);
+
+		DebugLinePushConstants pushConstants{};
+		pushConstants.viewProj = renderFrame.overlayViewProj;
+		const uint slotFirstVertex = renderFrameIndex * RenderConstants::c_MaxDebugLineVertices;
+
+		if (renderFrame.debugLineDepthTestedCount > 0)
+		{
+			pushConstants.firstVertex = slotFirstVertex;
+			cmdList.BindGraphicsPipeline(m_Resources.debugLineDepthTestedPipeline);
+			cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.debugLineDepthTestedPipeline);
+			cmdList.PushConstants(m_Resources.debugLineDepthTestedPipeline, SHADER_STAGE_VERTEX_BIT, 0, sizeof(DebugLinePushConstants), &pushConstants);
+			cmdList.Draw(renderFrame.debugLineDepthTestedCount, 1, 0, 0);
+		}
+
+		if (renderFrame.debugLineOnTopCount > 0)
+		{
+			pushConstants.firstVertex = slotFirstVertex + renderFrame.debugLineDepthTestedCount;
+			cmdList.BindGraphicsPipeline(m_Resources.debugLineOnTopPipeline);
+			cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.debugLineOnTopPipeline);
+			cmdList.PushConstants(m_Resources.debugLineOnTopPipeline, SHADER_STAGE_VERTEX_BIT, 0, sizeof(DebugLinePushConstants), &pushConstants);
+			cmdList.Draw(renderFrame.debugLineOnTopCount, 1, 0, 0);
+		}
+
+		cmdList.EndRendering();
 	}
 
 	void Renderer::SetupBLASBuildPass(RenderGraphBuilder& builder, uint renderFrameIndex)
@@ -1393,8 +1477,8 @@ namespace tyr
 		}
 
 		// Tracked separately from graphBuffers above - GeometryPass doesn't touch these, only
-		// TransferPass (writes, via SubmitGUIDrawData's upload requests) and GUIPass (reads).
-		const RenderBufferHandle guiGraphBuffers[] = { m_Resources.guiVertexBuffer, m_Resources.guiIndexBuffer };
+		// TransferPass (writes) and the GUI and debug line passes (reads).
+		const RenderBufferHandle guiGraphBuffers[] = { m_Resources.guiVertexBuffer, m_Resources.guiIndexBuffer, m_Resources.debugLineVertexBuffer };
 		constexpr uint guiBufferCount = (uint)(sizeof(guiGraphBuffers) / sizeof(guiGraphBuffers[0]));
 
 		for (uint i = 0; i < guiBufferCount; ++i)
@@ -1440,7 +1524,7 @@ namespace tyr
 			if (hasViewportTextures)
 			{
 				// Checked before isNew is cleared below, since the overlay can also be new on its own.
-				if (renderFrame.viewportGrid.enabled && viewportData->overlayColourTexture)
+				if (renderFrame.hasOverlay && viewportData->overlayColourTexture)
 				{
 					overlayColourTexture = &m_Registry.GetTexture(viewportData->overlayColourTexture);
 					if (viewportData->isNew || viewportData->overlayIsNew)
@@ -1721,6 +1805,21 @@ namespace tyr
 					[this, renderFrameIndex, gridSourceIndex](CommandList& cl) { RecordEditorGridPass(cl, renderFrameIndex, gridSourceIndex); },
 					RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
 
+				if (renderFrame.debugLineDepthTestedCount + renderFrame.debugLineOnTopCount > 0)
+				{
+					graph.AddPass("DebugLines",
+						[this, depthBuffer, overlayColourTexture](RenderGraphBuilder& builder)
+						{
+							builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.debugLineVertexBuffer), PIPELINE_STAGE_VERTEX_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT);
+							builder.ReadTexture(*depthBuffer, static_cast<PipelineStage>(PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT),
+								BARRIER_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT, IMAGE_LAYOUT_GENERAL);
+							builder.WriteTexture(*overlayColourTexture, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+								static_cast<BarrierAccess>(BARRIER_ACCESS_COLOR_ATTACHMENT_READ_BIT | BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT), IMAGE_LAYOUT_GENERAL);
+						},
+						[this, renderFrameIndex](CommandList& cl) { RecordDebugLinePass(cl, renderFrameIndex); },
+						RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
+				}
+
 				displayTexture = overlayColourTexture;
 			}
 
@@ -1894,6 +1993,12 @@ namespace tyr
 		{
 			m_Registry.DeleteTexture(handle);
 		}
+		// The GPU has finished with these, so they can go to whatever asks for one next.
+		for (TextureHandle handle : renderFrame.renderTargetsToRelease)
+		{
+			m_RenderTargetPool.Release(handle, m_FrameNumber);
+		}
+		m_RenderTargetPool.Trim(m_FrameNumber);
 		for (MaterialHandle handle : renderFrame.materialsToDelete)
 		{
 			m_Registry.DeleteMaterial(handle);
@@ -2113,7 +2218,13 @@ namespace tyr
 		desc.usage = usage;
 		desc.layout = ImageLayout::IMAGE_LAYOUT_GENERAL;
 
-		const TextureHandle handle = m_Registry.CreateTexture(desc);
+		bool created;
+		const TextureHandle handle = m_RenderTargetPool.Acquire(desc, created);
+		if (!created)
+		{
+			// Its bindless slot still points at it from when it was made.
+			return handle;
+		}
 		GetRenderFrame().texturesToAdd.Add(handle);
 
 		// Same bindless descriptor write pattern other texture creation uses.
@@ -2129,7 +2240,7 @@ namespace tyr
 
 	void Renderer::DeleteViewportTargetTexture(TextureHandle handle)
 	{
-		GetRenderFrame().texturesToDelete.Add(handle);
+		GetRenderFrame().renderTargetsToRelease.Add(handle);
 	}
 
 	TextureHandle Renderer::CreateShadowMaskArrayTexture(const char* debugName, uint width, uint height)
@@ -2150,8 +2261,12 @@ namespace tyr
 		desc.usage = static_cast<ImageUsage>(IMAGE_USAGE_STORAGE_BIT);
 		desc.layout = ImageLayout::IMAGE_LAYOUT_GENERAL;
 
-		const TextureHandle handle = m_Registry.CreateTexture(desc);
-		GetRenderFrame().texturesToAdd.Add(handle);
+		bool created;
+		const TextureHandle handle = m_RenderTargetPool.Acquire(desc, created);
+		if (created)
+		{
+			GetRenderFrame().texturesToAdd.Add(handle);
+		}
 		return handle;
 	}
 
@@ -2212,7 +2327,8 @@ namespace tyr
 	void Renderer::SyncViewportOverlay(RenderViewport& viewport, uint slot)
 	{
 		RenderViewportTextureData& targets = viewport.textureData[slot];
-		const bool wanted = viewport.grid.enabled && targets.colourTexture;
+		// Builds that can draw debug lines always have the overlay to draw them into.
+		const bool wanted = (viewport.grid.enabled || RenderConstants::c_DebugDrawEnabled) && targets.colourTexture;
 		if (wanted == static_cast<bool>(targets.overlayColourTexture))
 		{
 			return;
@@ -2220,9 +2336,9 @@ namespace tyr
 
 		if (wanted)
 		{
-			// Same usage as resolvedColourTexture - written by a compute pass, sampled for display.
+			// Written by the grid's compute pass, then drawn into by the debug line pass.
 			targets.overlayColourTexture = CreateViewportTargetTexture("Overlay Colour", PixelFormat::PF_R8G8B8A8_UNORM,
-				static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT), targets.width, targets.height);
+				static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT | IMAGE_USAGE_COLOUR_ATTACHMENT_BIT), targets.width, targets.height);
 			targets.overlayIsNew = true;
 		}
 		else
@@ -2325,20 +2441,17 @@ namespace tyr
 				continue;
 			}
 
-			// Deleted immediately via the registry rather than queued for deferred deletion - this
-			// only ever runs once it's already established safe to delete right away, and queuing
-			// here would be too late for this same tick's delete-list processing to pick it up.
-			m_Registry.DeleteTexture(targets.colourTexture);
-			m_Registry.DeleteTexture(targets.gbufferAlbedoAO);
-			m_Registry.DeleteTexture(targets.gbufferNormalRoughMetal);
-			m_Registry.DeleteTexture(targets.gbufferMotion);
-			m_Registry.DeleteTexture(targets.depthBuffer);
-			m_Registry.DeleteTexture(targets.shadowMasksRaw);
-			m_Registry.DeleteTexture(targets.shadowMasks);
-			m_Registry.DeleteTexture(targets.resolvedColourTexture);
-			if (targets.overlayColourTexture)
+			// Released straight to the pool, since this only runs once the GPU has finished with
+			// them. Another viewport, such as the next Play session's, can then reuse them.
+			const TextureHandle textures[] = { targets.colourTexture, targets.gbufferAlbedoAO, targets.gbufferNormalRoughMetal,
+				targets.gbufferMotion, targets.depthBuffer, targets.shadowMasksRaw, targets.shadowMasks,
+				targets.resolvedColourTexture, targets.overlayColourTexture };
+			for (TextureHandle texture : textures)
 			{
-				m_Registry.DeleteTexture(targets.overlayColourTexture);
+				if (texture)
+				{
+					m_RenderTargetPool.Release(texture, m_FrameNumber);
+				}
 			}
 		}
 
@@ -2459,6 +2572,22 @@ namespace tyr
 			desc.stage = SHADER_STAGE_FRAGMENT_BIT;
 			m_Resources.guiPixelShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
 		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "DebugLineVS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_VERTEX_BIT;
+			m_Resources.debugLineVertexShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "DebugLinePS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_FRAGMENT_BIT;
+			m_Resources.debugLinePixelShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
 	}
 
 	void Renderer::DeleteShaders()
@@ -2474,6 +2603,8 @@ namespace tyr
 		m_Ctx.device->DeleteShaderModule(m_Resources.editorGridComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.guiVertexShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.guiPixelShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.debugLineVertexShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.debugLinePixelShader);
 		ShaderCreator::UnloadCompilerLibs();
 	}
 
@@ -2578,8 +2709,9 @@ namespace tyr
 				poolSize.descriptorType = DescriptorType::StorageBuffer;
 				// 11 original + activeMeshInstanceIndexBuffer/visibleInstanceIndexBuffer/
 				// indirectDrawCommandBuffer/drawCountBuffer for GPU-driven instance culling +
-				// shadowLightSlotMapBuffer for ray-traced shadows + lightIndexBuffer.
-				poolSize.descriptorCount = 17;
+				// shadowLightSlotMapBuffer for ray-traced shadows + lightIndexBuffer +
+				// debugLineVertexBuffer.
+				poolSize.descriptorCount = 18;
 			}
 			{
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
@@ -2686,6 +2818,7 @@ namespace tyr
 			AddBinding(TYR_BINDING_EDITOR_GRID_OUTPUT, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 			AddBinding(TYR_BINDING_LIGHT_INDICES, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
+			AddBinding(TYR_BINDING_DEBUG_LINE_VERTEX, DescriptorType::StorageBuffer, 1, SHADER_STAGE_VERTEX_BIT);
 
 			m_Resources.descriptorSetLayout = m_Ctx.device->CreateDescriptorSetLayout(layoutDesc);
 
@@ -2828,6 +2961,29 @@ namespace tyr
 
 		m_Resources.guiPipeline = m_Ctx.device->CreateGraphicsPipeline(guiDesc);
 
+		// Debug lines - vertex-pulled line lists blended into the overlay texture, with the scene's
+		// depth attached read-only. One pipeline tests against it and one ignores it.
+		GraphicsPipelineDesc debugLineDesc = guiDesc;
+		debugLineDesc.topology = PrimitiveTopology::LineList;
+		debugLineDesc.dynamicRendering.colorAttachmentFormats.Clear();
+		debugLineDesc.dynamicRendering.colorAttachmentFormats.Add(PF_R8G8B8A8_UNORM);
+		debugLineDesc.dynamicRendering.depthAttachmentFormat = PF_D32_SFLOAT;
+		debugLineDesc.pipelineLayoutDesc.pushConstantRanges.Clear();
+		PushConstantRange& debugLinePushConstantRange = debugLineDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
+		debugLinePushConstantRange.stageFlags = SHADER_STAGE_VERTEX_BIT;
+		debugLinePushConstantRange.offset = 0;
+		debugLinePushConstantRange.size = sizeof(DebugLinePushConstants);
+		debugLineDesc.shaders.Clear();
+		debugLineDesc.shaders.Add(m_Resources.debugLineVertexShader);
+		debugLineDesc.shaders.Add(m_Resources.debugLinePixelShader);
+
+		m_Resources.debugLineOnTopPipeline = m_Ctx.device->CreateGraphicsPipeline(debugLineDesc);
+
+		// Reverse-Z, so nearer is greater. Never written, since the depth belongs to the scene.
+		debugLineDesc.depthStencilStateDesc.depthTestEnable = true;
+		debugLineDesc.depthStencilStateDesc.depthCompareOp = CompareOp::GreaterOrEqual;
+		m_Resources.debugLineDepthTestedPipeline = m_Ctx.device->CreateGraphicsPipeline(debugLineDesc);
+
 		// Deferred lighting pass - full-screen compute, reads the G-buffer/depth via the same
 		// bindless textures[] array and writes the shaded result into the viewport colour
 		// texture via TYR_BINDING_LIGHTING_OUTPUT (see RecordLightingPass).
@@ -2917,6 +3073,8 @@ namespace tyr
 	{
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.geometryGraphicsPipeline);
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.guiPipeline);
+		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.debugLineOnTopPipeline);
+		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.debugLineDepthTestedPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.lightingPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.cullingPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.shadowRTPipeline);
@@ -3031,6 +3189,15 @@ namespace tyr
 		}
 		{
 			RenderBufferDesc desc;
+			desc.debugName = "Debug Line Vertex Buffer";
+			// One c_BufferedFrameCount-th per buffered RenderFrame slot, read by DebugLineVS.hlsl
+			// as a StructuredBuffer.
+			desc.size = RenderConstants::c_DebugLineVertexBufferSize * RenderConstants::c_BufferedFrameCount;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.debugLineVertexBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
 			desc.debugName = "Active Mesh Instance Index Buffer";
 			desc.size = sizeof(uint) * RenderConstants::c_MaxMeshInstances;
 			desc.usage = RenderBufferUsage::Storage;
@@ -3111,6 +3278,7 @@ namespace tyr
 		m_Registry.DeleteBuffer(m_Resources.spotLightBuffer);
 		m_Registry.DeleteBuffer(m_Resources.sceneInfoBuffer);
 		m_Registry.DeleteBuffer(m_Resources.guiVertexBuffer);
+		m_Registry.DeleteBuffer(m_Resources.debugLineVertexBuffer);
 		m_Registry.DeleteBuffer(m_Resources.guiIndexBuffer);
 		m_Registry.DeleteBuffer(m_Resources.activeMeshInstanceIndexBuffer);
 		m_Registry.DeleteBuffer(m_Resources.visibleInstanceIndexBuffer);

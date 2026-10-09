@@ -24,5 +24,9 @@ namespace tyr
 		// Turns a type name into one for showing, like "StaticMeshActor" into "Static Mesh Actor".
 		// "Component" is left out, so "MeshComponent" becomes "Mesh".
 		static void MakeDisplayName(const char* typeName, char* displayName, size_t displayNameSize);
+
+		// Whether search appears anywhere in text, ignoring case, so "ub" finds "Cube". An empty
+		// search matches everything.
+		static bool ContainsIgnoreCase(const char* text, const char* search);
 	};
 }

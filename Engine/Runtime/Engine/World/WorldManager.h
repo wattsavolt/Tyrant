@@ -49,11 +49,17 @@ namespace tyr
 		// this also pushes the change to RendererAPI immediately via SetSceneWindow.
 		void SetWorldWindow(Handle worldHandle, RenderWindowHandle windowHandle);
 
-		// Adds an actor whose entities have already been created in the world.
-		void AddActorInstance(Handle worldHandle, const char* name, const char* folderPath, const LocalArray<Entity, c_MaxActorInstanceEntities>& entities);
+		// A new, permanent ID for an actor being placed.
+		static Id64 CreateActorInstanceID();
+
+		// Adds an actor of the type whose entities have already been created in the world.
+		void AddActorInstance(Handle worldHandle, const Id64& id, const Id64& typeID, const char* name, const char* folderPath, const LocalArray<Entity, c_MaxActorInstanceEntities>& entities);
 
 		// Removes the actor and all of its entities.
 		void RemoveActorInstance(Handle worldHandle, Entity rootEntity);
+
+		// Removes every actor and folder, and resets the level settings, ready for another level.
+		void ClearWorld(Handle worldHandle);
 
 		// Moves the actor's root, carrying its child entities and their mesh instances with it.
 		void SetActorTransform(Handle worldHandle, Entity rootEntity, const Transform& transform);

@@ -111,6 +111,19 @@ namespace tyr
 		return pending;
 	}
 
+	void WindowModule::SetCloseIntercepted(WindowHandle handle, bool intercepted)
+	{
+		m_Private->windowPool[handle.h].interceptClose = intercepted;
+	}
+
+	bool WindowModule::ConsumeCloseRequested(WindowHandle handle)
+	{
+		Window& window = m_Private->windowPool[handle.h];
+		const bool requested = window.closeRequested;
+		window.closeRequested = false;
+		return requested;
+	}
+
 	const WindowInputState& WindowModule::GetInputState(WindowHandle handle) const
 	{
 		return m_Private->windowPool[handle.h].input;

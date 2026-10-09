@@ -8,6 +8,7 @@
 #include "AssetSystem/AssetConstants.h"
 #include "IO/BufferedFileStream.h"
 #include "Memory/StackAllocation.h"
+#include "Utility/PathUtil.h"
 #include "RenderResource/MeshUtil.h"
 #include "Shaders/ShaderTypes.h"
 #include <cstring>
@@ -158,13 +159,10 @@ namespace tyr
 		char absMeshFolderPath[TYR_MAX_PATH_TOTAL_SIZE];
 		AssetUtil::CreateFullPath(absMeshFolderPath, outputFolderPath);
 
+		if (!PathUtil::CreateDirectories(absMeshFolderPath))
 		{
-			std::error_code ec;
-			if (!fs::exists(absMeshFolderPath) && !fs::create_directories(absMeshFolderPath, ec))
-			{
-				TYR_LOG_ERROR("Error creating directory %s.", absMeshFolderPath);
-				return false;
-			}
+			TYR_LOG_ERROR("Error creating directory %s.", absMeshFolderPath);
+			return false;
 		}
 
 		char absMeshFilePath[TYR_MAX_PATH_TOTAL_SIZE];

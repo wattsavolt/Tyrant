@@ -1,5 +1,6 @@
 #include "Config.h"
 #include "IO/FileStream.h"
+#include "Platform/Platform.h"
 #include "Memory/StackAllocation.h"
 #include "Base/Base.h"
 #include <charconv>
@@ -18,7 +19,7 @@ namespace tyr
 	void Config::Load()
 	{
 		const char* filePath = m_FilePath.CStr();
-		if (!fs::exists(filePath))
+		if (!Platform::FileExists(filePath))
 		{
 			// Normal first-run case - nothing recorded yet.
 			return;

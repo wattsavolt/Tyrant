@@ -3,6 +3,7 @@
 #include "BuildConfig.h"
 #include "AssetUtil.h"
 #include "AssetConstants.h"
+#include "Platform/Platform.h"
 
 namespace tyr
 {
@@ -33,8 +34,7 @@ namespace tyr
     {
         char absAssetRegistryPath[TYR_MAX_PATH_TOTAL_SIZE];
         AssetUtil::CreateFullPath(absAssetRegistryPath, c_AssetRegistryPath);
-        const StringView fsPath(absAssetRegistryPath);
-        if (std::filesystem::exists(fsPath))
+        if (Platform::FileExists(absAssetRegistryPath))
         {
             Serializer::Instance().DeserializeFromFile<AssetRegistryFile>(absAssetRegistryPath, m_RegistryFile);
         }

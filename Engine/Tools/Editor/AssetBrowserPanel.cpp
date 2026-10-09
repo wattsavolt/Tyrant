@@ -7,6 +7,7 @@
 #include "AssetSystem/AssetUtil.h"
 #include "AssetSystem/AssetConstants.h"
 #include "Utility/PathUtil.h"
+#include "Platform/Platform.h"
 #include "imgui.h"
 #include <algorithm>
 #include <cfloat>
@@ -31,6 +32,7 @@ namespace tyr
 			Texture,
 			Material,
 			Mesh,
+			Level,
 			Other
 		};
 
@@ -46,6 +48,7 @@ namespace tyr
 			{ "Tex", IM_COL32(196, 82, 70, 255) },
 			{ "Mat", IM_COL32(146, 92, 214, 255) },
 			{ "Mesh", IM_COL32(84, 168, 92, 255) },
+			{ "Lvl", IM_COL32(200, 150, 50, 255) },
 			{ "?", IM_COL32(110, 110, 110, 255) }
 		};
 
@@ -67,6 +70,10 @@ namespace tyr
 			if (strcmp(extension, AssetConstants::c_MeshFileExtension) == 0)
 			{
 				return AssetKind::Mesh;
+			}
+			if (strcmp(extension, AssetConstants::c_LevelFileExtension) == 0)
+			{
+				return AssetKind::Level;
 			}
 			return AssetKind::Other;
 		}
@@ -127,8 +134,10 @@ namespace tyr
 	{
 	}
 
-	void AssetBrowserPanel::Draw()
+	AssetID AssetBrowserPanel::Draw(AssetID openLevel)
 	{
+		m_OpenLevel = openLevel;
+		m_LevelToOpen = {};
 		RefreshIfNeeded();
 
 		ImGui::BeginChild("##Folders", ImVec2(c_FolderTreeWidth, 0.0f), ImGuiChildFlags_Borders);
@@ -140,6 +149,7 @@ namespace tyr
 		ImGui::BeginChild("##Assets", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
 		DrawGrid();
 		ImGui::EndChild();
+		return m_LevelToOpen;
 	}
 
 	void AssetBrowserPanel::RefreshIfNeeded()
@@ -385,6 +395,10 @@ namespace tyr
 		{
 			m_SelectedAsset = assetID;
 		}
+		if (kind == AssetKind::Level && hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+		{
+			m_LevelToOpen = assetID;
+		}
 		ImGui::SetItemTooltip("%s", path);
 
 		if (ImGui::BeginDragDropSource())
@@ -551,17 +565,15 @@ namespace tyr
 		char absNewPath[TYR_MAX_PATH_TOTAL_SIZE];
 		AssetUtil::CreateFullPath(absOldPath, oldPath.CStr());
 		AssetUtil::CreateFullPath(absNewPath, newPath);
-		if (AssetUtil::IsValidAssetID(registry.GetAssetID(newPath)) || fs::exists(absNewPath))
+		if (AssetUtil::IsValidAssetID(registry.GetAssetID(newPath)) || Platform::FileExists(absNewPath))
 		{
 			TYR_LOG_WARNING("Can't move %s, %s already exists.", oldPath.CStr(), newPath);
 			return;
 		}
 
 		// The destination folder may not exist yet on disk.
-		std::error_code ec;
-		fs::create_directories(fs::path(absNewPath).parent_path(), ec);
-		fs::rename(absOldPath, absNewPath, ec);
-		if (ec)
+		PathUtil::CreateDirectoriesInFilePath(absNewPath);
+		if (!Platform::RenameFile(absOldPath, absNewPath))
 		{
 			TYR_LOG_ERROR("Failed to move %s to %s.", absOldPath, absNewPath);
 			return;
@@ -575,6 +587,12 @@ namespace tyr
 	{
 		AssetRegistry& registry = AssetRegistry::Instance();
 		const AssetPath path = registry.GetAssetData(assetID).filePath;
+
+		if (assetID == m_OpenLevel)
+		{
+			TYR_LOG_WARNING("Can't delete %s while it's the open level.", path.CStr());
+			return;
+		}
 
 		m_AssetManager.EvictUnreferencedAsset(assetID);
 		if (m_AssetManager.GetLoadState(assetID) != AssetLoadState::Unloaded)
@@ -590,9 +608,7 @@ namespace tyr
 
 		char absPath[TYR_MAX_PATH_TOTAL_SIZE];
 		AssetUtil::CreateFullPath(absPath, path.CStr());
-		std::error_code ec;
-		fs::remove(absPath, ec);
-		if (ec)
+		if (!Platform::RemoveFile(absPath))
 		{
 			TYR_LOG_ERROR("Failed to delete %s.", absPath);
 			return;

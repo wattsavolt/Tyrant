@@ -70,7 +70,10 @@ namespace tyr
 
 	private:
 		static constexpr float c_UnreferencedAssetMaxAge = 60.0f;
-		static constexpr size_t c_UnreferencedAssetBudget = 256 * 1024 * 1024; // 256 MB
+		// The share of the GPU memory budget beyond which unreferenced textures are let go.
+		static constexpr float c_BudgetThreshold = 0.8f;
+		// Frames before a deleted texture's memory is given back, once the GPU is done with it.
+		static constexpr uint c_EvictionDelayFrames = RenderConstants::c_BufferedFrameCount + 1;
 		// Also bounds how many renderer pool slots the cache can hold on to.
 		static constexpr uint c_MaxUnreferencedAssets = 256;
 
@@ -125,7 +128,8 @@ namespace tyr
 		void AddUnreferencedAsset(AssetID assetID, const AssetData& assetData, AssetLoadType type);
 		void ReuseUnreferencedAsset(AssetID assetID, const AssetData& assetData);
 		void EvictUnreferencedAssets();
-		void DeleteUnreferencedAssetResources(const UnreferencedAsset& entry);
+		// Returns the GPU bytes the asset used.
+		size_t DeleteUnreferencedAssetResources(const UnreferencedAsset& entry);
 
 		HashMap<AssetID, AssetData> m_AssetMap;
 		LocalObjectPool<Location, 9, ResetObjectPolicy> m_LocationPool;
@@ -153,7 +157,9 @@ namespace tyr
 		Array<PendingAssetDelete> m_PendingMeshDeletes;
 		// Oldest release first.
 		Array<UnreferencedAsset> m_UnreferencedAssets;
-		size_t m_UnreferencedAssetsSize = 0;
+		// Texture bytes evicted in each of the last few frames, whose memory may not be given back yet.
+		size_t m_EvictedBytes[c_EvictionDelayFrames] = {};
+		uint m_EvictedBytesIndex = 0;
 		// Seconds since startup, for unreferenced asset ages.
 		float m_Time = 0.0f;
 		Handle m_CurrentBatch;

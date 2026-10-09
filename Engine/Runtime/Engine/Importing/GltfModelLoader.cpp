@@ -1,5 +1,7 @@
 #include "GltfModelLoader.h"
 #include "RenderResource/MeshUtil.h"
+#include "Utility/PathUtil.h"
+#include <cstdio>
 
 #include <fastgltf/tools.hpp>
 #include <simdjson.h>
@@ -113,7 +115,7 @@ namespace tyr
 		// TextureSource at them - either a resolved absolute path for a loose file, or the
 		// bytes directly for an embedded (GLB) image. Returns false if the texture has no
 		// usable image or an image source we don't understand.
-		bool ResolveTextureSource(const fastgltf::Asset& asset, const std::filesystem::path& baseDirectory,
+		bool ResolveTextureSource(const fastgltf::Asset& asset, const char* baseDirectory,
 			size_t textureIndex, Array<Path>& resolvedPaths, TextureSource& outSource)
 		{
 			const fastgltf::Texture& texture = asset.textures[textureIndex];
@@ -134,10 +136,20 @@ namespace tyr
 
 				if constexpr (std::is_same_v<SourceType, fastgltf::sources::URI>)
 				{
-					// A loose file on disk, referenced relative to the model's own folder.
-					const std::filesystem::path resolved = baseDirectory / source.uri.fspath();
+					// A loose file on disk, referenced relative to the model's own folder. The URI's
+					// path already has its percent-encoded characters decoded.
+					const std::string_view uriPath = source.uri.path();
+					char resolved[TYR_MAX_PATH_TOTAL_SIZE];
+					const int length = baseDirectory[0] != '\0'
+						? snprintf(resolved, sizeof(resolved), "%s/%.*s", baseDirectory, static_cast<int>(uriPath.size()), uriPath.data())
+						: snprintf(resolved, sizeof(resolved), "%.*s", static_cast<int>(uriPath.size()), uriPath.data());
+					if (length < 0 || length >= static_cast<int>(sizeof(resolved)))
+					{
+						TYR_LOG_ERROR("A texture's path is too long - skipping it.");
+						return false;
+					}
 					Path& stored = resolvedPaths.ExpandOne();
-					stored = resolved.string().c_str();
+					stored = resolved;
 					outSource.path = stored.CStr();
 					return true;
 				}
@@ -205,8 +217,9 @@ namespace tyr
 		}
 		m_DataBuffer = std::move(bufferExpected.get());
 
-		const std::filesystem::path path(filePath);
-		m_BaseDirectory = path.parent_path();
+		char baseDirectory[TYR_MAX_PATH_TOTAL_SIZE];
+		PathUtil::GetDirectoryPathFromFilePath(filePath, baseDirectory);
+		m_BaseDirectory = baseDirectory;
 
 		fastgltf::Parser parser;
 
@@ -220,7 +233,8 @@ namespace tyr
 			| fastgltf::Options::GenerateMeshIndices
 			| fastgltf::Options::DecomposeNodeMatrices;
 
-		fastgltf::Expected<fastgltf::Asset> assetExpected = parser.loadGltf(m_DataBuffer, m_BaseDirectory, options);
+		// fastgltf only takes std::filesystem paths, here and in FromPath above.
+		fastgltf::Expected<fastgltf::Asset> assetExpected = parser.loadGltf(m_DataBuffer, std::filesystem::path(baseDirectory), options);
 		if (!assetExpected)
 		{
 			TYR_LOG_ERROR("Failed to parse model file %s.", filePath);
@@ -646,13 +660,13 @@ namespace tyr
 
 		if (gltfMaterial.pbrData.baseColorTexture.has_value())
 		{
-			ResolveTextureSource(m_Asset, m_BaseDirectory, gltfMaterial.pbrData.baseColorTexture->textureIndex, m_ResolvedImagePaths, desc.albedoSource);
+			ResolveTextureSource(m_Asset, m_BaseDirectory.CStr(), gltfMaterial.pbrData.baseColorTexture->textureIndex, m_ResolvedImagePaths, desc.albedoSource);
 		}
 
 		const bool hasRoughnessMetallic = gltfMaterial.pbrData.metallicRoughnessTexture.has_value();
 		if (hasRoughnessMetallic)
 		{
-			ResolveTextureSource(m_Asset, m_BaseDirectory, gltfMaterial.pbrData.metallicRoughnessTexture->textureIndex, m_ResolvedImagePaths, desc.roughnessMetallicSource);
+			ResolveTextureSource(m_Asset, m_BaseDirectory.CStr(), gltfMaterial.pbrData.metallicRoughnessTexture->textureIndex, m_ResolvedImagePaths, desc.roughnessMetallicSource);
 		}
 
 		if (gltfMaterial.occlusionTexture.has_value())
@@ -666,13 +680,13 @@ namespace tyr
 			}
 			else
 			{
-				ResolveTextureSource(m_Asset, m_BaseDirectory, gltfMaterial.occlusionTexture->textureIndex, m_ResolvedImagePaths, desc.occlusionSource);
+				ResolveTextureSource(m_Asset, m_BaseDirectory.CStr(), gltfMaterial.occlusionTexture->textureIndex, m_ResolvedImagePaths, desc.occlusionSource);
 			}
 		}
 
 		if (gltfMaterial.normalTexture.has_value())
 		{
-			ResolveTextureSource(m_Asset, m_BaseDirectory, gltfMaterial.normalTexture->textureIndex, m_ResolvedImagePaths, desc.normalSource);
+			ResolveTextureSource(m_Asset, m_BaseDirectory.CStr(), gltfMaterial.normalTexture->textureIndex, m_ResolvedImagePaths, desc.normalSource);
 		}
 		// heightSource is left empty - glTF's core material model has no height/displacement map.
 

@@ -22,8 +22,10 @@
 #include "Importing/ModelImporter.h"
 #include "Importing/MaterialImporter.h"
 #include "Config/Config.h"
-#include "Actor/ActorUtil.h"
 #include "Actor/ActorRegistry.h"
+#include "Level/LevelFile.h"
+#include "EditorSettings.h"
+#include "Debug/DebugDraw.h"
 #include "AssetSystem/MeshAsset.h"
 #include "Utility/PathUtil.h"
 #include "Math/Math.h"
@@ -39,6 +41,16 @@ namespace tyr
 	{
 		// How far in front of the camera a mesh dropped onto nothing is placed.
 		constexpr float c_BackgroundDropDistance = 5.0f;
+		// The level made when there aren't any yet.
+		constexpr const char* c_FirstLevelName = "Main";
+		// How long a directional light's direction is drawn, in metres.
+		constexpr float c_DirLightArrowLength = 2.0f;
+
+		bool HasExtension(const char* path, const char* extension)
+		{
+			const char* pathExtension = strrchr(path, '.');
+			return pathExtension && strcmp(pathExtension, extension) == 0;
+		}
 
 		float SnapToGrid(float value, float cellSize)
 		{
@@ -192,6 +204,7 @@ namespace tyr
 		worldParams.simulate = false;
 
 		m_LevelEditorWorld = CreatePrimaryWorld(*m_WindowModule, *m_WorldManager, desc, worldParams, m_PrimaryWindow);
+		m_WindowModule->SetCloseIntercepted(m_PrimaryWindow, true);
 		m_GUIModule->SetPrimaryWindow(m_WindowModule, m_PrimaryWindow);
 
 		InputModule* inputModule;
@@ -199,36 +212,127 @@ namespace tyr
 		m_InputManager = inputModule->GetInputManager();
 		m_InputManager->SetWindow(m_WindowModule, m_PrimaryWindow);
 
+		m_Settings = MakeURef<EditorSettings>();
+
 		// Before the UI, which loads the editor icons it imports.
 		ImportDefaultAssetsIfNeeded();
 
-		m_EditorUI = MakeURef<EditorUI>(*m_GUIModule, *m_RendererAPI, *m_AssetManager, *m_WorldManager, m_LevelEditorWorld);
+		m_EditorUI = MakeURef<EditorUI>(*m_GUIModule, *m_RendererAPI, *m_AssetManager, *m_WorldManager, m_LevelEditorWorld, *m_Settings);
 		m_EditorViewport = MakeURef<EditorViewport>(*m_RendererAPI, m_EditorUI->GetIcons());
 		m_EditorUI->ApplyRenderSettings(true);
 
-		// TODO: Temporary test light until lights can be placed from the editor.
-		{
-			World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
-			Entity lightEntity = world.entities.CreateEntity();
+		OpenStartLevel();
+	}
 
-			DirLightComponent lightComponent;
-			// The direction the light travels, from the light towards the scene.
-			lightComponent.direction = Vector3::Normalize(Vector3(-0.4f, -0.8f, 0.4f));
-			lightComponent.colour = Vector3::c_One;
-			lightComponent.intensity = 3.0f;
-			lightComponent.castsShadow = false;
-			world.entities.AddComponent<DirLightComponent>(lightEntity, lightComponent);
+	void Editor::OpenStartLevel()
+	{
+		const AssetRegistry& registry = AssetRegistry::Instance();
+		AssetPath defaultLevel;
+		if (m_Settings->GetDefaultLevel(defaultLevel))
+		{
+			const AssetID level = registry.GetAssetID(defaultLevel.CStr());
+			if (AssetUtil::IsValidAssetID(level))
+			{
+				OpenLevel(level);
+				return;
+			}
+			TYR_LOG_WARNING("The default level %s no longer exists.", defaultLevel.CStr());
 		}
+
+		for (const std::pair<const AssetID&, const RegAssetData&> asset : registry.GetAssets())
+		{
+			if (HasExtension(asset.second.filePath.CStr(), AssetConstants::c_LevelFileExtension))
+			{
+				OpenLevel(asset.first);
+				return;
+			}
+		}
+
+		// The first level made becomes the default.
+		NewLevel(c_FirstLevelName);
+		if (AssetUtil::IsValidAssetID(m_Level))
+		{
+			SetDefaultLevel(m_Level);
+		}
+	}
+
+	void Editor::SetDefaultLevel(AssetID level)
+	{
+		if (AssetUtil::IsValidAssetID(level))
+		{
+			m_Settings->SetDefaultLevel(AssetRegistry::Instance().GetAssetData(level).filePath.CStr());
+		}
+	}
+
+	void Editor::NewLevel(const char* name)
+	{
+		m_WorldManager->ClearWorld(m_LevelEditorWorld);
+		m_SelectedActor = c_InvalidEntity;
+
+		if (const ActorTypeDesc* lightType = ActorRegistry::Instance().FindActorType(Id64("DirLightActor")))
+		{
+			AddActor(*lightType, "Sun", "");
+		}
+		SaveLevelAs(name);
+	}
+
+	void Editor::OpenLevel(AssetID level)
+	{
+		m_WorldManager->ClearWorld(m_LevelEditorWorld);
+		m_SelectedActor = c_InvalidEntity;
+
+		const char* levelPath = AssetRegistry::Instance().GetAssetData(level).filePath.CStr();
+		LevelFile::Load(levelPath, *m_WorldManager, m_LevelEditorWorld);
+		m_Level = level;
+		m_SavedChangeCount = m_WorldManager->GetWorld(m_LevelEditorWorld).changeCount;
+	}
+
+	void Editor::SaveAll()
+	{
+		// Only the level can have unsaved changes for now.
+		SaveLevel();
+	}
+
+	void Editor::SaveLevel()
+	{
+		if (AssetUtil::IsValidAssetID(m_Level))
+		{
+			WriteLevel(AssetRegistry::Instance().GetAssetData(m_Level).filePath.CStr());
+		}
+	}
+
+	void Editor::SaveLevelAs(const char* name)
+	{
+		char levelPath[PathConstants::c_MaxAssetPathTotalSize];
+		snprintf(levelPath, sizeof(levelPath), "%s/%s%s", AssetConstants::c_LevelFolderName, name, AssetConstants::c_LevelFileExtension);
+		WriteLevel(levelPath);
+	}
+
+	bool Editor::WriteLevel(const char* levelPath)
+	{
+		// Copied, since saving can move the registry's own copy of the path.
+		const AssetPath path = levelPath;
+		const World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
+		const AssetID level = LevelFile::Save(path.CStr(), world);
+		if (!AssetUtil::IsValidAssetID(level))
+		{
+			return false;
+		}
+
+		AssetRegistry::Instance().Save();
+		m_Level = level;
+		m_SavedChangeCount = world.changeCount;
+		return true;
+	}
+
+	bool Editor::IsLevelDirty() const
+	{
+		return m_WorldManager->GetWorld(m_LevelEditorWorld).changeCount != m_SavedChangeCount;
 	}
 
 	void Editor::ImportDefaultAssetsIfNeeded()
 	{
-		char configPath[TYR_MAX_PATH_TOTAL_SIZE];
-		AssetUtil::CreateFullConfigPath(configPath, "EditorConfig.ini");
-
-		Config editorConfig(configPath);
-		const bool shouldImport = !editorConfig.HasValue("ImportDefaultAssets") || editorConfig.GetValueAsBool("ImportDefaultAssets");
-		if (!shouldImport)
+		if (!m_Settings->GetImportDefaultAssets())
 		{
 			return;
 		}
@@ -278,8 +382,7 @@ namespace tyr
 		// Cleared so this doesn't repeat on every subsequent startup.
 		if (imported)
 		{
-			editorConfig.SetValueAsBool("ImportDefaultAssets", false);
-			editorConfig.Save();
+			m_Settings->SetImportDefaultAssets(false);
 		}
 	}
 
@@ -287,12 +390,18 @@ namespace tyr
 	{
 		PlayState requestedState = m_PlayState;
 		EditorRequests requests;
-		const PanelRect viewportRect = m_EditorUI->Draw(requestedState, m_SelectedActor, requests);
+		const PanelRect viewportRect = m_EditorUI->Draw(requestedState, m_SelectedActor, m_Level, IsLevelDirty(), requests);
+		// Closing the window asks about unsaved changes the same way File > Exit does.
+		if (m_WindowModule->ConsumeCloseRequested(m_PrimaryWindow))
+		{
+			m_EditorUI->RequestExit(m_PlayState == PlayState::Editing && IsLevelDirty(), requests);
+		}
 		if (requestedState != m_PlayState)
 		{
 			SetPlayState(requestedState);
 		}
 		HandleRequests(requests);
+		HandleLevelRequests(requests);
 
 		if (m_PlayState == PlayState::Playing)
 		{
@@ -300,6 +409,10 @@ namespace tyr
 		}
 
 		UpdateGrid();
+		if (m_PlayState == PlayState::Editing)
+		{
+			DrawDebugOverlays();
+		}
 
 		const ViewSettings& viewSettings = m_EditorUI->GetViewSettings();
 		EditorViewport::EditState editState;
@@ -365,6 +478,72 @@ namespace tyr
 		m_RendererAPI->SetRenderViewportGrid(levelWorld.renderViewportHandle, m_Grid);
 	}
 
+	void Editor::DrawDebugOverlays()
+	{
+		const ViewSettings& viewSettings = m_EditorUI->GetViewSettings();
+		World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
+
+		if (viewSettings.showActorBounds)
+		{
+			world.entities.ForEach<BoxComponent>([&world, this](Entity entity, BoxComponent& box)
+			{
+				if (!world.entities.HasComponent<ComponentTransform>(entity))
+				{
+					return;
+				}
+				const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+				const Vector3 center = transform.position + transform.rotation.Rotate(box.center * transform.scale);
+				const uint colour = entity == m_SelectedActor ? DebugColour::c_Yellow : DebugColour::c_Cyan;
+				DebugDraw::Box(center, box.halfExtents * transform.scale, transform.rotation, colour);
+			});
+		}
+
+		if (viewSettings.showLightRanges)
+		{
+			world.entities.ForEach<PointLightComponent>([&world](Entity entity, PointLightComponent& light)
+			{
+				if (world.entities.HasComponent<ComponentTransform>(entity))
+				{
+					DebugDraw::Sphere(world.entities.GetComponent<ComponentTransform>(entity).world.position, light.range, DebugColour::c_Yellow);
+				}
+			});
+
+			world.entities.ForEach<SpotLightComponent>([&world](Entity entity, SpotLightComponent& light)
+			{
+				if (!world.entities.HasComponent<ComponentTransform>(entity))
+				{
+					return;
+				}
+				// The edge is where the falloff, cos(angle) to the power of coneFalloff, drops to a tenth.
+				const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+				const float halfAngle = light.coneFalloff > 0.0f ? Math::Acos(Math::Pow(0.1f, 1.0f / light.coneFalloff)) : Math::c_HalfPi;
+				DebugDraw::Cone(transform.position, transform.rotation.Rotate(Vector3::c_Forward), light.range, halfAngle, DebugColour::c_Yellow);
+			});
+
+			// A directional light has no position, so its direction is shown from its actor.
+			world.entities.ForEach<DirLightComponent>([&world](Entity entity, DirLightComponent& light)
+			{
+				if (world.entities.HasComponent<ComponentTransform>(entity))
+				{
+					const Vector3 start = world.entities.GetComponent<ComponentTransform>(entity).world.position;
+					DebugDraw::Arrow(start, start + Vector3::SafeNormalize(light.direction) * c_DirLightArrowLength, DebugColour::c_Orange);
+				}
+			});
+		}
+
+		if (viewSettings.showActorNames)
+		{
+			for (const ActorInstance& actor : world.actorInstances)
+			{
+				const Entity root = actor.RootEntity();
+				if (world.entities.HasComponent<ComponentTransform>(root))
+				{
+					DebugDraw::Text(world.entities.GetComponent<ComponentTransform>(root).world.position, actor.name.CStr(), DebugColour::c_White);
+				}
+			}
+		}
+	}
+
 	void Editor::HandleRequests(const EditorRequests& requests)
 	{
 		if (m_PlayState != PlayState::Editing)
@@ -384,6 +563,48 @@ namespace tyr
 			drop.mesh = requests.mesh;
 			drop.ray = GetCameraRay();
 			AddMeshDrop(drop, requests.folder.CStr());
+		}
+	}
+
+	void Editor::HandleLevelRequests(const EditorRequests& requests)
+	{
+		if (m_PlayState != PlayState::Editing)
+		{
+			if (requests.exit)
+			{
+				Platform::Exit(true);
+			}
+			return;
+		}
+
+		// Saving comes first, so choosing Save when asked about unsaved changes saves before exiting.
+		if (requests.saveAll)
+		{
+			SaveAll();
+		}
+		else if (requests.saveLevel)
+		{
+			SaveLevel();
+		}
+		if (requests.saveLevelAs)
+		{
+			SaveLevelAs(requests.levelName.CStr());
+		}
+		if (requests.newLevel)
+		{
+			NewLevel(requests.levelName.CStr());
+		}
+		if (requests.openLevel)
+		{
+			OpenLevel(requests.level);
+		}
+		if (requests.setDefaultLevel)
+		{
+			SetDefaultLevel(requests.level);
+		}
+		if (requests.exit)
+		{
+			Platform::Exit(true);
 		}
 	}
 
@@ -419,16 +640,12 @@ namespace tyr
 		}
 
 		World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
-		const LocalArray<Entity, c_MaxActorTypeEntities> entities = ActorRegistry::Instance().InstantiateActor(actorType, world.entities);
-		if (entities.IsEmpty())
+		const Entity rootEntity = AddActor(*actorTypeDesc, actorTypeDesc->name.CStr(), folderPath);
+		if (rootEntity == c_InvalidEntity)
 		{
 			return;
 		}
 
-		const Name name = MakeUniqueActorName(world, actorTypeDesc->name.CStr());
-		m_WorldManager->AddActorInstance(m_LevelEditorWorld, name.CStr(), folderPath, entities);
-
-		const Entity rootEntity = entities[0];
 		if (world.entities.HasComponent<ComponentTransform>(rootEntity))
 		{
 			Transform transform = world.entities.GetComponent<ComponentTransform>(rootEntity).local;
@@ -436,6 +653,20 @@ namespace tyr
 			m_WorldManager->SetActorTransform(m_LevelEditorWorld, rootEntity, transform);
 		}
 		m_SelectedActor = rootEntity;
+	}
+
+	Entity Editor::AddActor(const ActorTypeDesc& actorType, const char* name, const char* folderPath)
+	{
+		World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
+		const LocalArray<Entity, c_MaxActorTypeEntities> entities = ActorRegistry::Instance().InstantiateActor(actorType.typeId, world.entities);
+		if (entities.IsEmpty())
+		{
+			return c_InvalidEntity;
+		}
+
+		const ActorName uniqueName = MakeUniqueActorName(world, name);
+		m_WorldManager->AddActorInstance(m_LevelEditorWorld, WorldManager::CreateActorInstanceID(), actorType.typeId, uniqueName.CStr(), folderPath, entities);
+		return entities[0];
 	}
 
 	Vector3 Editor::GetBackgroundDropPosition(const ViewportRay& ray) const
@@ -516,31 +747,37 @@ namespace tyr
 			position = GetBackgroundDropPosition(ray);
 		}
 
-		StaticMeshActorMeshDesc desc;
-		desc.mesh = drop.mesh;
-		desc.localTransform.position = position;
-		desc.localTransform.rotation = Quaternion::c_Identity;
-		desc.localTransform.scale = Vector3::c_One;
-		desc.aabbMin = header.aabbMin;
-		desc.aabbMax = header.aabbMax;
-
-		LocalArray<Entity, c_MaxActorInstanceEntities> entities;
-		entities.Add(ActorUtil::BuildStaticMeshActor(world.entities, desc));
+		const ActorTypeDesc* actorType = ActorRegistry::Instance().FindActorType(Id64("StaticMeshActor"));
+		if (!actorType)
+		{
+			return c_InvalidEntity;
+		}
 
 		// Named after the mesh file.
 		const char* meshPath = AssetRegistry::Instance().GetAssetData(drop.mesh).filePath.CStr();
 		char fileName[PathConstants::c_MaxFileNameTotalSize];
 		PathUtil::GetFileNameWithoutExtension(meshPath, fileName);
-		const Name name = MakeUniqueActorName(world, fileName);
+		const Entity rootEntity = AddActor(*actorType, fileName, pending.folder.CStr());
+		if (rootEntity == c_InvalidEntity)
+		{
+			return c_InvalidEntity;
+		}
 
-		m_WorldManager->AddActorInstance(m_LevelEditorWorld, name.CStr(), pending.folder.CStr(), entities);
-		return entities[0];
+		world.entities.GetComponent<MeshComponent>(rootEntity).mesh = drop.mesh;
+		BoxComponent& box = world.entities.GetComponent<BoxComponent>(rootEntity);
+		box.center = (header.aabbMin + header.aabbMax) * 0.5f;
+		box.halfExtents = (header.aabbMax - header.aabbMin) * 0.5f;
+
+		Transform transform = world.entities.GetComponent<ComponentTransform>(rootEntity).local;
+		transform.position = position;
+		m_WorldManager->SetActorTransform(m_LevelEditorWorld, rootEntity, transform);
+		return rootEntity;
 	}
 
-	Name Editor::MakeUniqueActorName(const World& world, const char* baseName)
+	ActorName Editor::MakeUniqueActorName(const World& world, const char* baseName)
 	{
 		// Like Unreal, "Cube", then "Cube2", "Cube3" and so on, cut short to fit.
-		char name[Name::c_Capacity];
+		char name[ActorName::c_Capacity];
 		for (uint number = 1;; ++number)
 		{
 			char suffix[12] = {};
@@ -549,7 +786,7 @@ namespace tyr
 				snprintf(suffix, sizeof(suffix), "%u", number);
 			}
 			const size_t suffixLength = strlen(suffix);
-			const size_t baseLength = std::min(strlen(baseName), NameConstants::c_MaxName - suffixLength);
+			const size_t baseLength = std::min(strlen(baseName), c_MaxActorName - suffixLength);
 			snprintf(name, sizeof(name), "%.*s%s", static_cast<int>(baseLength), baseName, suffix);
 
 			bool taken = false;
@@ -559,7 +796,7 @@ namespace tyr
 			}
 			if (!taken)
 			{
-				return Name(name);
+				return ActorName(name);
 			}
 		}
 	}
@@ -568,6 +805,12 @@ namespace tyr
 	{
 		if (m_PlayState == PlayState::Editing)
 		{
+			// The game loads the level from its file, so it's saved first.
+			if (IsLevelDirty())
+			{
+				SaveLevel();
+			}
+			m_App.SetStartLevel(AssetUtil::IsValidAssetID(m_Level) ? AssetRegistry::Instance().GetAssetData(m_Level).filePath.CStr() : "");
 			m_EditorUI->ApplyRenderSettings(false);
 			m_App.Initialize();
 		}

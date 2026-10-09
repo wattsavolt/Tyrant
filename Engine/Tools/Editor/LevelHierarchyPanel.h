@@ -77,7 +77,7 @@ namespace tyr
 		// Moves every actor and created folder under oldPath to be under newPath, which may be
 		// the root.
 		void ReplaceFolder(World& world, const char* oldPath, const char* newPath);
-		void CreateFolder(const char* parentPath);
+		void CreateFolder(World& world, const char* parentPath);
 
 		WorldManager& m_WorldManager;
 		Handle m_LevelWorld;
@@ -88,10 +88,8 @@ namespace tyr
 		Array<uint> m_ActorOrder;
 		// Root level actors come first in m_ActorOrder.
 		uint m_RootActorCount = 0;
-		// Folders made in this panel, which may not hold any actors yet. Only kept for this
-		// session until levels can be saved.
-		Array<RelativePath> m_CreatedFolders;
 		uint m_EntitiesVersion = ~0u;
+		uint m_ChangeCount = ~0u;
 		bool m_Dirty = true;
 		// Whether this frame's Draw can change anything.
 		bool m_Editing = true;

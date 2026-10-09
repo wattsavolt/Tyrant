@@ -1,6 +1,7 @@
 #include "ShaderCreator.h"
 #include "Platform/Platform.h"
 #include "IO/FileStream.h"
+#include "Utility/PathUtil.h"
 #include "RenderAPI/Device.h"
 #if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
 #include <windows.h>
@@ -95,14 +96,16 @@ namespace tyr
 		char byteCodeFilePath[PathConstants::c_MaxPathTotalSize];
 		snprintf(byteCodeFilePath, sizeof(byteCodeFilePath), "%s/%s%s", byteCodeDirPath, shaderDesc.fileName.CStr(), shaderExt);
 		
-		if (!fs::exists(sourceFilePath))
+		uint64 sourceWriteTime;
+		if (!Platform::GetFileWriteTime(sourceFilePath, sourceWriteTime))
 		{
 			TYR_ASSERT(false);
 			return;
 		}
 
 		// Only compile if necessary
-		if (fs::exists(byteCodeFilePath) && fs::last_write_time(byteCodeFilePath) > fs::last_write_time(sourceFilePath))
+		uint64 byteCodeWriteTime;
+		if (Platform::GetFileWriteTime(byteCodeFilePath, byteCodeWriteTime) && byteCodeWriteTime > sourceWriteTime)
 		{
 			return;
 		}
@@ -239,9 +242,10 @@ namespace tyr
 				TYR_GASSERT(results->GetOutput(DXC_OUT_OBJECT, __uuidof(IDxcBlob), reinterpret_cast<void**>(&shaderBinary), &shaderNameWide));
 				if (shaderBinary && shaderNameWide)
 				{
-					const String shaderName = StringUtil::ToString((const wchar_t*)shaderNameWide->GetStringPointer());
-					fs::create_directory(byteCodeDirPath);
-					FileStream::WriteFile(shaderName.c_str(), shaderBinary->GetBufferPointer(), shaderBinary->GetBufferSize());
+					char shaderName[PathConstants::c_MaxPathTotalSize];
+					StringUtil::ToString(shaderNameWide->GetStringPointer(), shaderName, sizeof(shaderName));
+					PathUtil::CreateDirectoriesInFilePath(shaderName);
+					FileStream::WriteFile(shaderName, shaderBinary->GetBufferPointer(), shaderBinary->GetBufferSize());
 				}			
 				TYR_SAFE_RELEASE(shaderNameWide);
 				TYR_SAFE_RELEASE(shaderBinary);
@@ -253,7 +257,10 @@ namespace tyr
 					TYR_GASSERT(results->GetOutput(DXC_OUT_PDB, __uuidof(IDxcBlob), reinterpret_cast<void**>(&pdbBinary), &pdbName));
 					if (pdbBinary && pdbName)
 					{
-						FileStream::WriteFile((const char*)pdbName->GetStringPointer(), pdbBinary->GetBufferPointer(), pdbBinary->GetBufferSize());
+						// The name is UTF-16, so it's converted rather than read as narrow text.
+						char pdbFileName[PathConstants::c_MaxPathTotalSize];
+						StringUtil::ToString(pdbName->GetStringPointer(), pdbFileName, sizeof(pdbFileName));
+						FileStream::WriteFile(pdbFileName, pdbBinary->GetBufferPointer(), pdbBinary->GetBufferSize());
 					}
 					TYR_SAFE_RELEASE(pdbName);
 					TYR_SAFE_RELEASE(pdbBinary);

@@ -68,6 +68,20 @@ namespace tyr
 
 		static void CloseFile(FileHandle handle);
 
+		// True for a file or a directory.
+		static bool FileExists(const char* path);
+
+		// Makes one directory, whose parent must exist. True if it exists afterwards.
+		static bool MakeDirectory(const char* path);
+
+		// Moves or renames a file, replacing any file already at newPath.
+		static bool RenameFile(const char* path, const char* newPath);
+
+		static bool RemoveFile(const char* path);
+
+		// When the file was last written, comparable only with other values from this. False if it can't be read.
+		static bool GetFileWriteTime(const char* path, uint64& outWriteTime);
+
 		static void ShowAlertMessage(const char* msg);
 
 		// Opens a native "open file" dialog. filter is pairs of "description\0*.ext\0",

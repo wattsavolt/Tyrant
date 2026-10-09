@@ -51,6 +51,11 @@ namespace tyr
 		// the flag, so this is a one-shot "did it change" check, not a live query.
 		bool ConsumeResizePending(WindowHandle handle);
 
+		// When intercepted, closing the window leaves it open and is reported by ConsumeCloseRequested
+		// instead, so the app can ask before quitting.
+		void SetCloseIntercepted(WindowHandle handle, bool intercepted);
+		bool ConsumeCloseRequested(WindowHandle handle);
+
 		// Live level state (keys/mouse buttons/position) - always safe to read repeatedly,
 		// no draining needed.
 		const WindowInputState& GetInputState(WindowHandle handle) const;

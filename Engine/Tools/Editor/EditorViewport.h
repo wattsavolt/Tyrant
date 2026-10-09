@@ -65,6 +65,8 @@ namespace tyr
 	private:
 		// The same view and projection the renderer builds for the world.
 		static void CalculateViewProjection(const World& world, uint width, uint height, Matrix4& view, Matrix4& projection);
+		// Draws the debug labels over the viewport image at their projected positions.
+		static void DrawDebugTexts(const World& world, float imageX, float imageY, uint width, uint height);
 		static ViewportRay CalculateMouseRay(const World& world, float mouseX, float mouseY, uint width, uint height);
 
 		// Draws the selected actor's gizmo over the image. Returns true while it's hovered or dragged.

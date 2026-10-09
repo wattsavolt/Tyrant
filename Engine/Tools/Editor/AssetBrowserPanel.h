@@ -21,8 +21,9 @@ namespace tyr
 
 		AssetBrowserPanel(AssetManager& assetManager, const EditorIcons& icons);
 
-		// Draws the panel's contents into the current window.
-		void Draw();
+		// Draws the panel's contents into the current window. openLevel can't be deleted. Returns a
+		// level that was double clicked to open, otherwise an invalid ID.
+		AssetID Draw(AssetID openLevel);
 
 	private:
 		// Changes chosen from an asset's menu, applied once the grid is drawn since they change
@@ -73,6 +74,8 @@ namespace tyr
 		// Empty for the root assets folder.
 		RelativePath m_SelectedFolder;
 		AssetID m_SelectedAsset;
+		AssetID m_OpenLevel;
+		AssetID m_LevelToOpen;
 		uint m_RegistryVersion = 0;
 		bool m_RevealSelectedFolder = false;
 

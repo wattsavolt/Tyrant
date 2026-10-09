@@ -5,7 +5,6 @@
 #include "INonCopyable.h"
 #include "TypeUtils.h"
 
-#include <filesystem>
 #include <optional>
 
 #include <initializer_list>
@@ -22,8 +21,6 @@ extern "C" {
 #include <cstdarg>
 
 }
-
-namespace fs = std::filesystem;
 
 #if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
 #  undef min

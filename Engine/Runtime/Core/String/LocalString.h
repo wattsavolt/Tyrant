@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Base/base.h"
+#include <charconv>
+#include <cstring>
 
 namespace tyr
 {

@@ -68,5 +68,8 @@ namespace tyr
 
         // Creates all the directories in the file path if they do not exists
         static void CreateDirectoriesInFilePath(const char* filePath);
+
+        // Creates the directory and any above it that don't exist. True if it exists afterwards.
+        static bool CreateDirectories(const char* dirPath);
 	};
 }

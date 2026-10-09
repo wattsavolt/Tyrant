@@ -12,6 +12,10 @@ namespace tyr
 			ImGui::Separator();
 			ImGui::MenuItem("Grid", nullptr, &settings.showGrid);
 			ImGui::MenuItem("Snap to Grid", nullptr, &settings.snapToGrid);
+			ImGui::Separator();
+			ImGui::MenuItem("Actor Bounds", nullptr, &settings.showActorBounds);
+			ImGui::MenuItem("Light Ranges", nullptr, &settings.showLightRanges);
+			ImGui::MenuItem("Actor Names", nullptr, &settings.showActorNames);
 			ImGui::EndMenu();
 		}
 	}

@@ -15,5 +15,8 @@ namespace tyr
 		SamplerHandle sampler;
 		TextureInfo info;
 		ImageLayout imageLayout;
+		// Kept so a render target can be matched to another request for the same kind of texture.
+		ImageUsage usage;
+		SampleCount sampleCount;
 	};
 }

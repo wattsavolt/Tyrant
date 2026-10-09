@@ -101,6 +101,14 @@ namespace tyr
 		ComputePipelineHandle editorGridPipeline;
 		ShaderModuleHandle editorGridComputeShader;
 
+		// Debug lines drawn into the viewport's overlay after the grid, one pipeline tested against
+		// the scene's depth and one drawn on top.
+		RenderBufferHandle debugLineVertexBuffer;
+		GraphicsPipelineHandle debugLineDepthTestedPipeline;
+		GraphicsPipelineHandle debugLineOnTopPipeline;
+		ShaderModuleHandle debugLineVertexShader;
+		ShaderModuleHandle debugLinePixelShader;
+
 		// Ray-traced shadows - one top-level acceleration structure per buffered RenderFrame
 		// slot, rebuilt every frame from the active scene's mesh instances. Per-mesh bottom-level
 		// structures live on Mesh::blas instead.

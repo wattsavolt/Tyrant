@@ -77,6 +77,18 @@ namespace tyr
 			dst[len] = L'\0'; // null-terminate
 		}
 
+		// Narrows each character, so only suited to ASCII. Cut short to fit dstSize.
+		static void ToString(const wchar_t* src, char* dst, size_t dstSize)
+		{
+			TYR_ASSERT(src && dst && dstSize > 0);
+			size_t i = 0;
+			for (; src[i] != L'\0' && i + 1 < dstSize; ++i)
+			{
+				dst[i] = static_cast<char>(src[i]);
+			}
+			dst[i] = '\0';
+		}
+
 		static String ToString(const WString& str)
 		{
 			return String(str.begin(), str.end());

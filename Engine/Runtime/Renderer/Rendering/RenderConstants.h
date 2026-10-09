@@ -8,6 +8,7 @@
 #include "Shaders/ShaderTypes.h"
 #include "RenderAPI/AccelerationStructure.h"
 #include "Rendering/GUIDrawData.h"
+#include "Rendering/DebugLineTypes.h"
 
 namespace tyr
 {
@@ -22,6 +23,11 @@ namespace tyr
 		// sizeof(GUIVertex) so each slot's byte offset lands exactly on a vertex boundary.
 		static constexpr size_t c_GUIVertexBufferSize = (4 * 1024 * 1024 / sizeof(GUIVertex)) * sizeof(GUIVertex); // ~4 MB
 		static constexpr size_t c_GUIIndexBufferSize = 1 * 1024 * 1024; // 1 MB
+		// Debug lines are drawn in every build except final ones.
+		static constexpr bool c_DebugDrawEnabled = !TYR_FINAL;
+		// Per buffered RenderFrame slot, like the GUI buffers.
+		static constexpr uint c_MaxDebugLineVertices = 65536;
+		static constexpr size_t c_DebugLineVertexBufferSize = c_MaxDebugLineVertices * sizeof(DebugLineVertex);
 		// Per-frame BLAS build budget, in bytes of mesh geometry. Pending meshes are processed
 		// in request order until adding the next would exceed this, with at least one always
 		// processed so an oversized mesh alone can't stall the queue.

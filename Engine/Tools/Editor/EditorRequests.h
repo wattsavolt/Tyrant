@@ -17,5 +17,20 @@ namespace tyr
 		AssetID mesh;
 		// The hierarchy folder, empty for the root.
 		RelativePath folder;
+
+		// Level commands, carried out in this order. Saving comes first so a level can be saved
+		// before another replaces it.
+		bool saveLevel = false;
+		// Everything with unsaved changes, which for now is the level.
+		bool saveAll = false;
+		bool saveLevelAs = false;
+		bool newLevel = false;
+		bool openLevel = false;
+		// Makes level the one the editor opens on startup.
+		bool setDefaultLevel = false;
+		bool exit = false;
+		// The name for Save As and New, without folder or extension.
+		RelativePath levelName;
+		AssetID level;
 	};
 }

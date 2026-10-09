@@ -9,27 +9,6 @@
 
 namespace tyr
 {
-	namespace
-	{
-		bool ContainsIgnoringCase(const char* text, const char* search)
-		{
-			const size_t searchLength = strlen(search);
-			for (; *text != '\0'; ++text)
-			{
-				size_t i = 0;
-				while (i < searchLength && text[i] != '\0' && tolower(static_cast<unsigned char>(text[i])) == tolower(static_cast<unsigned char>(search[i])))
-				{
-					++i;
-				}
-				if (i == searchLength)
-				{
-					return true;
-				}
-			}
-			return searchLength == 0;
-		}
-	}
-
 	ActorPicker::ActorPicker()
 	{
 		// Actor types are all registered before the editor starts, so the list never changes.
@@ -61,7 +40,7 @@ namespace tyr
 		{
 			for (const Entry& entry : m_Entries)
 			{
-				if (!ContainsIgnoringCase(entry.displayName, m_Search))
+				if (!EditorWidgets::ContainsIgnoreCase(entry.displayName, m_Search))
 				{
 					continue;
 				}

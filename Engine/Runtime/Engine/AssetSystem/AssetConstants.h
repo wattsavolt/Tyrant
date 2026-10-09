@@ -11,6 +11,8 @@ namespace tyr
 		static constexpr const char* c_MaterialFileExtension = ".mat";
 		static constexpr const char* c_MeshFileExtension = ".mesh";
 		static constexpr const char* c_SkeletalMeshFileExtension = ".skmesh";
+		static constexpr const char* c_LevelFileExtension = ".level";
+		static constexpr const char* c_LevelFolderName = "Levels";
 		static constexpr const char* c_MaterialFolderName = "Materials";
 		static constexpr const char* c_DefaultMaterialName = "DefaultMaterial";
 		static constexpr const char* c_DefaultMaterialFolderName = c_DefaultMaterialName;

@@ -51,6 +51,8 @@
 // The active scene's lights this frame, as slots in the light buffers above: directional, then
 // point (from TYR_MAX_DIR_LIGHTS), then spot (from TYR_MAX_DIR_LIGHTS + TYR_MAX_POINT_LIGHTS).
 #define TYR_BINDING_LIGHT_INDICES 25
+// This frame's debug line vertices, depth-tested ones first.
+#define TYR_BINDING_DEBUG_LINE_VERTEX 26
 
 // How many copies of the per-frame render targets TYR_BINDING_LIGHTING_OUTPUT holds, one
 // per buffered frame slot - kept in sync with the matching C++ constant.

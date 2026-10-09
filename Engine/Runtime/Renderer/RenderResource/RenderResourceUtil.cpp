@@ -174,6 +174,8 @@ namespace tyr
 		texture.image = device.CreateImage(imageDesc);
 
 		texture.imageLayout = desc.layout;
+		texture.usage = desc.usage;
+		texture.sampleCount = desc.sampleCount;
 
 		const bool isDepthTexture = TextureUtil::IsDepthFormat(desc.info.format);
 

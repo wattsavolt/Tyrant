@@ -168,12 +168,13 @@ namespace tyr
 
 	void LevelHierarchyPanel::RebuildIfNeeded(const World& world)
 	{
-		if (!m_Dirty && m_EntitiesVersion == world.entities.GetVersion())
+		if (!m_Dirty && m_EntitiesVersion == world.entities.GetVersion() && m_ChangeCount == world.changeCount)
 		{
 			return;
 		}
 		m_Dirty = false;
 		m_EntitiesVersion = world.entities.GetVersion();
+		m_ChangeCount = world.changeCount;
 		Rebuild(world);
 	}
 
@@ -187,7 +188,7 @@ namespace tyr
 		{
 			AddFolderWithParents(folderPaths, actor.folderPath.CStr());
 		}
-		for (const RelativePath& folder : m_CreatedFolders)
+		for (const RelativePath& folder : world.folders)
 		{
 			AddFolderWithParents(folderPaths, folder.CStr());
 		}
@@ -371,13 +372,13 @@ namespace tyr
 			{
 				ImGui::SameLine();
 				// Actor names are shorter than folder names.
-				const EditorWidgets::RenameResult result = EditorWidgets::DrawRenameBox(m_RenameBuffer, Name::c_Capacity, m_RenameFocusPending);
+				const EditorWidgets::RenameResult result = EditorWidgets::DrawRenameBox(m_RenameBuffer, ActorName::c_Capacity, m_RenameFocusPending);
 				if (result == EditorWidgets::RenameResult::Committed && m_RenameBuffer[0] != '\0')
 				{
 					// Cut short to fit, the same as names given when spawning.
-					m_RenameBuffer[std::min<size_t>(strlen(m_RenameBuffer), NameConstants::c_MaxName)] = '\0';
+					m_RenameBuffer[std::min<size_t>(strlen(m_RenameBuffer), c_MaxActorName)] = '\0';
 					actor.name = m_RenameBuffer;
-					m_Dirty = true;
+					++world.changeCount;
 				}
 				if (result != EditorWidgets::RenameResult::Editing)
 				{
@@ -457,7 +458,7 @@ namespace tyr
 				if (actor.RootEntity() == edits.actorToMove)
 				{
 					actor.folderPath = edits.moveTarget;
-					m_Dirty = true;
+					++world.changeCount;
 					break;
 				}
 			}
@@ -470,7 +471,7 @@ namespace tyr
 
 		if (edits.createFolder)
 		{
-			CreateFolder(edits.newFolderParent.CStr());
+			CreateFolder(world, edits.newFolderParent.CStr());
 		}
 	}
 
@@ -504,23 +505,23 @@ namespace tyr
 		{
 			allFit &= remap(actor.folderPath);
 		}
-		for (uint i = m_CreatedFolders.Size(); i-- > 0;)
+		for (uint i = world.folders.Size(); i-- > 0;)
 		{
-			allFit &= remap(m_CreatedFolders[i]);
+			allFit &= remap(world.folders[i]);
 			// A folder moved to the root is gone.
-			if (m_CreatedFolders[i].Size() == 0)
+			if (world.folders[i].Size() == 0)
 			{
-				m_CreatedFolders.SwapAndPopBack(i);
+				world.folders.SwapAndPopBack(i);
 			}
 		}
 		if (!allFit)
 		{
 			TYR_LOG_WARNING("Some of %s was left in place, as its new path would be too long.", oldPath);
 		}
-		m_Dirty = true;
+		++world.changeCount;
 	}
 
-	void LevelHierarchyPanel::CreateFolder(const char* parentPath)
+	void LevelHierarchyPanel::CreateFolder(World& world, const char* parentPath)
 	{
 		// "New Folder", then "New Folder 2" and so on, until it's not already taken.
 		RelativePath path;
@@ -552,8 +553,8 @@ namespace tyr
 			}
 		}
 
-		m_CreatedFolders.Add(path);
-		m_Dirty = true;
+		world.folders.Add(path);
+		++world.changeCount;
 
 		// Like Unreal, a new folder starts out being renamed.
 		m_RenamingFolder = path;

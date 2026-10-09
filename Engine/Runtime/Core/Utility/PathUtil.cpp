@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PathUtil.h"
+#include "Platform/Platform.h"
 
 namespace tyr
 {
@@ -35,12 +36,38 @@ namespace tyr
         return input.substr(0, lastindex);
     }
 
+    namespace
+    {
+        // Each directory is made in turn by cutting the path short at its separator.
+        void CreateParentDirectories(char* path)
+        {
+            for (char* c = path; *c != '\0'; ++c)
+            {
+                if ((*c != '/' && *c != '\\') || c == path || *(c - 1) == ':')
+                {
+                    continue;
+                }
+                const char separator = *c;
+                *c = '\0';
+                Platform::MakeDirectory(path);
+                *c = separator;
+            }
+        }
+    }
+
     void PathUtil::CreateDirectoriesInFilePath(const char* filePath)
     {
-        fs::path fsPath = filePath;
+        char path[TYR_MAX_PATH_TOTAL_SIZE];
+        strcpy_s(path, filePath);
+        CreateParentDirectories(path);
+    }
 
-        // Create all directories in the path
-        fs::create_directories(fsPath.parent_path());
+    bool PathUtil::CreateDirectories(const char* dirPath)
+    {
+        char path[TYR_MAX_PATH_TOTAL_SIZE];
+        strcpy_s(path, dirPath);
+        CreateParentDirectories(path);
+        return Platform::MakeDirectory(path);
     }
 
     void PathUtil::GetDirectoryPathFromFilePath(const char* filePath, char* dirPath)

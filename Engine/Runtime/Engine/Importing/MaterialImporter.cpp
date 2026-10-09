@@ -8,6 +8,7 @@
 #include "AssetSystem/TextureAsset.h"
 #include "AssetSystem/AssetConstants.h"
 #include "Rendering/RenderConstants.h"
+#include "Utility/PathUtil.h"
 #include <cstring>
 
 namespace tyr
@@ -20,9 +21,7 @@ namespace tyr
 			char absFolderPath[TYR_MAX_PATH_TOTAL_SIZE];
 			AssetUtil::CreateFullPath(absFolderPath, relativeFolderPath);
 
-			std::error_code ec;
-			fs::create_directories(absFolderPath, ec);
-			if (ec)
+			if (!PathUtil::CreateDirectories(absFolderPath))
 			{
 				TYR_LOG_ERROR("Error creating directory %s.", absFolderPath);
 				return false;

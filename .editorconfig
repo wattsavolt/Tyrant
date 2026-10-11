@@ -1,0 +1,9 @@
+## Matches .gitattributes, so editors save LF and git has nothing to convert.
+root = true
+
+[*]
+end_of_line = lf
+
+## Vendored third-party source keeps whatever line endings it shipped with.
+[ThirdParty/**]
+end_of_line = unset

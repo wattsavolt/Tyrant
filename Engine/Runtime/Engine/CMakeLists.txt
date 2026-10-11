@@ -112,6 +112,9 @@ endif()
 # Nuklear - always-on runtime GUI (in-game HUD/menu), driven by GUIModule
 target_link_libraries(TyrantEngine PRIVATE nuklear)
 
+# Jolt - physics. Private, so only the engine's physics sources see its headers.
+target_link_libraries(TyrantEngine PRIVATE Jolt)
+
 if(LINUX)
 	## External lib: X11, LibUUID, LibICU
 	target_link_libraries(TyrantEngine PUBLIC ${X11_LIBRARIES} ${X11_Xcursor_LIB} ${X11_Xrandr_LIB} ${X11_Xi_LIB})

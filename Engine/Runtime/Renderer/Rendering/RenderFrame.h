@@ -44,7 +44,6 @@ namespace tyr
 		Array<MeshInstanceUpdate> meshInstancesToUpdate;
 		Array<MeshInstanceHandle> meshInstancesToRemove;
 		Array<SkeletalMeshInstanceHandle> skeletalMeshInstancesToAdd;
-		Array<SkeletalMeshInstanceHandle> skeletalMeshInstancesToUpdate;
 		Array<SkeletalMeshInstanceHandle> skeletalMeshInstancesToRemove;
 		Array<DirLightUpdate> dirLightsToUpdate;
 		Array<PointLightUpdate> pointLightsToUpdate;
@@ -60,7 +59,6 @@ namespace tyr
 			meshInstancesToUpdate.Reserve(RenderConstants::c_MaxMeshInstances);
 			meshInstancesToRemove.Reserve(RenderConstants::c_MaxMeshInstances);
 			skeletalMeshInstancesToAdd.Reserve(RenderConstants::c_MaxSkeletalMeshInstances);
-			skeletalMeshInstancesToUpdate.Reserve(RenderConstants::c_MaxSkeletalMeshInstances);
 			skeletalMeshInstancesToRemove.Reserve(RenderConstants::c_MaxSkeletalMeshInstances);
 			dirLightsToUpdate.Reserve(RenderConstants::c_MaxDirLights);
 			pointLightsToUpdate.Reserve(RenderConstants::c_MaxPointLights);
@@ -75,7 +73,6 @@ namespace tyr
 			meshInstancesToUpdate.Clear();
 			meshInstancesToRemove.Clear();
 			skeletalMeshInstancesToAdd.Clear();
-			skeletalMeshInstancesToUpdate.Clear();
 			skeletalMeshInstancesToRemove.Clear();
 			dirLightsToUpdate.Clear();
 			pointLightsToUpdate.Clear();
@@ -100,6 +97,8 @@ namespace tyr
 		// The owning Mesh's own persistent barrier-state wrapper, stable for this tick - lets the
 		// render graph track and barrier this exact build without a separate mesh lookup.
 		RenderAccelerationStructure* blasResource;
+		// Set when the BLAS belongs to a skinned instance, which is rebuilt every frame.
+		SkeletalMeshInstanceHandle skinnedInstance{};
 	};
 
 	struct RenderFrame
@@ -129,7 +128,6 @@ namespace tyr
 		// Filled by Render() (main thread) right after it batches this frame's BLAS builds.
 		// Read-only from the worker thread that records them.
 		Array<BLASBuildRecord> blasBuildsToRecord;
-		Array<SkeletalMeshHandle> skeletalMeshesToDelete;
 		Array<MeshInstanceHandle> meshInstancesToDelete;
 		Array<SkeletalMeshInstanceHandle> skeletalMeshInstancesToDelete;
 		Array<DirLightHandle> dirLightsToDelete;
@@ -196,7 +194,6 @@ namespace tyr
 			meshesToDelete.Reserve(c_DefaultPendingListReserve);
 			meshesToBuildBLAS.Reserve(c_DefaultPendingListReserve);
 			blasBuildsToRecord.Reserve(c_DefaultPendingListReserve);
-			skeletalMeshesToDelete.Reserve(c_DefaultPendingListReserve);
 			meshInstancesToDelete.Reserve(c_DefaultPendingListReserve);
 			skeletalMeshInstancesToDelete.Reserve(RenderConstants::c_MaxSkeletalMeshInstances);
 			dirLightsToDelete.Reserve(RenderConstants::c_MaxDirLights);
@@ -218,7 +215,6 @@ namespace tyr
 			meshesToDelete.Clear();
 			meshesToBuildBLAS.Clear();
 			blasBuildsToRecord.Clear();
-			skeletalMeshesToDelete.Clear();
 			meshInstancesToDelete.Clear();
 			skeletalMeshInstancesToDelete.Clear();
 			dirLightsToDelete.Clear();

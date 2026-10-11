@@ -48,10 +48,6 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 	{
 		for (int x = -1; x <= 1; ++x)
 		{
-			if (x == 0 && y == 0)
-			{
-				continue;
-			}
 			const int2 sampleCoord = clamp(int2(dispatchThreadId.xy) + int2(x, y),
 				int2(0, 0), int2(g_PushConstants.width - 1, g_PushConstants.height - 1));
 			const float3 neighbour = textures[g_PushConstants.colourIndex].Load(int3(sampleCoord, 0)).rgb;
@@ -66,14 +62,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 	const float2 uv = (float2(dispatchThreadId.xy) + 0.5f) / float2(g_PushConstants.width, g_PushConstants.height);
 	const float2 prevUv = uv - motion * 0.5f;
 
-	float3 result = current;
-	if (prevUv.x >= 0.0f && prevUv.x <= 1.0f && prevUv.y >= 0.0f && prevUv.y <= 1.0f)
-	{
-		const int2 prevPixelCoord = int2(prevUv * float2(g_PushConstants.width, g_PushConstants.height));
-		const float3 history = textures[g_PushConstants.prevResolvedIndex].Load(int3(prevPixelCoord, 0)).rgb;
-		const float3 clampedHistory = clamp(history, neighbourMin, neighbourMax);
-		result = lerp(current, clampedHistory, g_PushConstants.historyBlendWeight);
-	}
+	// No history for a pixel that was off-screen last frame.
+	const float onScreen = all(prevUv == saturate(prevUv)) ? 1.0f : 0.0f;
+	const int2 maxCoord = int2(g_PushConstants.width - 1, g_PushConstants.height - 1);
+	const int2 prevPixelCoord = min(int2(saturate(prevUv) * float2(g_PushConstants.width, g_PushConstants.height)), maxCoord);
+	const float3 history = textures[g_PushConstants.prevResolvedIndex].Load(int3(prevPixelCoord, 0)).rgb;
+	const float3 clampedHistory = clamp(history, neighbourMin, neighbourMax);
+	const float3 result = lerp(current, clampedHistory, g_PushConstants.historyBlendWeight * onScreen);
 
 	outputImages[g_PushConstants.renderFrameIndex][dispatchThreadId.xy] = float4(result, 1.0f);
 }

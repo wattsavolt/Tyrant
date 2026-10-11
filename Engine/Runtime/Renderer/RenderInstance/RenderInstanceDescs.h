@@ -24,11 +24,10 @@ namespace tyr
 	struct SkeletalMeshInstanceInfo
 	{
 		Matrix4 transform;
+		// Must be a skinned mesh whose geometry has finished uploading.
 		MeshHandle mesh;
-		SkeletonHandle skeleton;
-		// One resolved material per submesh slot - see MeshInstanceInfo::materials' comment
-		// above (same idea, just a separate, larger cap - see SkeletalMeshConstants).
-		LocalArray<MaterialHandle, SkeletalMeshConstants::c_MaxSubmeshes> materials;
+		// One resolved material per submesh slot, like MeshInstanceInfo::materials.
+		LocalArray<MaterialHandle, MeshConstants::c_MaxSubmeshes> materials;
 	};
 
 	struct DirectionalLightInfo

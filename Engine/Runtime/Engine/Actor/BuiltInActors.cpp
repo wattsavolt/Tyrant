@@ -22,6 +22,26 @@ namespace tyr
 		root.AddComponent(CreateIdentityTransform());
 		root.AddComponent(MeshComponent{});
 		root.AddComponent(BoxComponent{});
+		root.AddComponent(ColliderComponent{});
+	TYR_ACTOR_END()
+
+	// A mesh moved by physics, such as something that can be knocked over or thrown.
+	TYR_ACTOR_START(DynamicMeshActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(MeshComponent{});
+		root.AddComponent(BoxComponent{});
+		root.AddComponent(ColliderComponent{});
+		root.AddComponent(RigidBodyComponent{});
+	TYR_ACTOR_END()
+
+	// A skinned mesh with an animator. Both are set from the editor's properties.
+	TYR_ACTOR_START(SkeletalMeshActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(SkeletalMeshComponent{});
+		root.AddComponent(AnimatorComponent{});
+		root.AddComponent(BoxComponent{});
 	TYR_ACTOR_END()
 
 	TYR_ACTOR_START(DirLightActor)

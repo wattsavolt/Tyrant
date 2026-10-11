@@ -33,7 +33,7 @@ struct GBufferOutput
 	// rg = octahedral-encoded world-space normal, b = roughness, a = metallic
 	float4 normalRoughMetal : SV_TARGET1;
 	// Screen-space motion vector: current NDC.xy minus reprojected previous-frame NDC.xy of
-	// this same world position. Camera motion only for now.
+	// this same world position. Camera and skinned vertex motion only for now.
 	float2 motion : SV_TARGET2;
 };
 
@@ -77,7 +77,7 @@ GBufferOutput main(VS_OUTPUT input)
 	// difference also carries a spurious jitter-delta term - subtracting JitterDelta removes it,
 	// leaving only real scene motion. A no-op (JitterDelta is zero) whenever TAA is disabled.
 	const float4 currentClip = mul(input.worldPos, ViewProj);
-	const float4 previousClip = mul(input.worldPos, PrevViewProj);
+	const float4 previousClip = mul(input.prevWorldPos, PrevViewProj);
 	const float2 motion = ((currentClip.xy / currentClip.w) - (previousClip.xy / previousClip.w)) - JitterDelta;
 
 	GBufferOutput output;

@@ -40,6 +40,12 @@ namespace tyr
 		RenderBufferHandle pointLightBuffer;
 		RenderBufferHandle spotLightBuffer;
 		RenderBufferHandle sceneInfoBuffer;
+		// Skinned meshes' bone weights, and each skinned instance's bone matrices.
+		RenderBufferHandle skinVertexBuffer;
+		RenderBufferHandle boneMatrixBuffer;
+		// Skins each skinned mesh instance's vertices into its own range of vertexBuffer.
+		ComputePipelineHandle skinningPipeline;
+		ShaderModuleHandle skinningComputeShader;
 		// Default sampler for PBR and most material types
 		SamplerHandle materialSampler;
 		// Main descriptor resources for the long-lived pipelines

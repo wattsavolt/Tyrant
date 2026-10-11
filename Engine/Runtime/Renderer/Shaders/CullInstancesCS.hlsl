@@ -43,19 +43,17 @@ struct PushConstants
 TYR_VK_PUSH_CONSTANT PushConstants g_PushConstants;
 
 // Culled if the sphere is fully on the outside of any plane - dot(pos,abc)+d >= 0 means
-// "inside" that plane.
+// "inside" that plane. Every plane is tested, keeping the closest, so there's no branching.
 bool IsSphereVisible(float3 centre, float radius)
 {
+	float closest = 3.402823e38f;
 	[unroll]
 	for (uint i = 0; i < 6; ++i)
 	{
 		const float4 plane = FrustumPlanes[i];
-		if (dot(centre, plane.xyz) + plane.w < -radius)
-		{
-			return false;
-		}
+		closest = min(closest, dot(centre, plane.xyz) + plane.w + radius);
 	}
-	return true;
+	return closest >= 0.0f;
 }
 
 // Same idea as IsSphereVisible, for a world-space AABB given as centre + half-extents
@@ -63,17 +61,14 @@ bool IsSphereVisible(float3 centre, float radius)
 // halfExtents) - each axis' half-extent weighted by its contribution to that normal.
 bool IsBoxVisible(float3 centre, float3 halfExtents)
 {
+	float closest = 3.402823e38f;
 	[unroll]
 	for (uint i = 0; i < 6; ++i)
 	{
 		const float4 plane = FrustumPlanes[i];
-		const float radius = dot(abs(plane.xyz), halfExtents);
-		if (dot(centre, plane.xyz) + plane.w < -radius)
-		{
-			return false;
-		}
+		closest = min(closest, dot(centre, plane.xyz) + plane.w + dot(abs(plane.xyz), halfExtents));
 	}
-	return true;
+	return closest >= 0.0f;
 }
 
 [numthreads(64, 1, 1)]
@@ -88,17 +83,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 	const uint meshInstanceIndex = activeInstanceIndices[index];
 	const MeshInstance instance = meshInstances[meshInstanceIndex];
 	const Mesh mesh = meshes[instance.meshIndex];
-	if (mesh.lodCount == 0)
-	{
-		return;
-	}
 
-	// LOD selection isn't implemented yet - always use LOD 0.
-	const MeshLOD lod = meshLODs[mesh.lodOffset];
-	if (lod.meshletCount == 0)
-	{
-		return;
-	}
+	// LOD selection isn't implemented yet - always use LOD 0. A mesh with no LODs reads the
+	// first entry instead of going out of range, and is never drawn.
+	const bool hasLod = mesh.lodCount > 0;
+	const MeshLOD lod = meshLODs[hasLod ? mesh.lodOffset : 0];
 
 	// Mesh::sphere is in local space (xyz = centre, w = radius) - transform the centre with
 	// the same row-vector convention used elsewhere, and scale the radius by the largest
@@ -107,17 +96,15 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 	const float3 row1 = float3(instance.transform._21, instance.transform._22, instance.transform._23);
 	const float3 row2 = float3(instance.transform._31, instance.transform._32, instance.transform._33);
 
-	const float3 worldCentre = mul(float4(mesh.sphere.xyz, 1.0f), instance.transform).xyz;
+	// A skinned instance is bounded by its current pose instead of the mesh's bind pose.
+	const bool skinned = instance.skinnedVertexOffset != TYR_INVALID_INDEX;
+	const float4 sphere = skinned ? instance.skinnedSphere : mesh.sphere;
+	const float3 worldCentre = mul(float4(sphere.xyz, 1.0f), instance.transform).xyz;
 	const float maxScaleSqr = max(dot(row0, row0), max(dot(row1, row1), dot(row2, row2)));
-	const float worldRadius = mesh.sphere.w * sqrt(maxScaleSqr);
+	const float worldRadius = sphere.w * sqrt(maxScaleSqr);
 
-	// Sphere is cheap and rotation-invariant, so it's the first reject - most off-screen/far
-	// instances stop here. It's loose for elongated meshes though, so anything it doesn't
-	// reject gets refined with the mesh's AABB below.
-	if (!IsSphereVisible(worldCentre, worldRadius))
-	{
-		return;
-	}
+	// The sphere is loose for elongated meshes, so the mesh's AABB below refines it.
+	const bool sphereVisible = IsSphereVisible(worldCentre, worldRadius);
 
 	// Arvo's method: transform the box centre normally, and get each world-space half-extent
 	// by dotting the local half-extents against the absolute value of that axis' row. Cheaper
@@ -130,7 +117,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 		dot(abs(row1), aabbHalfExtents),
 		dot(abs(row2), aabbHalfExtents));
 
-	if (!IsBoxVisible(worldBoxCentre, worldHalfExtents))
+	// A skinned instance's AABB is its bind pose, so it only uses its posed sphere.
+	const bool boxVisible = IsBoxVisible(worldBoxCentre, worldHalfExtents);
+
+	// Bitwise rather than logical operators, so nothing short-circuits into a branch.
+	const uint visible = (uint)hasLod & (uint)(lod.meshletCount > 0) & (uint)sphereVisible & ((uint)skinned | (uint)boxVisible);
+	if (visible == 0)
 	{
 		return;
 	}

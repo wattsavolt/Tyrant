@@ -16,6 +16,7 @@ namespace tyr
 			ImGui::MenuItem("Actor Bounds", nullptr, &settings.showActorBounds);
 			ImGui::MenuItem("Light Ranges", nullptr, &settings.showLightRanges);
 			ImGui::MenuItem("Actor Names", nullptr, &settings.showActorNames);
+			ImGui::MenuItem("Colliders", nullptr, &settings.showColliders);
 			ImGui::EndMenu();
 		}
 	}

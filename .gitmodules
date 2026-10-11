@@ -13,3 +13,6 @@
 [submodule "ThirdParty/nuklear"]
 	path = ThirdParty/Submodule/nuklear
 	url = https://github.com/Immediate-Mode-UI/Nuklear.git
+[submodule "ThirdParty/Submodule/JoltPhysics"]
+	path = ThirdParty/Submodule/JoltPhysics
+	url = https://github.com/jrouwe/JoltPhysics.git

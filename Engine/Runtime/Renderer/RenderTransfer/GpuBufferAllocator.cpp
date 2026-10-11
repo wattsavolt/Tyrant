@@ -44,7 +44,8 @@ namespace tyr
 
 				block.size = padding;
 
-				m_FreeBlocks.Add({ allocationEnd, rightSize });
+				// Kept in offset order, which merging neighbouring free blocks relies on.
+				m_FreeBlocks.Insert(i + 1, { allocationEnd, rightSize });
 			}
 			else if (padding > 0)
 			{

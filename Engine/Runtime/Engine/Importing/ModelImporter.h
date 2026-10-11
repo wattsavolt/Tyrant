@@ -14,9 +14,8 @@ namespace tyr
 	// already needs the full glTF-parsing machinery, has to see that header.
 	class GltfModelLoader;
 
-	// Only applies to rigid (static, non-skeletal) meshes - skeletal LOD generation needs
-	// skin-weight-aware simplification, which this doesn't do, and ModelImporter doesn't import
-	// skeletal meshes at all yet regardless (see the class comment below).
+	// Only applies to rigid meshes - skinned meshes only get LOD0, since simplifying them
+	// would need to respect their bone weights.
 	struct ModelImportOptions
 	{
 		bool generateLods = true;
@@ -30,11 +29,8 @@ namespace tyr
 		bool forceLodGeneration = false;
 	};
 
-	// Imports a 3D model file (glTF/GLB today) into mesh and material assets. Called by the
-	// editor when a user imports a model.
-	//
-	// TODO: only static (non-skeletal) meshes are supported - skeletal import needs its own
-	// pass once skins/joints/animations are read by a loader.
+	// Imports a 3D model file (glTF/GLB today) into mesh and material assets, plus a skeleton,
+	// skinned meshes and animations when the model has a skin. Called by the editor.
 	class TYR_ENGINE_API ModelImporter final : public INonCopyable
 	{
 	public:
@@ -52,6 +48,11 @@ namespace tyr
 		bool ImportMaterials(const ModelImportResult& result, const char* outputFolderPath, const char* modelName, Array<AssetID>& outMaterialIDs) const;
 		bool ImportMesh(const ModelImportMesh& mesh, const char* outputFolderPath, const char* meshName,
 			const Array<AssetID>& materialIDs, const ModelImportOptions& options) const;
+		// Writes the skeleton and every animation. Returns the skeleton's ID.
+		bool ImportSkeletonAndAnimations(ModelImportResult& result, const char* outputFolderPath, const char* modelName, AssetID& outSkeletonID) const;
+		// Only the materials the mesh uses become its slots, unlike a rigid mesh.
+		bool ImportSkinnedMesh(const ModelImportMesh& mesh, const Skeleton& skeleton, AssetID skeletonID, const char* outputFolderPath,
+			const char* meshName, const Array<AssetID>& materialIDs) const;
 
 		// Builds every requested LOD's meshlets (one call per submesh internally, so meshlets
 		// never mix materials), simplifying the geometry via meshoptimizer for LOD1+, compresses
@@ -59,7 +60,10 @@ namespace tyr
 		// whole mesh file (header, then every LOD's chunk back to back - see MeshChunkHeader's
 		// comment on compressedBlobSize) to absFilePath. header's sphere/aabb/materials must
 		// already be filled in; lods/submeshes/chunks must still be empty - this fills them in.
-		bool ImportMeshGeometry(const ModelImportMesh& mesh, MeshHeader& header, const ModelImportOptions& options, const char* absFilePath) const;
+		// materialSlots maps the model's material indices to the mesh's slots, or is null when
+		// they're the same. A mesh with skin weights is written as a skinned mesh.
+		bool ImportMeshGeometry(const ModelImportMesh& mesh, MeshHeader& header, const ModelImportOptions& options, const char* absFilePath,
+			const uint* materialSlots = nullptr) const;
 
 		// ImportModel is only ever called from the editor, one import at a time, so these
 		// are safe to reuse across calls rather than declaring fresh, heap-backed locals
@@ -81,5 +85,7 @@ namespace tyr
 		// see ImportMeshGeometry. One slot per LOD, reused/regrown across imports like the
 		// members above rather than reallocated.
 		mutable LocalArray<Array<uint8>, MeshConstants::c_MaxLods> m_LodCompressedBlobs;
+		// A skinned mesh's model material index -> slot map, reused like the members above.
+		mutable Array<uint> m_MaterialSlots;
 	};
 }

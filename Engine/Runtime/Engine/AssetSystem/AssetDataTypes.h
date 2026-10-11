@@ -5,6 +5,8 @@
 #include "TextureAsset.h"
 #include "MaterialAsset.h"
 #include "MeshAsset.h"
+#include "SkeletonAsset.h"
+#include "AnimationAsset.h"
 #include "AssetID.h"
 #include "Math/Matrix4.h"
 #include "RenderTransfer/RenderTransferTypes.h"
@@ -23,7 +25,9 @@ namespace tyr
 		TextureMetadata = 0,
 		Texture,
 		Material,
-		Mesh
+		Mesh,
+		Skeleton,
+		Animation
 	};
 
 	struct AssetData
@@ -109,6 +113,15 @@ namespace tyr
 		size_t headerByteSize;
 	};
 
+	// A skeleton or animation clip, which only lives on the CPU.
+	struct CpuAssetLoadData
+	{
+		AssetID assetID;
+		AssetPath filePath;
+		Handle handle;
+		AssetLoadType type;
+	};
+
 	// One LOD's compressed chunk, in flight from file to GPU buffers. One of these per LOD
 	// per mesh - each LOD's geometry loads and uploads independently, since nothing needs
 	// to wait for every LOD to be ready before any one of them can be used.
@@ -130,6 +143,9 @@ namespace tyr
 		uint decompressedMeshletsSize;
 		uint decompressedVerticesSize;
 		uint decompressedIndicesSize;
+		// Skinned meshes only, otherwise 0.
+		uint skinOffset = 0;
+		uint decompressedSkinSize = 0;
 
 		// Where the geometry-load task copies decompressed vertices/indices/meshlets to -
 		// already GPU-visible staging memory, requested on main thread before the task is
@@ -139,21 +155,28 @@ namespace tyr
 		UploadBufferAllocation verticesUpload;
 		UploadBufferAllocation indicesUpload;
 		UploadBufferAllocation meshletsUpload;
+		UploadBufferAllocation skinUpload;
 
 		GpuBufferAllocation verticesGpuAlloc;
 		GpuBufferAllocation indicesGpuAlloc;
 		GpuBufferAllocation meshletsGpuAlloc;
+		GpuBufferAllocation skinGpuAlloc;
 	};
 
 	// A mesh instance waiting for its mesh header and materials to load before it's created.
 	struct MeshInstanceCreateData
 	{
+		// The scene the instance is drawn in.
+		SceneHandle scene;
 		AssetID meshAssetID;
 		Matrix4 transform;
 		// One material per submesh. An invalid or missing entry uses the mesh's own material.
 		LocalArray<AssetID, MeshConstants::c_MaxSubmeshes> materials;
 		// Called once the instance is created, with the material used for each submesh.
 		Function<void(MeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated;
+		// Used instead of onCreated for a skinned mesh.
+		Function<void(SkeletalMeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onSkinnedCreated;
+		bool skinned = false;
 		// Set once the materials have been requested, which needs the mesh header to be loaded.
 		bool materialsRequested = false;
 	};

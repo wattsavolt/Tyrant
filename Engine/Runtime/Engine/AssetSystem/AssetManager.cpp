@@ -29,8 +29,27 @@ namespace tyr
 			SmartStack<uint8> streamBuffer = SmartStackAlloc<uint8>((uint)c_StreamBufferSize);
 			BufferedFileStream stream(streamBuffer, c_StreamBufferSize, absFilePath, BinaryStream::Operation::Read);
 
-			Deserialize<MeshHeader>(stream, header);
+			if (AssetUtil::HasExtension(filePath, AssetConstants::c_SkeletalMeshFileExtension))
+			{
+				DeserializeSkinnedMesh(stream, header);
+			}
+			else
+			{
+				Deserialize<MeshHeader>(stream, header);
+			}
 			return stream.GetOffset();
+		}
+
+		template<typename T>
+		void LoadAssetFile(const char* filePath, T& data)
+		{
+			char absFilePath[TYR_MAX_PATH_TOTAL_SIZE];
+			AssetUtil::CreateFullPath(absFilePath, filePath);
+
+			constexpr size_t c_StreamBufferSize = 65536;
+			SmartStack<uint8> streamBuffer = SmartStackAlloc<uint8>((uint)c_StreamBufferSize);
+			BufferedFileStream stream(streamBuffer, c_StreamBufferSize, absFilePath, BinaryStream::Operation::Read);
+			Deserialize<T>(stream, data);
 		}
 	}
 
@@ -98,6 +117,11 @@ namespace tyr
 			UploadMeshGeometry(ld.value());
 		}
 
+		while (Optional<CpuAssetLoadData*> ld = m_CpuAssetsLoadedQueue.Dequeue())
+		{
+			FinishCpuAssetLoad(ld.value());
+		}
+
 		for (uint i = 0; i < m_MaterialsAwaitingTextures.Size();)
 		{
 			MaterialLoadData* ld = m_MaterialsAwaitingTextures[i];
@@ -160,6 +184,11 @@ namespace tyr
 		while (Optional<MeshGeometryLoadData*> ld = m_MeshesLoadedQueue.Dequeue())
 		{
 			TempDelete<MeshGeometryLoadData>(ld.value());
+		}
+
+		while (Optional<CpuAssetLoadData*> ld = m_CpuAssetsLoadedQueue.Dequeue())
+		{
+			TempDelete<CpuAssetLoadData>(ld.value());
 		}
 
 		for (MaterialLoadData* ld : m_MaterialsAwaitingTextures)
@@ -691,6 +720,11 @@ namespace tyr
 	void AssetManager::DeleteMeshResources(AssetID assetID, AssetData& assetData)
 	{
 		m_RendererAPI->DeleteMesh(MeshHandle(assetData.resourceHandle));
+		const MeshHeader& header = m_MeshHeaderPool[assetData.assetHeader];
+		if (header.IsSkinned())
+		{
+			DeleteSkeleton(header.skeleton);
+		}
 		m_MeshHeaderPool.Delete(assetData.assetHeader);
 		m_AssetMap.Erase(assetID);
 	}
@@ -728,6 +762,13 @@ namespace tyr
 		desc.aabbMin = header.aabbMin;
 		desc.aabbMax = header.aabbMax;
 		desc.lodCount = header.lods.Size();
+		desc.skinned = header.IsSkinned();
+
+		// A skinned mesh keeps its skeleton loaded for as long as it is.
+		if (desc.skinned)
+		{
+			LoadSkeleton(header.skeleton);
+		}
 
 		AssetData& assetData = m_AssetMap[ld->assetID];
 		const MeshHandle meshHandle = m_RendererAPI->CreateMesh(desc);
@@ -740,6 +781,10 @@ namespace tyr
 		for (const MeshChunkHeader& chunkHeader : header.chunks)
 		{
 			assetData.gpuSize += chunkHeader.decompressedVerticesSize + chunkHeader.decompressedIndicesSize + chunkHeader.decompressedMeshletsSize;
+		}
+		for (const MeshChunkSkin& chunkSkin : header.chunkSkins)
+		{
+			assetData.gpuSize += chunkSkin.decompressedSkinSize;
 		}
 
 		// Running byte offset into the file, starting right after the header - advances by
@@ -775,6 +820,11 @@ namespace tyr
 			geoLD->decompressedMeshletsSize = chunkHeader.decompressedMeshletsSize;
 			geoLD->decompressedVerticesSize = chunkHeader.decompressedVerticesSize;
 			geoLD->decompressedIndicesSize = chunkHeader.decompressedIndicesSize;
+			if (desc.skinned)
+			{
+				geoLD->skinOffset = header.chunkSkins[chunkIndex].skinOffset;
+				geoLD->decompressedSkinSize = header.chunkSkins[chunkIndex].decompressedSkinSize;
+			}
 
 			const uint meshletCount = chunkHeader.decompressedMeshletsSize / (uint)sizeof(MeshChunkMeshlet);
 
@@ -792,6 +842,13 @@ namespace tyr
 			TYR_ASSERT(allocSuccess);
 			allocSuccess = m_RendererAPI->RequestMeshletBufferAllocation(meshHandle, lodIndex, meshletCount * (uint)sizeof(ShaderMeshlet), geoLD->meshletsGpuAlloc);
 			TYR_ASSERT(allocSuccess);
+			if (geoLD->decompressedSkinSize > 0)
+			{
+				allocSuccess = m_RendererAPI->RequestResourceUploadAllocation(geoLD->decompressedSkinSize, geoLD->skinUpload);
+				TYR_ASSERT(allocSuccess);
+				allocSuccess = m_RendererAPI->RequestSkinVertexBufferAllocation(meshHandle, lodIndex, geoLD->decompressedSkinSize, geoLD->skinGpuAlloc);
+				TYR_ASSERT(allocSuccess);
+			}
 
 			// The LOD descriptor doesn't need to wait on the async geometry load below - it
 			// only needs the allocation offsets just requested above, already known here.
@@ -844,9 +901,27 @@ namespace tyr
 				const size_t decompressedSize = ZSTD_decompress(decompressed, geoLD->decompressedBlobSize, compressed, geoLD->compressedBlobSize);
 				TYR_ASSERT(!ZSTD_isError(decompressedSize) && decompressedSize == geoLD->decompressedBlobSize);
 
+				// Indices are stored per meshlet. Making them relative to the LOD's first vertex lets
+				// ray tracing build from them too, and the mesh shader takes the meshlet's offset back off.
+				const MeshChunkMeshlet* meshlets = reinterpret_cast<const MeshChunkMeshlet*>(decompressed + geoLD->meshletsOffset);
+				uint* indices = reinterpret_cast<uint*>(decompressed + geoLD->indicesOffset);
+				const uint meshletCount = geoLD->decompressedMeshletsSize / (uint)sizeof(MeshChunkMeshlet);
+				for (uint m = 0; m < meshletCount; ++m)
+				{
+					const MeshChunkMeshlet& meshlet = meshlets[m];
+					for (uint i = meshlet.indexOffset; i < meshlet.indexOffset + meshlet.indexCount; ++i)
+					{
+						indices[i] += meshlet.vertexOffset;
+					}
+				}
+
 				memcpy(geoLD->verticesUpload.cpuPtr, decompressed + geoLD->verticesOffset, geoLD->decompressedVerticesSize);
 				memcpy(geoLD->indicesUpload.cpuPtr, decompressed + geoLD->indicesOffset, geoLD->decompressedIndicesSize);
 				memcpy(geoLD->meshletsUpload.cpuPtr, decompressed + geoLD->meshletsOffset, geoLD->decompressedMeshletsSize);
+				if (geoLD->decompressedSkinSize > 0)
+				{
+					memcpy(geoLD->skinUpload.cpuPtr, decompressed + geoLD->skinOffset, geoLD->decompressedSkinSize);
+				}
 
 				m_MeshesLoadedQueue.Enqueue(geoLD);
 			});
@@ -892,10 +967,26 @@ namespace tyr
 		meshletsRequest.resourceId = ld->meshletsUpload.resourceId;
 		m_RendererAPI->AddBufferUploadRequest(meshletsRequest);
 
+		const bool skinned = ld->decompressedSkinSize > 0;
+		if (skinned)
+		{
+			m_RendererAPI->FlushBufferUploadAllocation(ld->skinUpload);
+
+			BufferUploadRequest skinRequest{};
+			skinRequest.srcBuffer = ld->skinUpload.buffer;
+			skinRequest.srcOffset = ld->skinUpload.offset;
+			skinRequest.dstBuffer = ld->skinGpuAlloc.buffer;
+			skinRequest.dstOffset = ld->skinGpuAlloc.offset;
+			skinRequest.size = ld->decompressedSkinSize;
+			skinRequest.resourceId = ld->skinUpload.resourceId;
+			m_RendererAPI->AddBufferUploadRequest(skinRequest);
+		}
+
 		// Ray-traced shadows only ever use LOD0 - queue its one-time BLAS build as soon as its
 		// vertex/index upload above is queued, since the build's ordering against that upload
-		// relies on both being requested in the same or an earlier frame.
-		if (ld->lodIndex == 0)
+		// relies on both being requested in the same or an earlier frame. Skinned instances
+		// build their own.
+		if (ld->lodIndex == 0 && !skinned)
 		{
 			m_RendererAPI->RequestBLASBuild(ld->mesh);
 		}
@@ -912,11 +1003,12 @@ namespace tyr
 		TempDelete<MeshGeometryLoadData>(ld);
 	}
 
-	void AssetManager::CreateMeshInstance(AssetID meshAssetID, const Matrix4& transform, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials, Function<void(MeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated)
+	void AssetManager::CreateMeshInstance(SceneHandle scene, AssetID meshAssetID, const Matrix4& transform, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials, Function<void(MeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated)
 	{
 		LoadMesh(meshAssetID);
 
 		MeshInstanceCreateData* instData = TempNew<MeshInstanceCreateData>();
+		instData->scene = scene;
 		instData->meshAssetID = meshAssetID;
 		instData->transform = transform;
 		instData->materials = materials;
@@ -961,8 +1053,9 @@ namespace tyr
 					instData->materialsRequested = true;
 				}
 
-				ready = true;
-				for (uint slot = 0; slot < header.materials.Size(); ++slot)
+				// A skinned instance is skinned from the uploaded geometry by its skeleton.
+				ready = !instData->skinned || (meshAssetData.loadState == AssetLoadState::Loaded && GetSkeleton(header.skeleton));
+				for (uint slot = 0; ready && slot < header.materials.Size(); ++slot)
 				{
 					const AssetID materialID = GetEffectiveMaterialForSlot(header, *instData, slot);
 					if (m_AssetMap[materialID].loadState != AssetLoadState::Loaded)
@@ -1002,13 +1095,151 @@ namespace tyr
 			materialAssetIDs.Add(materialID);
 		}
 
-		const MeshInstanceHandle handle = m_RendererAPI->CreateMeshInstance(desc);
-		if (instData->onCreated)
+		if (instData->skinned)
 		{
-			instData->onCreated(handle, materialAssetIDs);
+			SkeletalMeshInstanceDesc skinnedDesc;
+			skinnedDesc.info.transform = desc.info.transform;
+			skinnedDesc.info.mesh = desc.info.mesh;
+			skinnedDesc.info.materials = desc.info.materials;
+			const SkeletalMeshInstanceHandle handle = m_RendererAPI->CreateSkeletalMeshInstance(instData->scene, skinnedDesc);
+			if (instData->onSkinnedCreated)
+			{
+				instData->onSkinnedCreated(handle, materialAssetIDs);
+			}
+		}
+		else
+		{
+			const MeshInstanceHandle handle = m_RendererAPI->CreateMeshInstance(instData->scene, desc);
+			if (instData->onCreated)
+			{
+				instData->onCreated(handle, materialAssetIDs);
+			}
 		}
 
 		TempDelete<MeshInstanceCreateData>(instData);
+	}
+
+	void AssetManager::CreateSkeletalMeshInstance(SceneHandle scene, AssetID meshAssetID, const Matrix4& transform, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials,
+		Function<void(SkeletalMeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated)
+	{
+		LoadMesh(meshAssetID);
+
+		MeshInstanceCreateData* instData = TempNew<MeshInstanceCreateData>();
+		instData->scene = scene;
+		instData->meshAssetID = meshAssetID;
+		instData->transform = transform;
+		instData->materials = materials;
+		instData->onSkinnedCreated = std::move(onCreated);
+		instData->skinned = true;
+		m_PendingMeshInstances.Add(instData);
+	}
+
+	void AssetManager::LoadSkeleton(AssetID assetID)
+	{
+		LoadCpuAsset(assetID, AssetLoadType::Skeleton);
+	}
+
+	void AssetManager::DeleteSkeleton(AssetID assetID)
+	{
+		DeleteCpuAsset(assetID, AssetLoadType::Skeleton);
+	}
+
+	const Skeleton* AssetManager::GetSkeleton(AssetID assetID) const
+	{
+		const AssetData* assetData = m_AssetMap.Find(assetID);
+		return assetData && assetData->loadState == AssetLoadState::Loaded ? &m_SkeletonPool[assetData->resourceHandle] : nullptr;
+	}
+
+	void AssetManager::LoadAnimation(AssetID assetID)
+	{
+		LoadCpuAsset(assetID, AssetLoadType::Animation);
+	}
+
+	void AssetManager::DeleteAnimation(AssetID assetID)
+	{
+		DeleteCpuAsset(assetID, AssetLoadType::Animation);
+	}
+
+	const AnimationClip* AssetManager::GetAnimation(AssetID assetID) const
+	{
+		const AssetData* assetData = m_AssetMap.Find(assetID);
+		return assetData && assetData->loadState == AssetLoadState::Loaded ? &m_AnimationPool[assetData->resourceHandle] : nullptr;
+	}
+
+	void AssetManager::LoadCpuAsset(AssetID assetID, AssetLoadType type)
+	{
+		if (AssetData* assetData = m_AssetMap.Find(assetID))
+		{
+			assetData->refCount++;
+			return;
+		}
+
+		AssetData& asset = m_AssetMap[assetID];
+		asset.loadState = AssetLoadState::Loading;
+		asset.refCount = 1;
+
+		CpuAssetLoadData* ld = TempNew<CpuAssetLoadData>();
+		ld->assetID = assetID;
+		ld->filePath = AssetRegistry::Instance().GetAssetData(assetID).filePath;
+		ld->type = type;
+		// Pool slots are only made and freed on the main thread.
+		ld->handle = type == AssetLoadType::Skeleton ? m_SkeletonPool.Create() : m_AnimationPool.Create();
+		asset.resourceHandle = ld->handle;
+
+		TaskScheduler::Instance().CreateAndEnqueueTask([this, ld]()
+		{
+			if (ld->type == AssetLoadType::Skeleton)
+			{
+				LoadAssetFile(ld->filePath.CStr(), m_SkeletonPool[ld->handle]);
+			}
+			else
+			{
+				LoadAssetFile(ld->filePath.CStr(), m_AnimationPool[ld->handle]);
+			}
+			m_CpuAssetsLoadedQueue.Enqueue(ld);
+		});
+	}
+
+	void AssetManager::DeleteCpuAsset(AssetID assetID, AssetLoadType type)
+	{
+		AssetData* assetData = m_AssetMap.Find(assetID);
+		TYR_ASSERT(assetData);
+		if (assetData->refCount > 1)
+		{
+			assetData->refCount--;
+			return;
+		}
+
+		assetData->refCount = 0;
+		// One still loading is freed once its load finishes, unless it's loaded again first.
+		if (assetData->loadState == AssetLoadState::Loaded)
+		{
+			FreeCpuAsset(assetID, *assetData, type);
+		}
+	}
+
+	void AssetManager::FreeCpuAsset(AssetID assetID, const AssetData& assetData, AssetLoadType type)
+	{
+		if (type == AssetLoadType::Skeleton)
+		{
+			m_SkeletonPool.Delete(assetData.resourceHandle);
+		}
+		else
+		{
+			m_AnimationPool.Delete(assetData.resourceHandle);
+		}
+		m_AssetMap.Erase(assetID);
+	}
+
+	void AssetManager::FinishCpuAssetLoad(CpuAssetLoadData* ld)
+	{
+		AssetData& assetData = m_AssetMap[ld->assetID];
+		assetData.loadState = AssetLoadState::Loaded;
+		if (assetData.refCount == 0)
+		{
+			FreeCpuAsset(ld->assetID, assetData, ld->type);
+		}
+		TempDelete<CpuAssetLoadData>(ld);
 	}
 
 	void AssetManager::LoadLocation(AssetID assetID)

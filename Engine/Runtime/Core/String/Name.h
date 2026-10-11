@@ -8,7 +8,7 @@ namespace tyr
 	class NameConstants
 	{
 	public:
-		static constexpr uint c_MaxName = 15;
+		static constexpr uint c_MaxName = 31;
 		// Include null-terminated character
 		static constexpr uint c_MaxNameTotalSize = c_MaxName + 1;
 	};

@@ -6,6 +6,7 @@
 #include "AssetSystem/AssetDataTypes.h"
 #include "ECS/EntitySystem.h"
 #include "RenderBase/RenderHandles.h"
+#include "Physics/PhysicsTypes.h"
 
 namespace tyr
 {
@@ -36,6 +37,88 @@ namespace tyr
 		MeshInstanceHandle meshInstance;
 		// True once the mesh instance has been asked for, even if it hasn't been created yet.
 		bool meshInstanceRequested = false;
+	};
+
+	// A skinned mesh, posed by the AnimatorComponent on the same entity if it has one, otherwise
+	// left in its bind pose.
+	struct SkeletalMeshComponent
+	{
+		AssetID mesh;
+		// One material per submesh. An invalid or missing entry uses the mesh's own material.
+		LocalArray<AssetID, MeshConstants::c_MaxSubmeshes> materials;
+		// The materials the instance actually uses, once it's been created. Not saved.
+		LocalArray<AssetID, MeshConstants::c_MaxSubmeshes> loadedMaterials;
+		// Invalid until the mesh, its skeleton and its materials have loaded.
+		SkeletalMeshInstanceHandle meshInstance;
+		// True once the instance has been asked for, even if it hasn't been created yet.
+		bool meshInstanceRequested = false;
+	};
+
+	// One clip being played and how far through it is.
+	struct AnimationPlayback
+	{
+		AssetID clip;
+		float time = 0.0f;
+	};
+
+	// Plays clips on the skeletal mesh on the same entity. The base clip can cross-fade to
+	// another, and a second clip can be layered over one bone and every bone under it.
+	struct AnimatorComponent
+	{
+		// Changing it cross-fades to the new clip over fadeTime seconds while simulating.
+		AssetID clip;
+		float fadeTime = 0.25f;
+		float playRate = 1.0f;
+		bool loop = true;
+		// Played over layerMaskBone and the bones under it, such as the upper body.
+		AssetID layerClip;
+		uint layerMaskBone = 0;
+		float layerWeight = 1.0f;
+
+		// Worked out while playing. Not saved.
+		AnimationPlayback current;
+		// The clip being faded out of, while fadeElapsed is less than fadeDuration.
+		AnimationPlayback previous;
+		float fadeDuration = 0.0f;
+		float fadeElapsed = 0.0f;
+		AnimationPlayback layer;
+	};
+
+	// A collision shape in the entity's local space, scaled with the entity. Without a
+	// RigidBodyComponent on the same entity it never moves. Only simulated worlds have bodies.
+	struct ColliderComponent
+	{
+		// A ColliderShape: 0 box, 1 sphere, 2 capsule.
+		uint8 shape = static_cast<uint8>(ColliderShape::Box);
+		Vector3 center;
+		// Box only. Left at zero, it takes the size of the entity's mesh once that loads.
+		Vector3 halfExtents;
+		// Sphere and capsule.
+		float radius = 0.5f;
+		// Capsule only: half the length of its straight middle.
+		float halfHeight = 0.5f;
+		float friction = 0.5f;
+		// How bouncy it is, from 0 to 1.
+		float restitution = 0.0f;
+		// The physics body made from it. Not saved.
+		uint bodyID = PhysicsConstants::c_InvalidBodyID;
+	};
+
+	// Makes the ColliderComponent on the same entity move.
+	struct RigidBodyComponent
+	{
+		// A MotionType: 0 static, 1 kinematic, 2 dynamic.
+		uint8 motionType = static_cast<uint8>(MotionType::Dynamic);
+		// In kilograms. Zero works it out from the collider's size.
+		float mass = 0.0f;
+		float linearDamping = 0.05f;
+		float angularDamping = 0.05f;
+		float gravityFactor = 1.0f;
+		// The body's last two fixed step transforms, blended between for rendering. Not saved.
+		Vector3 previousPosition;
+		Quaternion previousRotation;
+		Vector3 currentPosition;
+		Quaternion currentRotation;
 	};
 
 	// A box in the entity's own local space, relative to its ComponentTransform - for

@@ -40,13 +40,16 @@ namespace tyr
 		static constexpr uint c_MaxMaterials = 1000;
 		static constexpr uint c_MaxMeshes = 1000;
 		static constexpr uint c_MaxMeshLODs = c_MaxMeshes * MeshConstants::c_MaxLods;
-		static constexpr uint c_MaxSkeletalMeshes = 32;
 		static constexpr uint c_MaxMeshInstances = 10000;
 		// Per buffered RenderFrame slot - tlasInstanceBuffer is one physical buffer sized
 		// c_BufferedFrameCount times this, since the TLAS is rebuilt every frame and each slot
 		// needs its own instance data to avoid a cross-frame GPU race.
 		static constexpr size_t c_TLASInstanceBufferSize = sizeof(AccelerationStructureInstance) * c_MaxMeshInstances;
 		static constexpr uint c_MaxSkeletalMeshInstances = 96;
+		// Skinned meshes' bone weights, 8 bytes a vertex.
+		static constexpr size_t c_SkinVertexBufferSize = 32 * 1024 * 1024; // 32 MB
+		// Each skinned mesh instance's bone matrices, in a fixed range by its slot.
+		static constexpr size_t c_BoneMatrixBufferSize = sizeof(Matrix4) * TYR_MAX_BONES * c_MaxSkeletalMeshInstances;
 		// The most lights of each type one scene can have. Realistically only ever 1 directional
 		// light (the sun) - 2 leaves headroom for a stylized second light (e.g. a moon).
 		static constexpr uint c_MaxDirLights = 2;

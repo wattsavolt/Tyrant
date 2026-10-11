@@ -2,6 +2,7 @@
 #include "Platform/Platform.h"
 #include "IO/FileStream.h"
 #include "Utility/PathUtil.h"
+#include "Memory/StackAllocation.h"
 #include "RenderAPI/Device.h"
 #if TYR_PLATFORM == TYR_PLATFORM_WINDOWS
 #include <windows.h>
@@ -65,6 +66,60 @@ namespace tyr
 		}
 	}
 
+	namespace
+	{
+		constexpr uint c_MaxIncludeDepth = 8;
+
+		// The newest write time of the file and everything it pulls in with #include "...", so a
+		// shader is rebuilt when a shared header changes. Includes that can't be found are skipped.
+		bool GetNewestWriteTime(const char* filePath, uint depth, uint64& inOutNewest)
+		{
+			uint64 writeTime;
+			if (!Platform::GetFileWriteTime(filePath, writeTime))
+			{
+				return false;
+			}
+			inOutNewest = writeTime > inOutNewest ? writeTime : inOutNewest;
+			if (depth == c_MaxIncludeDepth)
+			{
+				return true;
+			}
+
+			FileStream stream(filePath);
+			const size_t size = stream.GeSize();
+			SmartStack<char> textStack = SmartStackAlloc<char>(static_cast<uint>(size) + 1);
+			char* text = textStack;
+			stream.Read(text, size);
+			text[size] = '\0';
+
+			char directory[PathConstants::c_MaxPathTotalSize];
+			PathUtil::GetDirectoryPathFromFilePath(filePath, directory);
+
+			const char* cursor = text;
+			while ((cursor = strstr(cursor, "#include")) != nullptr)
+			{
+				cursor += 8;
+				const char* lineEnd = strchr(cursor, '\n');
+				const char* open = strchr(cursor, '"');
+				if (!open || (lineEnd && open > lineEnd))
+				{
+					continue;
+				}
+				const char* close = strchr(open + 1, '"');
+				if (!close)
+				{
+					break;
+				}
+
+				char includePath[PathConstants::c_MaxPathTotalSize];
+				snprintf(includePath, sizeof(includePath), "%s/%.*s", directory, static_cast<int>(close - open - 1), open + 1);
+				GetNewestWriteTime(includePath, depth + 1, inOutNewest);
+				cursor = close + 1;
+			}
+			return true;
+		}
+	}
+
 	void* ShaderCreator::s_CompilerLibrary = nullptr;
 	void* ShaderCreator::s_SignatureLibrary = nullptr;
 
@@ -96,14 +151,14 @@ namespace tyr
 		char byteCodeFilePath[PathConstants::c_MaxPathTotalSize];
 		snprintf(byteCodeFilePath, sizeof(byteCodeFilePath), "%s/%s%s", byteCodeDirPath, shaderDesc.fileName.CStr(), shaderExt);
 		
-		uint64 sourceWriteTime;
-		if (!Platform::GetFileWriteTime(sourceFilePath, sourceWriteTime))
+		uint64 sourceWriteTime = 0;
+		if (!GetNewestWriteTime(sourceFilePath, 0, sourceWriteTime))
 		{
 			TYR_ASSERT(false);
 			return;
 		}
 
-		// Only compile if necessary
+		// Only compile if the shader or anything it includes changed since it was last built
 		uint64 byteCodeWriteTime;
 		if (Platform::GetFileWriteTime(byteCodeFilePath, byteCodeWriteTime) && byteCodeWriteTime > sourceWriteTime)
 		{

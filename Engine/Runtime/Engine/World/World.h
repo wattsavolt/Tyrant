@@ -59,12 +59,14 @@ namespace tyr
 		Name name;
 		Camera* camera = nullptr;
 		ViewArea viewArea;
-		RenderWindowHandle windowHandle;
-		WindowHandle osWindowHandle;
+		RenderWindowHandle renderWindowHandle;
+		WindowHandle windowHandle;
 		SceneHandle sceneHandle;
 		// Created/destroyed alongside sceneHandle - the world's scene owns this for its whole
 		// lifetime, regardless of whether this world is currently the active one.
 		RenderViewportHandle renderViewportHandle;
+		// Simulated worlds only.
+		Handle physicsWorld;
 		bool visible = true;
 		// Physics and audio only run in simulated worlds.
 		bool simulate = true;
@@ -89,10 +91,11 @@ namespace tyr
 			name = {};
 			camera = nullptr;
 			viewArea = {};
+			renderWindowHandle = {};
 			windowHandle = {};
-			osWindowHandle = {};
 			sceneHandle = {};
 			renderViewportHandle = {};
+			physicsWorld = {};
 			visible = true;
 			simulate = true;
 			entities.Reset();

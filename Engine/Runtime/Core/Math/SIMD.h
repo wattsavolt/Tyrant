@@ -164,6 +164,82 @@ namespace tyr
             return _mm256_sqrt_pd(a);
         }
 
+        // Copies 4 floats into both halves, such as one matrix row for two rows at once.
+        static inline Reg Broadcast4(const float* ptr)
+        {
+            return _mm256_broadcast_ps(reinterpret_cast<const __m128*>(ptr));
+        }
+
+        // Fills each 4-float half with that half's own element at Lane.
+        template<int Lane>
+        static inline Reg SplatHalves(Reg v)
+        {
+            return _mm256_shuffle_ps(v, v, _MM_SHUFFLE(Lane, Lane, Lane, Lane));
+        }
+
+        // --- 4-wide float operations, such as one matrix row, a quaternion or a Vector4 ---
+
+        static inline Reg128 Load4(const float* ptr)
+        {
+            return _mm_loadu_ps(ptr);
+        }
+
+        static inline void Store4(float* ptr, Reg128 v)
+        {
+            _mm_storeu_ps(ptr, v);
+        }
+
+        static inline Reg128 Set4(float v)
+        {
+            return _mm_set1_ps(v);
+        }
+
+        // In lane order, x first.
+        static inline Reg128 Set4(float x, float y, float z, float w)
+        {
+            return _mm_setr_ps(x, y, z, w);
+        }
+
+        static inline Reg128 Add4(Reg128 a, Reg128 b)
+        {
+            return _mm_add_ps(a, b);
+        }
+
+        static inline Reg128 Sub4(Reg128 a, Reg128 b)
+        {
+            return _mm_sub_ps(a, b);
+        }
+
+        static inline Reg128 Mul4(Reg128 a, Reg128 b)
+        {
+            return _mm_mul_ps(a, b);
+        }
+
+        // Every lane set to lane Lane of v.
+        template<int Lane>
+        static inline Reg128 Splat4(Reg128 v)
+        {
+            return _mm_shuffle_ps(v, v, _MM_SHUFFLE(Lane, Lane, Lane, Lane));
+        }
+
+        // Lanes picked from v in output order, so Shuffle4<3, 2, 1, 0> reverses them.
+        template<int X, int Y, int Z, int W>
+        static inline Reg128 Shuffle4(Reg128 v)
+        {
+            return _mm_shuffle_ps(v, v, _MM_SHUFFLE(W, Z, Y, X));
+        }
+
+        static inline float Dot4(Reg128 a, Reg128 b)
+        {
+            return _mm_cvtss_f32(_mm_dp_ps(a, b, 0xFF));
+        }
+
+        // Swaps rows and columns of the 4x4 matrix held in the four registers.
+        static inline void Transpose4(Reg128& row0, Reg128& row1, Reg128& row2, Reg128& row3)
+        {
+            _MM_TRANSPOSE4_PS(row0, row1, row2, row3);
+        }
+
         static inline Reg128I FloatToHalf(Reg f)
         {
             return _mm256_cvtps_ph(f, 0); // F16C intrinsic, returns 128-bit packed half

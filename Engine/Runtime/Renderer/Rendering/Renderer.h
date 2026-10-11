@@ -114,6 +114,9 @@ namespace tyr
 
 		RenderAllocationManager& GetAllocationManager() { return m_AllocManager; }
 
+		// Every live skinned mesh instance, whose BLAS is rebuilt each frame. Main thread only.
+		Array<SkeletalMeshInstanceHandle>& GetSkinnedInstances() { return m_SkinnedInstances; }
+
 		// Queues a descriptor write instead of calling Device::UpdateDescriptorSet immediately.
 		// Main thread only, like every RendererAPI Create*/Update* call these back.
 		void QueueBufferBindingUpdate(uint bindingIndex, uint descriptorArrayIndex, const BufferBindingInfo& info);
@@ -141,7 +144,11 @@ namespace tyr
 		// hasValidSwapChainImage is only ever true when hasActiveScene also is. The transfer
 		// pass always runs regardless of either.
 		void BuildAndExecuteRenderGraph(uint renderFrameIndex, uint64 frameNumber, bool hasActiveScene, bool hasValidSwapChainImage);
+		// Applies this frame's mesh instance adds and removes to the scenes they belong to.
+		void MergeSceneContent(const SceneFrame& sceneFrame);
 		void RecordTransferPass(CommandList& cmdList, uint renderFrameIndex);
+		void SetupSkinningPass(RenderGraphBuilder& builder);
+		void RecordSkinningPass(CommandList& cmdList);
 		void SetupCullingPass(RenderGraphBuilder& builder);
 		void RecordCullingPass(CommandList& cmdList, uint renderFrameIndex);
 		void RecordGeometryPass(CommandList& cmdList, uint renderFrameIndex);
@@ -308,6 +315,7 @@ namespace tyr
 		// strictly front-to-back every frame (earlier requests build first), stopping once the
 		// next mesh would exceed the per-frame byte budget.
 		Array<MeshHandle> m_PendingBLASBuilds;
+		Array<SkeletalMeshInstanceHandle> m_SkinnedInstances;
 		// Current per-slot capacity of m_Resources.blasScratchBuffer.
 		size_t m_BLASScratchCapacity = 0;
 		// Per-slot size of m_Resources.tlasScratchBuffer, set once in CreateAccelerationStructures -

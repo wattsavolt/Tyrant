@@ -51,8 +51,8 @@ void App::Initialize()
 	{
 		// Draws into the host's window instead of opening a second one.
 		const World& hostWorld = m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld());
-		worldParams.windowHandle = hostWorld.windowHandle;
-		worldParams.osWindowHandle = hostWorld.osWindowHandle;
+		worldParams.windowHandle = hostWorld.renderWindowHandle;
+		worldParams.osWindowHandle = hostWorld.windowHandle;
 
 		m_MainWorld = m_WorldManager->AddWorld(worldParams);
 		m_WorldManager->SetActiveWorld(m_MainWorld);

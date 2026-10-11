@@ -57,15 +57,11 @@ bool IntersectGround(float2 pixel, out float3 rayOrigin, out float3 hit)
 	// Reverse-Z, so 1 is the near plane and 0 the far plane.
 	rayOrigin = Unproject(ndc, 1.0f);
 	const float3 rayDirection = Unproject(ndc, 0.0f) - rayOrigin;
-	hit = rayOrigin;
-	if (abs(rayDirection.y) < 1e-6f)
-	{
-		return false;
-	}
-
-	const float t = -rayOrigin.y / rayDirection.y;
+	// A ray parallel to the plane never hits it. The safe divisor keeps hit finite regardless.
+	const bool parallel = abs(rayDirection.y) < 1e-6f;
+	const float t = -rayOrigin.y / (parallel ? 1e-6f : rayDirection.y);
 	hit = rayOrigin + rayDirection * t;
-	return t > 0.0f;
+	return and(!parallel, t > 0.0f);
 }
 
 // Ben Golus's "pristine grid" - anti-aliased lines that fade to their average coverage rather
@@ -109,52 +105,49 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
 	const int3 pixelCoord = int3(dispatchThreadId.xy, 0);
 	const float3 source = textures[g_PushConstants.sourceIndex].Load(pixelCoord).rgb;
-	float3 output = source;
 
 	const float2 pixel = float2(dispatchThreadId.xy) + 0.5f;
 	float3 rayOrigin;
 	float3 hit;
-	if (g_PushConstants.gridEnabled != 0 && IntersectGround(pixel, rayOrigin, hit))
-	{
-		// Hidden behind anything the scene drew closer to the camera. The small bias keeps the
-		// grid on top of surfaces lying exactly on the plane.
-		const float gridDistance = distance(rayOrigin, hit);
-		const float sceneDepth = textures[g_PushConstants.depthIndex].Load(pixelCoord).r;
-		const bool occluded = sceneDepth > 0.0f &&
-			distance(rayOrigin, Unproject(PixelToNdc(pixel), sceneDepth)) < gridDistance * 0.999f;
+	const bool hitsGround = IntersectGround(pixel, rayOrigin, hit);
 
-		if (!occluded)
-		{
-			const float cellSize = g_PushConstants.cellSize;
-			const float majorCellSize = cellSize * g_PushConstants.majorLineEvery;
+	// Hidden behind anything the scene drew closer to the camera. The small bias keeps the
+	// grid on top of surfaces lying exactly on the plane.
+	const float gridDistance = distance(rayOrigin, hit);
+	const float sceneDepth = textures[g_PushConstants.depthIndex].Load(pixelCoord).r;
+	const bool occluded = and(sceneDepth > 0.0f, distance(rayOrigin, Unproject(PixelToNdc(pixel), sceneDepth)) < gridDistance * 0.999f);
 
-			// Exact per-pixel derivatives from where the neighbouring pixels hit the plane. A
-			// neighbour past the horizon counts as a huge change, fading the lines out there.
-			float3 neighbourOrigin;
-			float3 hitRight;
-			float3 hitDown;
-			const bool hasRight = IntersectGround(pixel + float2(1.0f, 0.0f), neighbourOrigin, hitRight);
-			const bool hasDown = IntersectGround(pixel + float2(0.0f, 1.0f), neighbourOrigin, hitDown);
-			const float2 ddxWorld = hasRight ? hitRight.xz - hit.xz : float2(1e6f, 1e6f);
-			const float2 ddyWorld = hasDown ? hitDown.xz - hit.xz : float2(1e6f, 1e6f);
-			const float2 worldDeriv = float2(length(float2(ddxWorld.x, ddyWorld.x)), length(float2(ddxWorld.y, ddyWorld.y)));
+	const float cellSize = g_PushConstants.cellSize;
+	const float majorCellSize = cellSize * g_PushConstants.majorLineEvery;
 
-			float4 grid = float4(0.0f, 0.0f, 0.0f, 0.0f);
-			BlendLine(grid, c_MinorLineColour, PristineGrid(hit.xz / cellSize, worldDeriv / cellSize, c_MinorLineWidth));
-			BlendLine(grid, c_MajorLineColour, PristineGrid(hit.xz / majorCellSize, worldDeriv / majorCellSize, c_MajorLineWidth));
-			// The X axis runs along z = 0 and the Z axis along x = 0.
-			BlendLine(grid, c_XAxisColour, AxisLine(hit.z / cellSize, worldDeriv.y / cellSize, c_AxisLineWidth));
-			BlendLine(grid, c_ZAxisColour, AxisLine(hit.x / cellSize, worldDeriv.x / cellSize, c_AxisLineWidth));
+	// Exact per-pixel derivatives from where the neighbouring pixels hit the plane. A
+	// neighbour past the horizon counts as a huge change, fading the lines out there.
+	float3 neighbourOrigin;
+	float3 hitRight;
+	float3 hitDown;
+	const bool hasRight = IntersectGround(pixel + float2(1.0f, 0.0f), neighbourOrigin, hitRight);
+	const bool hasDown = IntersectGround(pixel + float2(0.0f, 1.0f), neighbourOrigin, hitDown);
+	const float2 ddxWorld = hasRight ? hitRight.xz - hit.xz : float2(1e6f, 1e6f);
+	const float2 ddyWorld = hasDown ? hitDown.xz - hit.xz : float2(1e6f, 1e6f);
+	const float2 worldDeriv = float2(length(float2(ddxWorld.x, ddyWorld.x)), length(float2(ddxWorld.y, ddyWorld.y)));
 
-			const float horizontalDistance = distance(rayOrigin.xz, hit.xz);
-			const float fade = 1.0f - smoothstep(c_FadeStartMajorCells * majorCellSize, c_FadeEndMajorCells * majorCellSize, horizontalDistance);
+	float4 grid = float4(0.0f, 0.0f, 0.0f, 0.0f);
+	BlendLine(grid, c_MinorLineColour, PristineGrid(hit.xz / cellSize, worldDeriv / cellSize, c_MinorLineWidth));
+	BlendLine(grid, c_MajorLineColour, PristineGrid(hit.xz / majorCellSize, worldDeriv / majorCellSize, c_MajorLineWidth));
+	// The X axis runs along z = 0 and the Z axis along x = 0.
+	BlendLine(grid, c_XAxisColour, AxisLine(hit.z / cellSize, worldDeriv.y / cellSize, c_AxisLineWidth));
+	BlendLine(grid, c_ZAxisColour, AxisLine(hit.x / cellSize, worldDeriv.x / cellSize, c_AxisLineWidth));
 
-			// grid.rgb is already the lines blended over black, weighted by grid.a.
-			const float alpha = grid.a * fade;
-			const float3 lineColour = grid.a > 0.0f ? grid.rgb / grid.a : float3(0.0f, 0.0f, 0.0f);
-			output = lerp(source, lineColour, alpha);
-		}
-	}
+	const float horizontalDistance = distance(rayOrigin.xz, hit.xz);
+	const float fade = 1.0f - smoothstep(c_FadeStartMajorCells * majorCellSize, c_FadeEndMajorCells * majorCellSize, horizontalDistance);
+
+	// Shown only when the grid is on, the pixel sees the ground, and nothing is in front of it.
+	const float shown = and(and(g_PushConstants.gridEnabled != 0, hitsGround), !occluded) ? 1.0f : 0.0f;
+
+	// grid.rgb is already the lines blended over black, weighted by grid.a.
+	const float alpha = grid.a * fade * shown;
+	const float3 lineColour = grid.rgb / max(grid.a, 0.000001f);
+	const float3 output = lerp(source, lineColour, alpha);
 
 	outputImages[g_PushConstants.renderFrameIndex][dispatchThreadId.xy] = float4(output, 1.0f);
 }

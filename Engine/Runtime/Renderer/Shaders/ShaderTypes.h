@@ -53,6 +53,10 @@
 #define TYR_BINDING_LIGHT_INDICES 25
 // This frame's debug line vertices, depth-tested ones first.
 #define TYR_BINDING_DEBUG_LINE_VERTEX 26
+// Skinned meshes' bone weights, one SkinVertex per vertex alongside the mesh's vertices.
+#define TYR_BINDING_SKIN_VERTEX 27
+// Each skinned mesh instance's bone matrices, TYR_MAX_BONES apart.
+#define TYR_BINDING_BONE_MATRIX 28
 
 // How many copies of the per-frame render targets TYR_BINDING_LIGHTING_OUTPUT holds, one
 // per buffered frame slot - kept in sync with the matching C++ constant.
@@ -64,6 +68,10 @@
 // Where point-light entries start in TYR_BINDING_LIGHT_INDICES - kept in sync with
 // RenderConstants::c_MaxDirLights.
 #define TYR_MAX_DIR_LIGHTS 2
+
+// Kept in sync with SkeletonConstants::c_MaxBones.
+#define TYR_MAX_BONES 256
+#define TYR_INVALID_INDEX 0xFFFFFFFF
 
 // Must match ModelImporter's meshlet build limits.
 #define TYR_MAX_MESHLET_VERTICES 64
@@ -211,24 +219,13 @@ namespace tyr
 		TYR_SHADER_HALF2 uv;                  // 4 bytes
 	};
 
-	TYR_SHADER_STRUCT(AnimVertex)
+	// A skinned vertex's four bones and how much each moves it.
+	TYR_SHADER_STRUCT(SkinVertex)
 	{
-		// 3D position (world/local space)
-		TYR_SHADER_FLOAT3 position;           // 12 bytes
-
-		// Oct-encoded normal and tangent (4 bytes each)
-		uint normalOct;            // 4 bytes: octahedral encoded normal
-		uint tangentOct;           // 4 bytes: octahedral encoded tangent + bitangent sign
-
-		// Texture coordinates (half precision for bandwidth)
-		TYR_SHADER_HALF2 uv;                  // 4 bytes
-
-		// Note: Call GeomtryUtil::PackUint8x4 to create the two following members
-		// 4x uint8 packed into one uint32
-		uint boneIndices;    
-
-		// 4x UNORM8 packed into one uint32
-		uint boneWeights;      
+		// 4x uint8 bone indices.
+		uint boneIndices;
+		// 4x UNORM8 weights adding up to 255.
+		uint boneWeights;
 	};
 
 	TYR_SHADER_STRUCT(Meshlet)
@@ -270,32 +267,25 @@ namespace tyr
 		// materials and overridden per-slot where set. Array size must match the engine's
 		// max submesh count; slots beyond the mesh's actual submesh count are unused.
 		uint materialIndices[16];
+		// Skinned instances only, otherwise TYR_INVALID_INDEX: where this frame's and last
+		// frame's skinned LOD0 vertices start in the vertex buffer.
+		uint skinnedVertexOffset;
+		uint prevSkinnedVertexOffset;
+		// Skinned instances only: the posed mesh's local bounds, used in place of the mesh's.
+		TYR_SHADER_FLOAT4 skinnedSphere;
 	};
 
-	TYR_SHADER_STRUCT(Skeleton)
+	// One skinned mesh instance's skinning work for SkinningCS.hlsl.
+	TYR_SHADER_STRUCT(SkinningPushConstants)
 	{
-		uint parentOffset;
-		uint inverseBindOffset;
-		uint boneCount;
-	};
-
-	TYR_SHADER_STRUCT(SkeletalMesh)
-	{
-		uint lodOffset;
-		uint lodCount;
-
-		uint boneRemapOffset; // into boneRemapBuffer
-		uint boneCount;
-	};
-
-	TYR_SHADER_STRUCT(SkeletalInstance)
-	{
-		TYR_SHADER_FLOAT4x4 transform;
-		uint meshIndex;
+		uint restVertexOffset;
+		uint skinVertexOffset;
+		uint outputVertexOffset;
+		uint prevOutputVertexOffset;
+		uint vertexCount;
 		uint boneMatrixOffset;
-		// One resolved material index per submesh slot. Array size must match the engine's
-		// max skeletal submesh count exactly.
-		uint materialIndices[24];
+		// Set on an instance's first skinning, when there's no last frame to keep.
+		uint firstFrame;
 	};
 
 #ifdef __cplusplus

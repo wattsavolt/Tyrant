@@ -1,4 +1,5 @@
 #include "MeshAsset.h"
+#include "AssetSerializationUtil.h"
 
 namespace tyr
 {
@@ -84,5 +85,21 @@ namespace tyr
 		stream.Read(&header.sphere, sizeof(header.sphere));
 		stream.Read(&header.aabbMin, sizeof(header.aabbMin));
 		stream.Read(&header.aabbMax, sizeof(header.aabbMax));
+	}
+
+	void SerializeSkinnedMesh(BufferedFileStream& stream, const MeshHeader& header)
+	{
+		Serialize<MeshHeader>(stream, header);
+		AssetSerializationUtil::WriteArray(stream, header.chunkSkins);
+		stream.Write(&header.skeleton, sizeof(header.skeleton));
+		stream.Write(&header.boneBoundsMargin, sizeof(header.boneBoundsMargin));
+	}
+
+	void DeserializeSkinnedMesh(BufferedFileStream& stream, MeshHeader& header)
+	{
+		Deserialize<MeshHeader>(stream, header);
+		AssetSerializationUtil::ReadArray(stream, header.chunkSkins);
+		stream.Read(&header.skeleton, sizeof(header.skeleton));
+		stream.Read(&header.boneBoundsMargin, sizeof(header.boneBoundsMargin));
 	}
 }

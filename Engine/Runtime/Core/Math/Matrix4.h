@@ -6,6 +6,7 @@
 #include "Math/Vector3.h"
 #include "Math/Matrix3.h"
 #include "Math/Vector4.h"
+#include "Math/SIMD.h"
 
 namespace tyr
 {
@@ -69,20 +70,24 @@ namespace tyr
 			return *(Vector4*)m[row];
 		}
 
-		// Multiplies in left to right order
+		// Multiplies in left to right order. Two result rows at a time, each a sum of rhs's rows
+		// weighted by that row's elements.
 		Matrix4 operator* (const Matrix4 &rhs) const
 		{
+			const Reg rhsRow0 = SIMD::Broadcast4(rhs.m[0]);
+			const Reg rhsRow1 = SIMD::Broadcast4(rhs.m[1]);
+			const Reg rhsRow2 = SIMD::Broadcast4(rhs.m[2]);
+			const Reg rhsRow3 = SIMD::Broadcast4(rhs.m[3]);
+
 			Matrix4 prod;
-			for (uint row = 0; row < 4; ++row)
+			for (uint row = 0; row < 4; row += 2)
 			{
-				for (uint col = 0; col < 4; ++col)
-				{
-					prod.m[row][col] = 
-						m[row][0] * rhs.m[0][col] +
-						m[row][1] * rhs.m[1][col] + 
-						m[row][2] * rhs.m[2][col] +
-						m[row][3] * rhs.m[3][col];
-				}
+				const Reg rows = SIMD::Load(m[row]);
+				Reg result = SIMD::Mul(SIMD::SplatHalves<0>(rows), rhsRow0);
+				result = SIMD::Add(result, SIMD::Mul(SIMD::SplatHalves<1>(rows), rhsRow1));
+				result = SIMD::Add(result, SIMD::Mul(SIMD::SplatHalves<2>(rows), rhsRow2));
+				result = SIMD::Add(result, SIMD::Mul(SIMD::SplatHalves<3>(rows), rhsRow3));
+				SIMD::Store(prod.m[row], result);
 			}
 			return prod;
 		}
@@ -90,53 +95,16 @@ namespace tyr
 		Matrix4 operator+ (const Matrix4 &rhs) const
 		{
 			Matrix4 r;
-
-			r.m[0][0] = m[0][0] + rhs.m[0][0];
-			r.m[0][1] = m[0][1] + rhs.m[0][1];
-			r.m[0][2] = m[0][2] + rhs.m[0][2];
-			r.m[0][3] = m[0][3] + rhs.m[0][3];
-
-			r.m[1][0] = m[1][0] + rhs.m[1][0];
-			r.m[1][1] = m[1][1] + rhs.m[1][1];
-			r.m[1][2] = m[1][2] + rhs.m[1][2];
-			r.m[1][3] = m[1][3] + rhs.m[1][3];
-
-			r.m[2][0] = m[2][0] + rhs.m[2][0];
-			r.m[2][1] = m[2][1] + rhs.m[2][1];
-			r.m[2][2] = m[2][2] + rhs.m[2][2];
-			r.m[2][3] = m[2][3] + rhs.m[2][3];
-
-			r.m[3][0] = m[3][0] + rhs.m[3][0];
-			r.m[3][1] = m[3][1] + rhs.m[3][1];
-			r.m[3][2] = m[3][2] + rhs.m[3][2];
-			r.m[3][3] = m[3][3] + rhs.m[3][3];
-
+			SIMD::Store(r.m[0], SIMD::Add(SIMD::Load(m[0]), SIMD::Load(rhs.m[0])));
+			SIMD::Store(r.m[2], SIMD::Add(SIMD::Load(m[2]), SIMD::Load(rhs.m[2])));
 			return r;
 		}
 
 		Matrix4 operator- (const Matrix4 &rhs) const
 		{
 			Matrix4 r;
-			r.m[0][0] = m[0][0] - rhs.m[0][0];
-			r.m[0][1] = m[0][1] - rhs.m[0][1];
-			r.m[0][2] = m[0][2] - rhs.m[0][2];
-			r.m[0][3] = m[0][3] - rhs.m[0][3];
-
-			r.m[1][0] = m[1][0] - rhs.m[1][0];
-			r.m[1][1] = m[1][1] - rhs.m[1][1];
-			r.m[1][2] = m[1][2] - rhs.m[1][2];
-			r.m[1][3] = m[1][3] - rhs.m[1][3];
-
-			r.m[2][0] = m[2][0] - rhs.m[2][0];
-			r.m[2][1] = m[2][1] - rhs.m[2][1];
-			r.m[2][2] = m[2][2] - rhs.m[2][2];
-			r.m[2][3] = m[2][3] - rhs.m[2][3];
-
-			r.m[3][0] = m[3][0] - rhs.m[3][0];
-			r.m[3][1] = m[3][1] - rhs.m[3][1];
-			r.m[3][2] = m[3][2] - rhs.m[3][2];
-			r.m[3][3] = m[3][3] - rhs.m[3][3];
-
+			SIMD::Store(r.m[0], SIMD::Sub(SIMD::Load(m[0]), SIMD::Load(rhs.m[0])));
+			SIMD::Store(r.m[2], SIMD::Sub(SIMD::Load(m[2]), SIMD::Load(rhs.m[2])));
 			return r;
 		}
 
@@ -160,10 +128,11 @@ namespace tyr
 
 		Matrix4 operator*(float rhs) const
 		{
-			return Matrix4(rhs*m[0][0], rhs*m[0][1], rhs*m[0][2], rhs*m[0][3],
-				rhs*m[1][0], rhs*m[1][1], rhs*m[1][2], rhs*m[1][3],
-				rhs*m[2][0], rhs*m[2][1], rhs*m[2][2], rhs*m[2][3],
-				rhs*m[3][0], rhs*m[3][1], rhs*m[3][2], rhs*m[3][3]);
+			const Reg scale = SIMD::Set(rhs);
+			Matrix4 r;
+			SIMD::Store(r.m[0], SIMD::Mul(SIMD::Load(m[0]), scale));
+			SIMD::Store(r.m[2], SIMD::Mul(SIMD::Load(m[2]), scale));
+			return r;
 		}
 
 		/// Returns the specified column of the matrix, ignoring the last row. 
@@ -185,10 +154,18 @@ namespace tyr
 		/// Returns a transpose of the matrix ie. switches rows and columns. 
 		Matrix4 Transpose() const
 		{
-			return Matrix4(m[0][0], m[1][0], m[2][0], m[3][0],
-				m[0][1], m[1][1], m[2][1], m[3][1],
-				m[0][2], m[1][2], m[2][2], m[3][2],
-				m[0][3], m[1][3], m[2][3], m[3][3]);
+			Reg128 row0 = SIMD::Load4(m[0]);
+			Reg128 row1 = SIMD::Load4(m[1]);
+			Reg128 row2 = SIMD::Load4(m[2]);
+			Reg128 row3 = SIMD::Load4(m[3]);
+			SIMD::Transpose4(row0, row1, row2, row3);
+
+			Matrix4 r;
+			SIMD::Store4(r.m[0], row0);
+			SIMD::Store4(r.m[1], row1);
+			SIMD::Store4(r.m[2], row2);
+			SIMD::Store4(r.m[3], row3);
+			return r;
 		}
 
 		void MakeProjectionRightHanded() 
@@ -312,59 +289,40 @@ namespace tyr
 			);
 		}
 
-		/// Transform a 3D point by this matrix.
+		/// Transform a 3D point by this matrix, including its translation row.
 	    /// Matrix must be affine, if it is not use Multiply() function.
 		/// Affine matrices are translation, scale, shear and rotation
 		Vector3 MultiplyAffine(const Vector3& v) const
 		{
-			Vector3 output;
-			for (uint i = 0; i < 3; ++i)
-			{
-				output[i] =
-					v[0] * m[0][i] +
-					v[1] * m[1][i] +
-					v[2] * m[2][i];
-			}
-
-			return output;
+			const Reg128 result = SIMD::Add4(MultiplyRows3(v.x, v.y, v.z), SIMD::Load4(m[3]));
+			return Vector3(StoreLane<0>(result), StoreLane<1>(result), StoreLane<2>(result));
 		}
 
 		/// Transform a 4D vector by this matrix.
-		/// Matrix must be affine, if it is not use Multiply() function. 
+		/// Matrix must be affine, if it is not use Multiply() function.
 		/// Affine matrices are scale, rotation, translation and shear
 		Vector4 MultiplyAffine(const Vector4& v) const
 		{
-			return Vector4
-			(
-				m[0][0] * v.x + m[1][0] * v.y + m[2][0] * v.z + m[3][0] * v.w,
-				m[0][1] * v.x + m[1][1] * v.y + m[2][1] * v.z + m[3][1] * v.w,
-				m[0][2] * v.x + m[1][2] * v.y + m[2][2] * v.z + m[3][2] * v.w,
-				v.w
-			);
+			Vector4 output = Multiply(v);
+			output.w = v.w;
+			return output;
 		}
 
-		/// Transform a 3D direction by this matrix. 
+		/// Transform a 3D direction by this matrix.
 		Vector3 MultiplyDirection(const Vector3& v) const
 		{
-			return Vector3
-			(
-				m[0][0] * v.x + m[1][0] * v.y + m[2][0] * v.z,
-				m[0][1] * v.x + m[1][1] * v.y + m[2][1] * v.z,
-				m[0][2] * v.x + m[1][2] * v.y + m[2][2] * v.z
-			);
+			const Reg128 result = MultiplyRows3(v.x, v.y, v.z);
+			return Vector3(StoreLane<0>(result), StoreLane<1>(result), StoreLane<2>(result));
 		}
 
 		/// Transform a 4D vector by this matrix.
-		/// @note If the matrix doesn't contain a projection, it's faster to use MultiplyAffine() 	
+		/// @note If the matrix doesn't contain a projection, it's faster to use MultiplyAffine()
 		Vector4 Multiply(const Vector4& v) const
 		{
-			return Vector4
-			(
-				m[0][0] * v.x + m[1][0] * v.y + m[2][0] * v.z + m[3][0] * v.w,
-				m[0][1] * v.x + m[1][1] * v.y + m[2][1] * v.z + m[3][1] * v.w,
-				m[0][2] * v.x + m[1][2] * v.y + m[2][2] * v.z + m[3][2] * v.w,
-				m[0][3] * v.x + m[1][3] * v.y + m[2][3] * v.z + m[3][3] * v.w
-			);
+			const Reg128 result = SIMD::Add4(MultiplyRows3(v.x, v.y, v.z), SIMD::Mul4(SIMD::Set4(v.w), SIMD::Load4(m[3])));
+			Vector4 output;
+			SIMD::Store4(&output.x, result);
+			return output;
 		}
 
 		/// Creates a view matrix from a position, forward vector and up vector. 
@@ -419,6 +377,20 @@ namespace tyr
 		static const Matrix4 c_Identity;
 
 	private:
+		// The first three rows weighted by x, y and z and summed.
+		Reg128 MultiplyRows3(float x, float y, float z) const
+		{
+			Reg128 result = SIMD::Mul4(SIMD::Set4(x), SIMD::Load4(m[0]));
+			result = SIMD::Add4(result, SIMD::Mul4(SIMD::Set4(y), SIMD::Load4(m[1])));
+			return SIMD::Add4(result, SIMD::Mul4(SIMD::Set4(z), SIMD::Load4(m[2])));
+		}
+
+		template<int Lane>
+		static float StoreLane(Reg128 v)
+		{
+			return _mm_cvtss_f32(SIMD::Splat4<Lane>(v));
+		}
+
 		float m[4][4];
 	};
 }

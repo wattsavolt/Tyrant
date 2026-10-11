@@ -165,33 +165,24 @@ namespace tyr
 
 	void Matrix4::SetTRS(const Vector3& translation, const Quaternion& rotation, const Vector3& scale)
 	{
-		Matrix3 rot3x3;
-		rotation.ToRotationMatrix(rot3x3);
+		// The same rotation rows as Quaternion::ToRotationMatrix, each scaled by its axis's scale.
+		const float tx = rotation.x + rotation.x;
+		const float ty = rotation.y + rotation.y;
+		const float tz = rotation.z + rotation.z;
+		const float twx = tx * rotation.w;
+		const float twy = ty * rotation.w;
+		const float twz = tz * rotation.w;
+		const float txx = tx * rotation.x;
+		const float txy = ty * rotation.x;
+		const float txz = tz * rotation.x;
+		const float tyy = ty * rotation.y;
+		const float tyz = tz * rotation.y;
+		const float tzz = tz * rotation.z;
 
-		/*m[0][0] = scale.x * rot3x3[0][0]; m[0][1] = scale.y * rot3x3[0][1]; m[0][2] = scale.z * rot3x3[0][2]; m[0][3] = translation.x;
-		m[1][0] = scale.x * rot3x3[1][0]; m[1][1] = scale.y * rot3x3[1][1]; m[1][2] = scale.z * rot3x3[1][2]; m[1][3] = translation.y;
-		m[2][0] = scale.x * rot3x3[2][0]; m[2][1] = scale.y * rot3x3[2][1]; m[2][2] = scale.z * rot3x3[2][2]; m[2][3] = translation.z;
-		m[3][0] = 0; m[3][1] = 0; m[3][2] = 0; m[3][3] = 1;*/
-
-		m[0][0] = scale.x * rot3x3[0][0];
-		m[0][1] = scale.x * rot3x3[0][1]; 
-		m[0][2] = scale.x * rot3x3[0][2]; 
-		m[0][3] = 0;
-
-		m[1][0] = scale.y * rot3x3[1][0];
-		m[1][1] = scale.y * rot3x3[1][1];
-		m[1][2] = scale.y * rot3x3[1][2];
-		m[1][3] = 0;
-
-		m[2][0] = scale.z * rot3x3[2][0];
-		m[2][1] = scale.z * rot3x3[2][1];
-		m[2][2] = scale.z * rot3x3[2][2];
-		m[2][3] = 0;
-
-		m[3][0] = translation.x; 
-		m[3][1] = translation.y; 
-		m[3][2] = translation.z; 
-		m[3][3] = 1;
+		SIMD::Store4(m[0], SIMD::Mul4(SIMD::Set4(1.0f - (tyy + tzz), txy + twz, txz - twy, 0.0f), SIMD::Set4(scale.x)));
+		SIMD::Store4(m[1], SIMD::Mul4(SIMD::Set4(txy - twz, 1.0f - (txx + tzz), tyz + twx, 0.0f), SIMD::Set4(scale.y)));
+		SIMD::Store4(m[2], SIMD::Mul4(SIMD::Set4(txz + twy, tyz - twx, 1.0f - (txx + tyy), 0.0f), SIMD::Set4(scale.z)));
+		SIMD::Store4(m[3], SIMD::Set4(translation.x, translation.y, translation.z, 1.0f));
 	}
 
 	void Matrix4::DecomposeTRS(Vector3& translation, Quaternion& rotation, Vector3& scale) const

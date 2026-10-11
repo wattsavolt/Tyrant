@@ -21,12 +21,6 @@ namespace tyr
 {
 	namespace
 	{
-		bool HasExtension(const char* path, const char* extension)
-		{
-			const char* pathExtension = strrchr(path, '.');
-			return pathExtension && strcmp(pathExtension, extension) == 0;
-		}
-
 		// Whether an actor of this type, added to the world, keeps the world within max of T.
 		template<typename T>
 		bool HasRoomFor(EntitySystem& entities, const ActorTypeDesc& actorType, uint max)
@@ -129,6 +123,7 @@ namespace tyr
 		AssetModule* assetModule;
 		TYR_GET_MODULE(AssetModule, assetModule);
 		m_AssetManager = assetModule->GetAssetManager();
+		m_AnimationSystem.Initialize(*m_AssetManager, *m_RendererAPI);
 	}
 
 	WorldManager::~WorldManager()
@@ -164,6 +159,14 @@ namespace tyr
 				}
 			});
 
+			world.entities.ForEach<SkeletalMeshComponent>([this, worldHandle](Entity entity, SkeletalMeshComponent& skeletalMesh)
+			{
+				if (!skeletalMesh.meshInstanceRequested && AssetUtil::IsValidAssetID(skeletalMesh.mesh))
+				{
+					SyncSkeletalMeshInstance(worldHandle, entity, skeletalMesh);
+				}
+			});
+
 			world.entities.ForEach<DirLightComponent>([&world, this](Entity /*entity*/, DirLightComponent& light)
 			{
 				if (!light.lightHandle)
@@ -192,13 +195,21 @@ namespace tyr
 		// TODO: Step physics and audio here once their components exist, only when world.simulate
 		// is set - a world open in the level editor must stay still and silent.
 
+		if (world.physicsWorld)
+		{
+			m_PhysicsManager.Update(world.physicsWorld, world, deltaTime);
+			ApplyPhysicsTransforms(world);
+		}
+
+		m_AnimationSystem.Update(world, deltaTime);
+
 		// The other way a resize can be detected - externally, by the OS/windowing system -
 		// rather than internally by the renderer itself. Always consumed, but only acted on if
 		// the window is still active, since a resize can fire as part of the window being destroyed.
-		const bool resizePending = world.osWindowHandle && m_WindowModule->ConsumeResizePending(world.osWindowHandle);
-		if (resizePending && m_WindowModule->IsWindowActive(world.osWindowHandle))
+		const bool resizePending = world.windowHandle && m_WindowModule->ConsumeResizePending(world.windowHandle);
+		if (resizePending && m_WindowModule->IsWindowActive(world.windowHandle))
 		{
-			m_RendererAPI->ResizeWindow(world.windowHandle);
+			m_RendererAPI->ResizeWindow(world.renderWindowHandle);
 		}
 
 		// RenderFrame is per-frame buffered data, not persistent state - the active scene index
@@ -235,8 +246,12 @@ namespace tyr
 		world.camera = config.camera;
 		world.viewArea = config.viewArea;
 		world.simulate = config.simulate;
-		world.windowHandle = config.windowHandle;
-		world.osWindowHandle = config.osWindowHandle;
+		world.renderWindowHandle = config.windowHandle;
+		world.windowHandle = config.osWindowHandle;
+		if (world.simulate)
+		{
+			world.physicsWorld = m_PhysicsManager.CreatePhysicsWorld();
+		}
 
 		world.sceneHandle = m_RendererAPI->AddScene(world.name.CStr());
 		// Unlike windowHandle/sceneHandle's own setup, a RenderViewport needs no OS window and
@@ -261,7 +276,7 @@ namespace tyr
 		if (worldHandle)
 		{
 			const World& world = m_WorldPool[worldHandle];
-			m_RendererAPI->SetSceneWindow(world.sceneHandle, world.windowHandle);
+			m_RendererAPI->SetSceneWindow(world.sceneHandle, world.renderWindowHandle);
 			m_RendererAPI->SetSceneRenderViewport(world.sceneHandle, world.renderViewportHandle);
 		}
 	}
@@ -269,7 +284,7 @@ namespace tyr
 	void WorldManager::SetWorldWindow(Handle worldHandle, RenderWindowHandle windowHandle)
 	{
 		World& world = m_WorldPool[worldHandle];
-		world.windowHandle = windowHandle;
+		world.renderWindowHandle = windowHandle;
 
 		if (worldHandle == m_ActiveWorld)
 		{
@@ -336,7 +351,7 @@ namespace tyr
 			transform = Matrix4::CreateTRS(worldTransform.position, worldTransform.rotation, worldTransform.scale);
 		}
 
-		m_AssetManager->CreateMeshInstance(meshID, transform, meshComponent.materials,
+		m_AssetManager->CreateMeshInstance(m_WorldPool[worldHandle].sceneHandle, meshID, transform, meshComponent.materials,
 			[this, worldHandle, entity, meshID](MeshInstanceHandle handle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials)
 			{
 				// The entity or its world was removed while this was loading, so nothing owns it.
@@ -351,17 +366,7 @@ namespace tyr
 				comp.meshInstance = handle;
 				comp.loadedMaterials = materials;
 
-				// An empty box, such as on a newly placed actor, takes the mesh's bounds.
-				if (world.entities.HasComponent<BoxComponent>(entity))
-				{
-					BoxComponent& box = world.entities.GetComponent<BoxComponent>(entity);
-					const MeshHeader* header = m_AssetManager->GetMeshHeader(meshID);
-					if (header && box.halfExtents == Vector3::c_Zero)
-					{
-						box.center = (header->aabbMin + header->aabbMax) * 0.5f;
-						box.halfExtents = (header->aabbMax - header->aabbMin) * 0.5f;
-					}
-				}
+				FitBoundsToMesh(world, entity, meshID);
 
 				// The entity may have been moved while its mesh was loading.
 				UpdateEntityTransform(world, entity);
@@ -384,6 +389,39 @@ namespace tyr
 		if (typeID == ComponentRegistry::GetComponentTypeID<MeshComponent>())
 		{
 			return SetMeshComponent(worldHandle, entity, *static_cast<const MeshComponent*>(data));
+		}
+
+		if (typeID == ComponentRegistry::GetComponentTypeID<SkeletalMeshComponent>())
+		{
+			return SetSkeletalMeshComponent(worldHandle, entity, *static_cast<const SkeletalMeshComponent*>(data));
+		}
+
+		if (typeID == ComponentRegistry::GetComponentTypeID<AnimatorComponent>())
+		{
+			return SetAnimatorComponent(worldHandle, entity, *static_cast<const AnimatorComponent*>(data));
+		}
+
+		// A changed collider or rigid body gets a new body on the next physics update.
+		if (typeID == ComponentRegistry::GetComponentTypeID<ColliderComponent>())
+		{
+			ColliderComponent& collider = world.entities.GetComponent<ColliderComponent>(entity);
+			if (world.physicsWorld)
+			{
+				m_PhysicsManager.RemoveBody(world.physicsWorld, collider);
+			}
+			collider = *static_cast<const ColliderComponent*>(data);
+			collider.bodyID = PhysicsConstants::c_InvalidBodyID;
+			return true;
+		}
+
+		if (typeID == ComponentRegistry::GetComponentTypeID<RigidBodyComponent>())
+		{
+			world.entities.GetComponent<RigidBodyComponent>(entity) = *static_cast<const RigidBodyComponent*>(data);
+			if (world.physicsWorld && world.entities.HasComponent<ColliderComponent>(entity))
+			{
+				m_PhysicsManager.RemoveBody(world.physicsWorld, world.entities.GetComponent<ColliderComponent>(entity));
+			}
+			return true;
 		}
 
 		if (typeID == ComponentRegistry::GetComponentTypeID<DirLightComponent>())
@@ -467,14 +505,14 @@ namespace tyr
 
 		// Only meshes and materials can go in these fields.
 		const AssetRegistry& registry = AssetRegistry::Instance();
-		if (AssetUtil::IsValidAssetID(meshComponent.mesh) && !HasExtension(registry.GetAssetData(meshComponent.mesh).filePath.CStr(), AssetConstants::c_MeshFileExtension))
+		if (AssetUtil::IsValidAssetID(meshComponent.mesh) && !AssetUtil::HasExtension(registry.GetAssetData(meshComponent.mesh).filePath.CStr(), AssetConstants::c_MeshFileExtension))
 		{
 			TYR_LOG_WARNING("Only a mesh can be used as a mesh component's mesh.");
 			return false;
 		}
 		for (AssetID materialID : meshComponent.materials)
 		{
-			if (AssetUtil::IsValidAssetID(materialID) && !HasExtension(registry.GetAssetData(materialID).filePath.CStr(), AssetConstants::c_MaterialFileExtension))
+			if (AssetUtil::IsValidAssetID(materialID) && !AssetUtil::HasExtension(registry.GetAssetData(materialID).filePath.CStr(), AssetConstants::c_MaterialFileExtension))
 			{
 				TYR_LOG_WARNING("Only materials can be used as a mesh component's materials.");
 				return false;
@@ -487,10 +525,7 @@ namespace tyr
 		if (meshChanged)
 		{
 			current.materials.Clear();
-			if (world.entities.HasComponent<BoxComponent>(entity))
-			{
-				world.entities.GetComponent<BoxComponent>(entity).halfExtents = Vector3::c_Zero;
-			}
+			ResetMeshBounds(world, entity);
 		}
 		else
 		{
@@ -531,6 +566,22 @@ namespace tyr
 			}
 		}
 
+		if (world.entities.HasComponent<SkeletalMeshComponent>(entity))
+		{
+			const SkeletalMeshComponent& skeletalMesh = world.entities.GetComponent<SkeletalMeshComponent>(entity);
+			if (skeletalMesh.meshInstance)
+			{
+				SkeletalMeshInstanceDesc desc;
+				desc.info.transform = Matrix4::CreateTRS(transform.position, transform.rotation, transform.scale);
+				desc.info.mesh = m_AssetManager->GetMesh(skeletalMesh.mesh);
+				for (AssetID materialID : skeletalMesh.loadedMaterials)
+				{
+					desc.info.materials.Add(m_AssetManager->GetMaterial(materialID));
+				}
+				m_RendererAPI->UpdateSkeletalMeshInstance(skeletalMesh.meshInstance, desc);
+			}
+		}
+
 		if (world.entities.HasComponent<PointLightComponent>(entity))
 		{
 			const PointLightComponent& light = world.entities.GetComponent<PointLightComponent>(entity);
@@ -567,23 +618,7 @@ namespace tyr
 			root.local = transform;
 			root.world = transform;
 			UpdateEntityTransform(world, rootEntity);
-
-			// Parents come before their children in the actor's entity list.
-			for (uint i = 1; i < instance.entities.Size(); ++i)
-			{
-				const Entity entity = instance.entities[i];
-				ComponentTransform& child = world.entities.GetComponent<ComponentTransform>(entity);
-				if (child.parentEntity == c_InvalidEntity)
-				{
-					continue;
-				}
-
-				const Transform& parentWorld = world.entities.GetComponent<ComponentTransform>(child.parentEntity).world;
-				const Matrix4 worldMatrix = Matrix4::CreateTRS(child.local.position, child.local.rotation, child.local.scale)
-					* Matrix4::CreateTRS(parentWorld.position, parentWorld.rotation, parentWorld.scale);
-				worldMatrix.DecomposeTRS(child.world.position, child.world.rotation, child.world.scale);
-				UpdateEntityTransform(world, entity);
-			}
+			PropagateActorTransforms(world, instance, rootEntity);
 			return;
 		}
 	}
@@ -605,6 +640,341 @@ namespace tyr
 			m_AssetManager->DeleteMaterial(materialID);
 		}
 		m_AssetManager->DeleteMesh(meshID);
+	}
+
+	void WorldManager::SyncSkeletalMeshInstance(Handle worldHandle, Entity entity, SkeletalMeshComponent& skeletalMesh)
+	{
+		skeletalMesh.meshInstanceRequested = true;
+
+		const AssetID meshID = skeletalMesh.mesh;
+
+		Matrix4 transform = Matrix4::c_Identity;
+		EntitySystem& entities = m_WorldPool[worldHandle].entities;
+		if (entities.HasComponent<ComponentTransform>(entity))
+		{
+			const Transform& worldTransform = entities.GetComponent<ComponentTransform>(entity).world;
+			transform = Matrix4::CreateTRS(worldTransform.position, worldTransform.rotation, worldTransform.scale);
+		}
+
+		m_AssetManager->CreateSkeletalMeshInstance(m_WorldPool[worldHandle].sceneHandle, meshID, transform, skeletalMesh.materials,
+			[this, worldHandle, entity, meshID](SkeletalMeshInstanceHandle handle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials)
+			{
+				// The entity or its world was removed while this was loading, so nothing owns it.
+				if (!m_WorldPool.IsValid(worldHandle) || !m_WorldPool[worldHandle].entities.HasComponent<SkeletalMeshComponent>(entity))
+				{
+					ReleaseSkeletalMeshInstance(handle, meshID, materials);
+					return;
+				}
+
+				World& world = m_WorldPool[worldHandle];
+				SkeletalMeshComponent& comp = world.entities.GetComponent<SkeletalMeshComponent>(entity);
+				comp.meshInstance = handle;
+				comp.loadedMaterials = materials;
+
+				FitBoundsToMesh(world, entity, meshID);
+
+				// The entity may have been moved while its mesh was loading.
+				UpdateEntityTransform(world, entity);
+			});
+	}
+
+	void WorldManager::RemoveSkeletalMeshInstance(const SkeletalMeshComponent& skeletalMesh)
+	{
+		// One that's still loading is released by its creation callback once it finishes.
+		if (skeletalMesh.meshInstance)
+		{
+			ReleaseSkeletalMeshInstance(skeletalMesh.meshInstance, skeletalMesh.mesh, skeletalMesh.loadedMaterials);
+		}
+	}
+
+	void WorldManager::ReleaseSkeletalMeshInstance(SkeletalMeshInstanceHandle handle, AssetID meshID, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials)
+	{
+		if (handle)
+		{
+			m_RendererAPI->DeleteSkeletalMeshInstance(handle);
+		}
+		for (AssetID materialID : materials)
+		{
+			m_AssetManager->DeleteMaterial(materialID);
+		}
+		m_AssetManager->DeleteMesh(meshID);
+	}
+
+	bool WorldManager::SetSkeletalMeshComponent(Handle worldHandle, Entity entity, const SkeletalMeshComponent& skeletalMesh)
+	{
+		World& world = m_WorldPool[worldHandle];
+		SkeletalMeshComponent& current = world.entities.GetComponent<SkeletalMeshComponent>(entity);
+
+		// Its instance can only be swapped for a new one once it exists.
+		if (current.meshInstanceRequested && !current.meshInstance)
+		{
+			return false;
+		}
+
+		bool materialsChanged = current.materials.Size() != skeletalMesh.materials.Size();
+		for (uint i = 0; !materialsChanged && i < current.materials.Size(); ++i)
+		{
+			materialsChanged = !(current.materials[i] == skeletalMesh.materials[i]);
+		}
+		const bool meshChanged = !(current.mesh == skeletalMesh.mesh);
+		if (!meshChanged && !materialsChanged)
+		{
+			return true;
+		}
+
+		const AssetRegistry& registry = AssetRegistry::Instance();
+		if (AssetUtil::IsValidAssetID(skeletalMesh.mesh) && !AssetUtil::HasExtension(registry.GetAssetData(skeletalMesh.mesh).filePath.CStr(), AssetConstants::c_SkeletalMeshFileExtension))
+		{
+			TYR_LOG_WARNING("Only a skeletal mesh can be used as a skeletal mesh component's mesh.");
+			return false;
+		}
+		for (AssetID materialID : skeletalMesh.materials)
+		{
+			if (AssetUtil::IsValidAssetID(materialID) && !AssetUtil::HasExtension(registry.GetAssetData(materialID).filePath.CStr(), AssetConstants::c_MaterialFileExtension))
+			{
+				TYR_LOG_WARNING("Only materials can be used as a skeletal mesh component's materials.");
+				return false;
+			}
+		}
+
+		RemoveSkeletalMeshInstance(current);
+		current.mesh = skeletalMesh.mesh;
+		// A different mesh starts from its own materials and bounds.
+		if (meshChanged)
+		{
+			current.materials.Clear();
+			ResetMeshBounds(world, entity);
+		}
+		else
+		{
+			current.materials = skeletalMesh.materials;
+		}
+		current.loadedMaterials.Clear();
+		current.meshInstance = {};
+		current.meshInstanceRequested = false;
+
+		if (AssetUtil::IsValidAssetID(current.mesh))
+		{
+			SyncSkeletalMeshInstance(worldHandle, entity, current);
+		}
+		return true;
+	}
+
+	bool WorldManager::SetAnimatorComponent(Handle worldHandle, Entity entity, const AnimatorComponent& animator)
+	{
+		World& world = m_WorldPool[worldHandle];
+
+		// The skeleton is known once the entity's skeletal mesh header has loaded.
+		const MeshHeader* header = nullptr;
+		if (world.entities.HasComponent<SkeletalMeshComponent>(entity))
+		{
+			header = m_AssetManager->GetMeshHeader(world.entities.GetComponent<SkeletalMeshComponent>(entity).mesh);
+		}
+
+		const AssetRegistry& registry = AssetRegistry::Instance();
+		const AssetID clips[] = { animator.clip, animator.layerClip };
+		for (AssetID clip : clips)
+		{
+			if (!AssetUtil::IsValidAssetID(clip))
+			{
+				continue;
+			}
+			if (!AssetUtil::HasExtension(registry.GetAssetData(clip).filePath.CStr(), AssetConstants::c_AnimationFileExtension))
+			{
+				TYR_LOG_WARNING("Only animation clips can be played by an animator.");
+				return false;
+			}
+
+			// A clip depends on the skeleton it was made for.
+			uint dependencyCount = 0;
+			const AssetID* dependencies = registry.GetAssetDependencies(clip, dependencyCount);
+			if (header && (dependencyCount == 0 || !(dependencies[0] == header->skeleton)))
+			{
+				TYR_LOG_WARNING("That animation clip was made for a different skeleton.");
+				return false;
+			}
+		}
+
+		// The playing state carries on, and picks the new clips up on its next update.
+		AnimatorComponent& current = world.entities.GetComponent<AnimatorComponent>(entity);
+		current.clip = animator.clip;
+		current.fadeTime = animator.fadeTime;
+		current.playRate = animator.playRate;
+		current.loop = animator.loop;
+		current.layerClip = animator.layerClip;
+		current.layerMaskBone = animator.layerMaskBone;
+		current.layerWeight = animator.layerWeight;
+		return true;
+	}
+
+	void WorldManager::ReleaseEntity(World& world, Entity entity)
+	{
+		if (world.entities.HasComponent<MeshComponent>(entity))
+		{
+			RemoveMeshInstance(world.entities.GetComponent<MeshComponent>(entity));
+		}
+		if (world.entities.HasComponent<SkeletalMeshComponent>(entity))
+		{
+			RemoveSkeletalMeshInstance(world.entities.GetComponent<SkeletalMeshComponent>(entity));
+		}
+		if (world.entities.HasComponent<AnimatorComponent>(entity))
+		{
+			m_AnimationSystem.Release(world.entities.GetComponent<AnimatorComponent>(entity));
+		}
+		if (world.entities.HasComponent<DirLightComponent>(entity))
+		{
+			ReleaseLight(world, world.entities.GetComponent<DirLightComponent>(entity));
+		}
+		if (world.entities.HasComponent<PointLightComponent>(entity))
+		{
+			ReleaseLight(world, world.entities.GetComponent<PointLightComponent>(entity));
+		}
+		if (world.entities.HasComponent<SpotLightComponent>(entity))
+		{
+			ReleaseLight(world, world.entities.GetComponent<SpotLightComponent>(entity));
+		}
+		if (world.physicsWorld && world.entities.HasComponent<ColliderComponent>(entity))
+		{
+			m_PhysicsManager.RemoveBody(world.physicsWorld, world.entities.GetComponent<ColliderComponent>(entity));
+		}
+	}
+
+	void WorldManager::FitBoundsToMesh(World& world, Entity entity, AssetID meshID)
+	{
+		const MeshHeader* header = m_AssetManager->GetMeshHeader(meshID);
+		if (!header)
+		{
+			return;
+		}
+		const Vector3 center = (header->aabbMin + header->aabbMax) * 0.5f;
+		const Vector3 halfExtents = (header->aabbMax - header->aabbMin) * 0.5f;
+
+		if (world.entities.HasComponent<BoxComponent>(entity))
+		{
+			BoxComponent& box = world.entities.GetComponent<BoxComponent>(entity);
+			if (box.halfExtents == Vector3::c_Zero)
+			{
+				box.center = center;
+				box.halfExtents = halfExtents;
+			}
+		}
+
+		// The physics body is made once the collider has a size.
+		if (world.entities.HasComponent<ColliderComponent>(entity))
+		{
+			ColliderComponent& collider = world.entities.GetComponent<ColliderComponent>(entity);
+			if (static_cast<ColliderShape>(collider.shape) == ColliderShape::Box && collider.halfExtents == Vector3::c_Zero)
+			{
+				collider.center = center;
+				collider.halfExtents = halfExtents;
+			}
+		}
+	}
+
+	void WorldManager::ResetMeshBounds(World& world, Entity entity)
+	{
+		if (world.entities.HasComponent<BoxComponent>(entity))
+		{
+			world.entities.GetComponent<BoxComponent>(entity).halfExtents = Vector3::c_Zero;
+		}
+		if (world.entities.HasComponent<ColliderComponent>(entity))
+		{
+			ColliderComponent& collider = world.entities.GetComponent<ColliderComponent>(entity);
+			if (static_cast<ColliderShape>(collider.shape) == ColliderShape::Box)
+			{
+				collider.halfExtents = Vector3::c_Zero;
+				if (world.physicsWorld)
+				{
+					m_PhysicsManager.RemoveBody(world.physicsWorld, collider);
+				}
+			}
+		}
+	}
+
+	void WorldManager::ApplyPhysicsTransforms(World& world)
+	{
+		const float alpha = m_PhysicsManager.GetInterpolation(world.physicsWorld);
+		world.entities.ForEach<RigidBodyComponent>([this, &world, alpha](Entity entity, RigidBodyComponent& rigidBody)
+		{
+			if (static_cast<MotionType>(rigidBody.motionType) != MotionType::Dynamic || !world.entities.HasComponent<ColliderComponent>(entity)
+				|| world.entities.GetComponent<ColliderComponent>(entity).bodyID == PhysicsConstants::c_InvalidBodyID)
+			{
+				return;
+			}
+
+			const Vector3 position = Vector3::Lerp(alpha, rigidBody.previousPosition, rigidBody.currentPosition);
+			const Quaternion rotation = Quaternion::Lerp(alpha, rigidBody.previousRotation, rigidBody.currentRotation);
+
+			// A body at rest, such as one asleep, leaves its entity where it already is.
+			const Transform& current = world.entities.GetComponent<ComponentTransform>(entity).world;
+			if (current.position == position && current.rotation == rotation)
+			{
+				return;
+			}
+			MoveEntity(world, entity, position, rotation);
+		});
+	}
+
+	void WorldManager::MoveEntity(World& world, Entity entity, const Vector3& position, const Quaternion& rotation)
+	{
+		ComponentTransform& transform = world.entities.GetComponent<ComponentTransform>(entity);
+		transform.world.position = position;
+		transform.world.rotation = rotation;
+
+		if (transform.parentEntity == c_InvalidEntity)
+		{
+			transform.local.position = position;
+			transform.local.rotation = rotation;
+		}
+		else
+		{
+			// The local transform keeps the entity where it is under its parent.
+			const Transform& parentWorld = world.entities.GetComponent<ComponentTransform>(transform.parentEntity).world;
+			const Matrix4 worldMatrix = Matrix4::CreateTRS(position, rotation, transform.world.scale);
+			const Matrix4 localMatrix = worldMatrix * Matrix4::CreateTRS(parentWorld.position, parentWorld.rotation, parentWorld.scale).Inverse();
+			localMatrix.DecomposeTRS(transform.local.position, transform.local.rotation, transform.local.scale);
+		}
+		UpdateEntityTransform(world, entity);
+
+		for (const ActorInstance& instance : world.actorInstances)
+		{
+			for (Entity actorEntity : instance.entities)
+			{
+				if (actorEntity == entity)
+				{
+					PropagateActorTransforms(world, instance, entity);
+					return;
+				}
+			}
+		}
+	}
+
+	void WorldManager::PropagateActorTransforms(World& world, const ActorInstance& instance, Entity moved)
+	{
+		LocalArray<Entity, c_MaxActorInstanceEntities> movedEntities;
+		movedEntities.Add(moved);
+
+		// Parents come before their children in the actor's entity list.
+		for (Entity entity : instance.entities)
+		{
+			ComponentTransform& child = world.entities.GetComponent<ComponentTransform>(entity);
+			bool parentMoved = false;
+			for (Entity movedEntity : movedEntities)
+			{
+				parentMoved |= child.parentEntity == movedEntity;
+			}
+			if (!parentMoved)
+			{
+				continue;
+			}
+
+			const Transform& parentWorld = world.entities.GetComponent<ComponentTransform>(child.parentEntity).world;
+			const Matrix4 worldMatrix = Matrix4::CreateTRS(child.local.position, child.local.rotation, child.local.scale)
+				* Matrix4::CreateTRS(parentWorld.position, parentWorld.rotation, parentWorld.scale);
+			worldMatrix.DecomposeTRS(child.world.position, child.world.rotation, child.world.scale);
+			UpdateEntityTransform(world, entity);
+			movedEntities.Add(entity);
+		}
 	}
 
 	Id64 WorldManager::CreateActorInstanceID()
@@ -652,22 +1022,7 @@ namespace tyr
 
 			for (Entity entity : world.actorInstances[i].entities)
 			{
-				if (world.entities.HasComponent<MeshComponent>(entity))
-				{
-					RemoveMeshInstance(world.entities.GetComponent<MeshComponent>(entity));
-				}
-				if (world.entities.HasComponent<DirLightComponent>(entity))
-				{
-					ReleaseLight(world, world.entities.GetComponent<DirLightComponent>(entity));
-				}
-				if (world.entities.HasComponent<PointLightComponent>(entity))
-				{
-					ReleaseLight(world, world.entities.GetComponent<PointLightComponent>(entity));
-				}
-				if (world.entities.HasComponent<SpotLightComponent>(entity))
-				{
-					ReleaseLight(world, world.entities.GetComponent<SpotLightComponent>(entity));
-				}
+				ReleaseEntity(world, entity);
 				world.entities.RemoveEntity(entity);
 			}
 
@@ -683,6 +1038,14 @@ namespace tyr
 		{
 			RemoveMeshInstance(meshComponent);
 		});
+		world.entities.ForEach<SkeletalMeshComponent>([this](Entity /*entity*/, SkeletalMeshComponent& skeletalMesh)
+		{
+			RemoveSkeletalMeshInstance(skeletalMesh);
+		});
+		world.entities.ForEach<AnimatorComponent>([this](Entity /*entity*/, AnimatorComponent& animator)
+		{
+			m_AnimationSystem.Release(animator);
+		});
 
 		world.entities.ForEach<DirLightComponent>([this, &world](Entity /*entity*/, DirLightComponent& light)
 		{
@@ -696,6 +1059,12 @@ namespace tyr
 		{
 			ReleaseLight(world, light);
 		});
+
+		if (world.physicsWorld)
+		{
+			m_PhysicsManager.DestroyPhysicsWorld(world.physicsWorld);
+			world.physicsWorld = {};
+		}
 
 		m_RendererAPI->RemoveScene(world.sceneHandle);
 		m_RendererAPI->DeleteRenderViewport(world.renderViewportHandle);

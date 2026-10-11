@@ -40,6 +40,7 @@ namespace tyr
 		m_VertexBufferAllocator = new GpuBufferAllocator({ RenderConstants::c_VertexBufferSize });
 		m_IndexBufferAllocator = new GpuBufferAllocator({ RenderConstants::c_IndexBufferSize });
 		m_MeshletBufferAllocator = new GpuBufferAllocator({ RenderConstants::c_MeshletBufferSize });
+		m_SkinVertexBufferAllocator = new GpuBufferAllocator({ RenderConstants::c_SkinVertexBufferSize });
 		m_BLASStorageAllocator = new GpuBufferAllocator({ RenderConstants::c_BLASStorageBufferSize });
 	}
 
@@ -54,6 +55,7 @@ namespace tyr
 		delete m_VertexBufferAllocator;
 		delete m_IndexBufferAllocator;
 		delete m_MeshletBufferAllocator;
+		delete m_SkinVertexBufferAllocator;
 		delete m_BLASStorageAllocator;
 	}
 
@@ -140,7 +142,25 @@ namespace tyr
 	{
 		for (uint i = offset; i < offset + lodCount; ++i)
 		{
-			m_MeshLODAllocInfos[i] = {};
+			// A LOD can be freed before all its geometry was allocated.
+			MeshLODAllocInfo& info = m_MeshLODAllocInfos[i];
+			if (info.vertexBufferAllocation.size > 0)
+			{
+				m_VertexBufferAllocator->Free(info.vertexBufferAllocation);
+			}
+			if (info.indexBufferAllocation.size > 0)
+			{
+				m_IndexBufferAllocator->Free(info.indexBufferAllocation);
+			}
+			if (info.meshletBufferAllocation.size > 0)
+			{
+				m_MeshletBufferAllocator->Free(info.meshletBufferAllocation);
+			}
+			if (info.skinBufferAllocation.size > 0)
+			{
+				m_SkinVertexBufferAllocator->Free(info.skinBufferAllocation);
+			}
+			info = {};
 		}
 		m_MeshLODBufferAllocator->Free(offset);
 	}
@@ -173,6 +193,16 @@ namespace tyr
 	void RenderAllocationManager::FreeMeshletBufferAllocation(const BufferAllocation& allocation)
 	{
 		m_MeshletBufferAllocator->Free(allocation);
+	}
+
+	bool RenderAllocationManager::RequestSkinVertexBufferAllocation(size_t size, BufferAllocation& allocation)
+	{
+		return m_SkinVertexBufferAllocator->Allocate(size, alignof(ShaderSkinVertex), allocation);
+	}
+
+	void RenderAllocationManager::FreeSkinVertexBufferAllocation(const BufferAllocation& allocation)
+	{
+		m_SkinVertexBufferAllocator->Free(allocation);
 	}
 
 	bool RenderAllocationManager::RequestBLASStorageAllocation(size_t size, BufferAllocation& allocation)

@@ -72,6 +72,26 @@ namespace tyr
 		// so it shares this same staging buffer rather than needing one of its own.
 		constexpr size_t c_ShadowLightSlotMapBytes = sizeof(uint) * RenderConstants::c_ShadowLightSlotMapEntryCount;
 		constexpr size_t c_RTCullingStagingSlotSize = c_ActiveInstanceIndicesBytes + c_DrawCountResetBytes + c_TlasInstancesBytes + c_ShadowLightSlotMapBytes;
+
+		// VkAccelerationStructureInstanceKHR's transform is row-major 3x4 for a column-vector
+		// transform, the transpose of this engine's row-vector Matrix4 - GetColumn4D(r) of the
+		// engine matrix gives exactly VK row r's 4 components.
+		void WriteTLASInstance(const Matrix4& transform, AccelerationStructureHandle blas, AccelerationStructureInstance& out)
+		{
+			for (uint r = 0; r < 3; ++r)
+			{
+				const Vector4 row = transform.GetColumn4D(r);
+				out.transform[r][0] = row.x;
+				out.transform[r][1] = row.y;
+				out.transform[r][2] = row.z;
+				out.transform[r][3] = row.w;
+			}
+			out.instanceCustomIndex = 0;
+			out.mask = 0xFF;
+			out.shaderBindingTableRecordOffset = 0;
+			out.flags = 0;
+			out.accelerationStructureReference = RenderRegistry::Instance()->GetDevice().GetAccelerationStructureDeviceAddress(blas);
+		}
 	}
 
 	bool Renderer::s_Instantiated = false;
@@ -272,6 +292,56 @@ namespace tyr
 			}
 
 			m_PendingBLASBuilds.EraseFromFront(processedCount);
+
+			// Skinned instances rebuild their BLAS every frame from that frame's skinned vertices,
+			// which is better to trace against than refitting a BLAS built from an older pose.
+			for (SkeletalMeshInstanceHandle handle : m_SkinnedInstances)
+			{
+				SkeletalMeshInstance& instance = m_Registry.GetSkeletalMeshInstance(handle);
+				if (!(instance.scene == renderFrame.activeScene))
+				{
+					continue;
+				}
+
+				const MeshLODAllocInfo& lodAlloc = m_AllocManager.GetMeshLODAllocInfo(m_Registry.GetMesh(instance.mesh).lodOffset);
+
+				AccelerationStructureGeometryDesc geomDesc;
+				geomDesc.vertexBuffer = m_Registry.GetBuffer(m_Resources.vertexBuffer).buffer;
+				geomDesc.vertexOffset = (size_t)instance.outputVertexOffset * sizeof(ShaderVertex);
+				geomDesc.vertexStride = sizeof(ShaderVertex);
+				geomDesc.maxVertexCount = instance.vertexCount;
+				geomDesc.indexBuffer = m_Registry.GetBuffer(m_Resources.indexBuffer).buffer;
+				geomDesc.indexOffset = lodAlloc.indexBufferAllocation.offset;
+				geomDesc.maxPrimitiveCount = (uint)(lodAlloc.indexBufferAllocation.size / sizeof(uint) / 3);
+
+				AccelerationStructureDesc blasDesc;
+				blasDesc.debugName = "Skinned Mesh BLAS";
+				blasDesc.type = AccelerationStructureType::BottomLevel;
+				blasDesc.buildFlags = AccelerationStructureBuildFlags::ACCELERATION_STRUCTURE_BUILD_PREFER_FAST_BUILD_BIT;
+				blasDesc.geometries.Add(geomDesc);
+
+				size_t asSize = 0;
+				size_t buildScratchSize = 0;
+				m_Ctx.device->GetAccelerationStructureSize(blasDesc, asSize, buildScratchSize);
+
+				if (!instance.blas.accelerationStructure)
+				{
+					// Without room it just doesn't cast or receive ray-traced shadows for now.
+					if (!m_AllocManager.RequestBLASStorageAllocation(asSize, instance.blasStorageAllocation))
+					{
+						continue;
+					}
+					instance.blas.accelerationStructure = m_Ctx.device->CreateAccelerationStructureAt(blasDesc,
+						m_Registry.GetBuffer(m_Resources.blasStorageBuffer).buffer, instance.blasStorageAllocation.offset);
+				}
+
+				BLASBuildRecord& record = renderFrame.blasBuildsToRecord.ExpandOne();
+				record.blas = instance.blas.accelerationStructure;
+				record.blasResource = &instance.blas;
+				record.scratchOffset = scratchCursor;
+				record.skinnedInstance = handle;
+				scratchCursor = MemoryUtil::Align(scratchCursor + buildScratchSize, scratchAlignment);
+			}
 
 			if (scratchCursor > 0)
 			{
@@ -520,7 +590,7 @@ namespace tyr
 
 		if (m_FirstRender)
 		{
-			constexpr uint bindingCount = 19;
+			constexpr uint bindingCount = 21;
 			BufferBindingInfo bindingInfos[bindingCount];
 			BufferBindingUpdate bindingUpdates[bindingCount];
 
@@ -551,6 +621,8 @@ namespace tyr
 			SetBinding(16, TYR_BINDING_SHADOW_LIGHT_SLOT_MAP, m_Resources.shadowLightSlotMapBuffer);
 			SetBinding(17, TYR_BINDING_LIGHT_INDICES, m_Resources.lightIndexBuffer);
 			SetBinding(18, TYR_BINDING_DEBUG_LINE_VERTEX, m_Resources.debugLineVertexBuffer);
+			SetBinding(19, TYR_BINDING_SKIN_VERTEX, m_Resources.skinVertexBuffer);
+			SetBinding(20, TYR_BINDING_BONE_MATRIX, m_Resources.boneMatrixBuffer);
 
 			m_Ctx.device->UpdateDescriptorSet(m_Resources.descriptorSet, bindingUpdates, bindingCount);
 
@@ -710,6 +782,9 @@ namespace tyr
 			m_TaaEnabled = renderFrame.taaEnabledOverride;
 		}
 
+		// Done whether or not a scene is active, since a removed scene's instances still leave it.
+		MergeSceneContent(renderFrame.sceneFrame);
+
 		m_Data.activeScene = renderFrame.activeScene;
 
 		if (!m_Data.activeScene)
@@ -780,29 +855,6 @@ namespace tyr
 			scene.views.Add(sv);
 		}
 
-		for (MeshInstanceHandle handle : sceneFrame.meshInstancesToRemove)
-		{
-			const uint renderIndex = registry.GetMeshInstance(handle).renderIndex;
-			scene.content.meshInstances.SwapAndPopBack(renderIndex);
-			if (!scene.content.meshInstances.IsEmpty())
-			{
-				const MeshInstanceHandle swapped = scene.content.meshInstances[renderIndex];
-				registry.GetMeshInstance(swapped).renderIndex = renderIndex;
-			}
-		}
-
-		for (const MeshInstanceUpdate& update : sceneFrame.meshInstancesToUpdate)
-		{
-			registry.GetMeshInstance(update.handle).info = update.desc.info;
-		}
-
-		scene.content.meshInstances.Reserve(scene.content.meshInstances.Size() + sceneFrame.meshInstancesToAdd.Size());
-		for (MeshInstanceHandle handle : sceneFrame.meshInstancesToAdd)
-		{
-			registry.GetMeshInstance(handle).renderIndex = scene.content.meshInstances.Size();
-			scene.content.meshInstances.Add(handle);
-		}
-
 		// GPU-driven culling needs this frame's active mesh instance pool indices - the pool is
 		// shared across scenes, so a naive "cull everything" dispatch would draw other scenes'
 		// data too. Uploaded via this worker thread's own fixed staging slot.
@@ -865,29 +917,25 @@ namespace tyr
 				{
 					const MeshInstance& instance = registry.GetMeshInstance(handle);
 					const Mesh& mesh = registry.GetMesh(instance.info.mesh);
-					if (!mesh.blas.accelerationStructure)
+					// A skinned mesh's own BLAS would be its bind pose - its instances are added below.
+					if (mesh.skinned || !mesh.blas.accelerationStructure)
 					{
 						continue;
 					}
 
-					AccelerationStructureInstance& out = instances[tlasInstanceCount++];
-					// VkAccelerationStructureInstanceKHR's transform is row-major 3x4 for a
-					// column-vector transform, the transpose of this engine's row-vector Matrix4 -
-					// GetColumn4D(r) of the engine matrix gives exactly VK row r's 4 components.
-					const Matrix4& transform = instance.info.transform;
-					for (uint r = 0; r < 3; ++r)
+					WriteTLASInstance(instance.info.transform, mesh.blas.accelerationStructure, instances[tlasInstanceCount++]);
+				}
+
+				// Skinned instances are only traced in frames that rebuild their BLAS.
+				for (const BLASBuildRecord& record : renderFrame.blasBuildsToRecord)
+				{
+					if (!record.skinnedInstance)
 					{
-						const Vector4 row = transform.GetColumn4D(r);
-						out.transform[r][0] = row.x;
-						out.transform[r][1] = row.y;
-						out.transform[r][2] = row.z;
-						out.transform[r][3] = row.w;
+						continue;
 					}
-					out.instanceCustomIndex = 0;
-					out.mask = 0xFF;
-					out.shaderBindingTableRecordOffset = 0;
-					out.flags = 0;
-					out.accelerationStructureReference = m_Ctx.device->GetAccelerationStructureDeviceAddress(mesh.blas.accelerationStructure);
+					const SkeletalMeshInstance& skinned = registry.GetSkeletalMeshInstance(record.skinnedInstance);
+					const Matrix4& transform = registry.GetMeshInstance(skinned.meshInstance).info.transform;
+					WriteTLASInstance(transform, record.blas, instances[tlasInstanceCount++]);
 				}
 
 				if (tlasInstanceCount > 0)
@@ -929,6 +977,55 @@ namespace tyr
 		BuildAndExecuteRenderGraph(renderFrameIndex, frameNumber, true, hasValidSwapChainImage);
 	}
 
+	void Renderer::MergeSceneContent(const SceneFrame& sceneFrame)
+	{
+		// Each instance joins or leaves its own scene, which needn't be the active one.
+		for (MeshInstanceHandle handle : sceneFrame.meshInstancesToRemove)
+		{
+			const MeshInstance& instance = m_Registry.GetMeshInstance(handle);
+			Array<MeshInstanceHandle>& instances = m_Data.scenePool[instance.scene.h].content.meshInstances;
+			const uint renderIndex = instance.renderIndex;
+			instances.SwapAndPopBack(renderIndex);
+			if (renderIndex < instances.Size())
+			{
+				m_Registry.GetMeshInstance(instances[renderIndex]).renderIndex = renderIndex;
+			}
+		}
+
+		for (const MeshInstanceUpdate& update : sceneFrame.meshInstancesToUpdate)
+		{
+			m_Registry.GetMeshInstance(update.handle).info = update.desc.info;
+		}
+
+		for (MeshInstanceHandle handle : sceneFrame.meshInstancesToAdd)
+		{
+			MeshInstance& instance = m_Registry.GetMeshInstance(handle);
+			Array<MeshInstanceHandle>& instances = m_Data.scenePool[instance.scene.h].content.meshInstances;
+			instance.renderIndex = instances.Size();
+			instances.Add(handle);
+		}
+
+		for (SkeletalMeshInstanceHandle handle : sceneFrame.skeletalMeshInstancesToRemove)
+		{
+			const SkeletalMeshInstance& instance = m_Registry.GetSkeletalMeshInstance(handle);
+			Array<SkeletalMeshInstanceHandle>& instances = m_Data.scenePool[instance.scene.h].content.skeletalMeshInstances;
+			const uint renderIndex = instance.renderIndex;
+			instances.SwapAndPopBack(renderIndex);
+			if (renderIndex < instances.Size())
+			{
+				m_Registry.GetSkeletalMeshInstance(instances[renderIndex]).renderIndex = renderIndex;
+			}
+		}
+
+		for (SkeletalMeshInstanceHandle handle : sceneFrame.skeletalMeshInstancesToAdd)
+		{
+			SkeletalMeshInstance& instance = m_Registry.GetSkeletalMeshInstance(handle);
+			Array<SkeletalMeshInstanceHandle>& instances = m_Data.scenePool[instance.scene.h].content.skeletalMeshInstances;
+			instance.renderIndex = instances.Size();
+			instances.Add(handle);
+		}
+	}
+
 	void Renderer::RecordTransferPass(CommandList& cmdList, uint renderFrameIndex)
 	{
 		m_TransferPass->Execute(cmdList, m_RenderFrames[renderFrameIndex], m_Data);
@@ -962,6 +1059,43 @@ namespace tyr
 		// zero groups correctly rather than needing a special case here.
 		const uint groupCount = (activeInstanceCount + 63) / 64;
 		cmdList.Dispatch(groupCount, 1, 1);
+	}
+
+	void Renderer::SetupSkinningPass(RenderGraphBuilder& builder)
+	{
+		const PipelineStage skinningStage = PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.skinVertexBuffer), skinningStage, BARRIER_ACCESS_SHADER_READ_BIT);
+		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.boneMatrixBuffer), skinningStage, BARRIER_ACCESS_SHADER_READ_BIT);
+		// Reads the rest pose and last frame's skinned vertices, then writes over them.
+		builder.WriteBuffer(m_Registry.GetBuffer(m_Resources.vertexBuffer), skinningStage,
+			static_cast<BarrierAccess>(BARRIER_ACCESS_SHADER_READ_BIT | BARRIER_ACCESS_SHADER_WRITE_BIT));
+	}
+
+	void Renderer::RecordSkinningPass(CommandList& cmdList)
+	{
+		Scene& scene = m_Data.scenePool[m_Data.activeScene.h];
+
+		cmdList.BindComputePipeline(m_Resources.skinningPipeline);
+		cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.skinningPipeline);
+
+		for (SkeletalMeshInstanceHandle handle : scene.content.skeletalMeshInstances)
+		{
+			SkeletalMeshInstance& instance = m_Registry.GetSkeletalMeshInstance(handle);
+
+			ShaderSkinningPushConstants pushConstants;
+			pushConstants.restVertexOffset = instance.restVertexOffset;
+			pushConstants.skinVertexOffset = instance.skinVertexOffset;
+			pushConstants.outputVertexOffset = instance.outputVertexOffset;
+			pushConstants.prevOutputVertexOffset = instance.prevOutputVertexOffset;
+			pushConstants.vertexCount = instance.vertexCount;
+			pushConstants.boneMatrixOffset = handle.h.index * TYR_MAX_BONES;
+			pushConstants.firstFrame = instance.skinnedFrameCount == 0 ? 1 : 0;
+			cmdList.PushConstants(m_Resources.skinningPipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstants), &pushConstants);
+
+			// Matches SkinningCS.hlsl's [numthreads(64, 1, 1)].
+			cmdList.Dispatch((instance.vertexCount + 63) / 64, 1, 1);
+			instance.skinnedFrameCount++;
+		}
 	}
 
 	RenderViewportTextureData* Renderer::GetActiveViewportTextureData(uint renderFrameIndex)
@@ -1467,7 +1601,8 @@ namespace tyr
 			m_Resources.spotLightBuffer, m_Resources.sceneInfoBuffer,
 			m_Resources.activeMeshInstanceIndexBuffer, m_Resources.visibleInstanceIndexBuffer,
 			m_Resources.indirectDrawCommandBuffer, m_Resources.drawCountBuffer,
-			m_Resources.tlasInstanceBuffer, m_Resources.shadowLightSlotMapBuffer, m_Resources.lightIndexBuffer
+			m_Resources.tlasInstanceBuffer, m_Resources.shadowLightSlotMapBuffer, m_Resources.lightIndexBuffer,
+			m_Resources.skinVertexBuffer, m_Resources.boneMatrixBuffer
 		};
 		constexpr uint bufferCount = (uint)(sizeof(graphBuffers) / sizeof(graphBuffers[0]));
 
@@ -1580,6 +1715,15 @@ namespace tyr
 			swapChainImageProxy.info.mipCount = 1;
 			swapChainImageProxy.info.arrayLayerCount = 1;
 			graph.RegisterTexture(&swapChainImageProxy);
+
+			// Skins before anything reads the vertices - culling, drawing and the BLAS builds.
+			if (!m_Data.scenePool[m_Data.activeScene.h].content.skeletalMeshInstances.IsEmpty())
+			{
+				graph.AddPass("Skinning",
+					[this](RenderGraphBuilder& builder) { SetupSkinningPass(builder); },
+					[this](CommandList& cl) { RecordSkinningPass(cl); },
+					RenderGraphPhase::Geometry, CommandQueueType::CQ_GRAPHICS);
+			}
 
 			// Same phase as "Geometry" below and added first, so this always executes (and has
 			// its buffer usages recorded) before GeometryPass's own indirect draw reads what this
@@ -2017,18 +2161,19 @@ namespace tyr
 			}
 			m_Registry.DeleteMesh(handle);
 		}
-		for (SkeletalMeshHandle handle : renderFrame.skeletalMeshesToDelete)
-		{
-			const SkeletalMesh& mesh = m_Registry.GetSkeletalMesh(handle);
-			m_AllocManager.FreeMeshLODs(mesh.lodOffset, mesh.lodCount);
-			m_Registry.DeleteSkeletalMesh(handle);
-		}
 		for (MeshInstanceHandle handle : renderFrame.meshInstancesToDelete)
 		{
 			m_Registry.DeleteMeshInstance(handle);
 		}
 		for (SkeletalMeshInstanceHandle handle : renderFrame.skeletalMeshInstancesToDelete)
 		{
+			const SkeletalMeshInstance& instance = m_Registry.GetSkeletalMeshInstance(handle);
+			m_AllocManager.FreeVertexBufferAllocation(instance.skinnedVertexAllocation);
+			if (instance.blas.accelerationStructure)
+			{
+				m_Ctx.device->DeleteAccelerationStructure(instance.blas.accelerationStructure);
+				m_AllocManager.FreeBLASStorageAllocation(instance.blasStorageAllocation);
+			}
 			m_Registry.DeleteSkeletalMeshInstance(handle);
 		}
 		for (DirLightHandle handle : renderFrame.dirLightsToDelete)
@@ -2527,6 +2672,14 @@ namespace tyr
 		{
 			ShaderDesc desc;
 			desc.entryPoint = "main";
+			desc.fileName = "SkinningCS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_COMPUTE_BIT;
+			m_Resources.skinningComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
 			desc.fileName = "ShadowRTCS";
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_COMPUTE_BIT;
@@ -2597,6 +2750,7 @@ namespace tyr
 		m_Ctx.device->DeleteShaderModule(m_Resources.geometryPixelShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.lightingComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.cullingComputeShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.skinningComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.shadowRTComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.shadowDenoiseComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.taaResolveComputeShader);
@@ -2710,8 +2864,8 @@ namespace tyr
 				// 11 original + activeMeshInstanceIndexBuffer/visibleInstanceIndexBuffer/
 				// indirectDrawCommandBuffer/drawCountBuffer for GPU-driven instance culling +
 				// shadowLightSlotMapBuffer for ray-traced shadows + lightIndexBuffer +
-				// debugLineVertexBuffer.
-				poolSize.descriptorCount = 18;
+				// debugLineVertexBuffer + skinVertexBuffer/boneMatrixBuffer.
+				poolSize.descriptorCount = 20;
 			}
 			{
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
@@ -2771,7 +2925,8 @@ namespace tyr
 			AddBinding(TYR_BINDING_MESH, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
 			AddBinding(TYR_BINDING_MESH_LOD, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
 			AddBinding(TYR_BINDING_MESHLET, DescriptorType::StorageBuffer, 1, meshPipelineStages);
-			AddBinding(TYR_BINDING_VERTEX, DescriptorType::StorageBuffer, 1, meshPipelineStages);
+			// Compute too, since skinning writes skinned vertices into it.
+			AddBinding(TYR_BINDING_VERTEX, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
 			AddBinding(TYR_BINDING_INDEX, DescriptorType::StorageBuffer, 1, meshPipelineStages);
 			AddBinding(TYR_BINDING_MESH_INSTANCE, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
 			AddBinding(TYR_BINDING_MATERIAL, DescriptorType::StorageBuffer, 1, meshPipelineStages);
@@ -2819,6 +2974,8 @@ namespace tyr
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 			AddBinding(TYR_BINDING_LIGHT_INDICES, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 			AddBinding(TYR_BINDING_DEBUG_LINE_VERTEX, DescriptorType::StorageBuffer, 1, SHADER_STAGE_VERTEX_BIT);
+			AddBinding(TYR_BINDING_SKIN_VERTEX, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
+			AddBinding(TYR_BINDING_BONE_MATRIX, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 
 			m_Resources.descriptorSetLayout = m_Ctx.device->CreateDescriptorSetLayout(layoutDesc);
 
@@ -3017,6 +3174,19 @@ namespace tyr
 
 		m_Resources.cullingPipeline = m_Ctx.device->CreateComputePipeline(cullingDesc);
 
+		// Skins one skinned mesh instance per dispatch.
+		ComputePipelineDesc skinningDesc;
+		skinningDesc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
+
+		PushConstantRange& skinningPushConstantRange = skinningDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
+		skinningPushConstantRange.stageFlags = SHADER_STAGE_COMPUTE_BIT;
+		skinningPushConstantRange.offset = 0;
+		skinningPushConstantRange.size = sizeof(ShaderSkinningPushConstants);
+
+		skinningDesc.shader = m_Resources.skinningComputeShader;
+
+		m_Resources.skinningPipeline = m_Ctx.device->CreateComputePipeline(skinningDesc);
+
 		// Ray-traced shadow visibility - one dispatch per shadow-casting light.
 		ComputePipelineDesc shadowRTDesc;
 		shadowRTDesc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
@@ -3077,6 +3247,7 @@ namespace tyr
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.debugLineDepthTestedPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.lightingPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.cullingPipeline);
+		m_Ctx.device->DeleteComputePipeline(m_Resources.skinningPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.shadowRTPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.shadowDenoisePipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.taaResolvePipeline);
@@ -3257,6 +3428,20 @@ namespace tyr
 		}
 		{
 			RenderBufferDesc desc;
+			desc.debugName = "Skin Vertex Buffer";
+			desc.size = RenderConstants::c_SkinVertexBufferSize;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.skinVertexBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
+			desc.debugName = "Bone Matrix Buffer";
+			desc.size = RenderConstants::c_BoneMatrixBufferSize;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.boneMatrixBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
 			desc.debugName = "BLAS Storage Buffer";
 			desc.size = RenderConstants::c_BLASStorageBufferSize;
 			desc.usage = RenderBufferUsage::AccelerationStructureStorage;
@@ -3289,6 +3474,8 @@ namespace tyr
 		m_Registry.DeleteBuffer(m_Resources.tlasInstanceBuffer);
 		m_Registry.DeleteBuffer(m_Resources.rtCullingStagingBuffer);
 		m_Registry.DeleteBuffer(m_Resources.blasStorageBuffer);
+		m_Registry.DeleteBuffer(m_Resources.skinVertexBuffer);
+		m_Registry.DeleteBuffer(m_Resources.boneMatrixBuffer);
 	}
 
 	void Renderer::CreateSamplers()

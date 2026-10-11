@@ -56,6 +56,14 @@ namespace tyr
 		uint submeshCount = 0;
 	};
 
+	// Where a skinned mesh chunk's bone weights sit in its decompressed blob - one
+	// ShaderSkinVertex per vertex, in the same order as the chunk's vertices.
+	struct MeshChunkSkin
+	{
+		uint skinOffset = 0;
+		uint decompressedSkinSize = 0;
+	};
+
 	// One material-homogeneous group of meshlets within a single LOD (matches a glTF
 	// primitive, or Unreal's "section" - same idea under different names).
 	struct MeshSubmesh
@@ -85,6 +93,14 @@ namespace tyr
 		Vector3 aabbMin;
 		Vector3 aabbMax;
 
+		// Skinned meshes only, which are saved with SerializeSkinnedMesh. One entry per chunk.
+		Array<MeshChunkSkin> chunkSkins;
+		AssetID skeleton;
+		// The furthest any vertex sits from its most weighted bone, for bounding posed meshes.
+		float boneBoundsMargin = 0.0f;
+
+		bool IsSkinned() const { return !chunkSkins.IsEmpty(); }
+
 		void Reset()
 		{
 			lods.Clear();
@@ -94,14 +110,10 @@ namespace tyr
 			sphere = {};
 			aabbMin = {};
 			aabbMax = {};
+			chunkSkins.Clear();
+			skeleton = {};
+			boneBoundsMargin = 0.0f;
 		}
-	};
-
-	// One per skeleton mesh. ECS system will tie them together on character import
-	struct SkeletalMeshHeader
-	{
-		AssetID skeleton;
-		// TODO: Complete
 	};
 
 	template<> void Serialize(BufferedFileStream& stream, const MeshChunkHeader& header);
@@ -115,4 +127,8 @@ namespace tyr
 
 	template<> void Serialize(BufferedFileStream& stream, const MeshHeader& header);
 	template<> void Deserialize(BufferedFileStream& stream, MeshHeader& header);
+
+	// A .skmesh header is a .mesh header followed by its skinning data.
+	void SerializeSkinnedMesh(BufferedFileStream& stream, const MeshHeader& header);
+	void DeserializeSkinnedMesh(BufferedFileStream& stream, MeshHeader& header);
 }

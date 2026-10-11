@@ -20,16 +20,6 @@ namespace tyr
 		static const size_t c_ShaderMeshletSize;
 	};
 
-	struct TYR_RENDERER_API SkeletalMeshConstants
-	{
-		// Per-submesh material slots a skeletal mesh instance can hold - must match
-		// ShaderSkeletalInstance::materialIndices' array size in Shaders/ShaderTypes.h
-		// exactly. Higher than MeshConstants::c_MaxSubmeshes since skinned character
-		// content (skin, eyes, hair, clothing layers, accessories) tends to use more
-		// distinct materials than static props/environment pieces.
-		static constexpr uint8 c_MaxSubmeshes = 24;
-	};
-
 	// The material is not part of the rigid or skeletal mesh as it may be overwritten
 	struct MeshDesc
 	{
@@ -37,13 +27,7 @@ namespace tyr
 		Vector3 aabbMin;
 		Vector3 aabbMax;
 		uint lodCount;
-	};
-
-	struct SkeletalMeshDesc
-	{
-		BoundingSphere sphere;
-		Vector3 aabbMin;
-		Vector3 aabbMax;
-		uint lodCount;
+		// Skinned meshes are drawn from each instance's own skinned vertices, never directly.
+		bool skinned = false;
 	};
 }

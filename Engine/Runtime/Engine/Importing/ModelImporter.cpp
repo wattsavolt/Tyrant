@@ -11,6 +11,7 @@
 #include "Utility/PathUtil.h"
 #include "RenderResource/MeshUtil.h"
 #include "Shaders/ShaderTypes.h"
+#include "AssetSystem/AssetConstants.h"
 #include <cstring>
 #include <meshoptimizer.h>
 #include <zstd.h>
@@ -82,6 +83,12 @@ namespace tyr
 			return false;
 		}
 
+		AssetID skeletonID = AssetConstants::c_InvalidAssetID;
+		if (m_Result.skeleton.BoneCount() > 0 && !ImportSkeletonAndAnimations(m_Result, outputFolderPath, modelName, skeletonID))
+		{
+			return false;
+		}
+
 		for (uint i = 0; i < m_Result.meshCount; ++i)
 		{
 			char meshName[PathConstants::c_MaxAssetNameTotalSize];
@@ -94,7 +101,11 @@ namespace tyr
 				snprintf(meshName, sizeof(meshName), "%s_Mesh%u", modelName, i);
 			}
 
-			if (!ImportMesh(m_Result.meshes[i], outputFolderPath, meshName, m_MaterialIDs, options))
+			const ModelImportMesh& mesh = m_Result.meshes[i];
+			const bool imported = mesh.skinWeights.IsEmpty()
+				? ImportMesh(mesh, outputFolderPath, meshName, m_MaterialIDs, options)
+				: ImportSkinnedMesh(mesh, m_Result.skeleton, skeletonID, outputFolderPath, meshName, m_MaterialIDs);
+			if (!imported)
 			{
 				return false;
 			}
@@ -180,6 +191,148 @@ namespace tyr
 
 	namespace
 	{
+		template<typename T>
+		void WriteAssetFile(const char* absFilePath, const T& data)
+		{
+			constexpr size_t c_StreamBufferSize = 65536;
+			SmartStack<uint8> streamBufferStack = SmartStackAlloc<uint8>((uint)c_StreamBufferSize);
+			BufferedFileStream stream(streamBufferStack, c_StreamBufferSize, absFilePath, BinaryStream::Operation::Write, true);
+			Serialize<T>(stream, data);
+		}
+	}
+
+	bool ModelImporter::ImportSkeletonAndAnimations(ModelImportResult& result, const char* outputFolderPath, const char* modelName, AssetID& outSkeletonID) const
+	{
+		char absFolderPath[TYR_MAX_PATH_TOTAL_SIZE];
+		AssetUtil::CreateFullPath(absFolderPath, outputFolderPath);
+		if (!PathUtil::CreateDirectories(absFolderPath))
+		{
+			TYR_LOG_ERROR("Error creating directory %s.", absFolderPath);
+			return false;
+		}
+
+		char assetPath[PathConstants::c_MaxAssetPathTotalSize];
+		char absFilePath[TYR_MAX_PATH_TOTAL_SIZE];
+		AssetRegistry& registry = AssetRegistry::Instance();
+
+		snprintf(assetPath, sizeof(assetPath), "%s/%s_Skeleton%s", outputFolderPath, modelName, AssetConstants::c_SkeletonFileExtension);
+		AssetUtil::CreateFullPath(absFilePath, assetPath);
+		WriteAssetFile(absFilePath, result.skeleton);
+		outSkeletonID = registry.AddOrUpdateAsset(assetPath);
+
+		for (uint i = 0; i < result.animationCount; ++i)
+		{
+			ModelImportAnimation& animation = result.animations[i];
+
+			// Clips that share a name get the clip's index added so they don't overwrite each other.
+			bool nameTaken = false;
+			for (uint j = 0; j < i && !nameTaken; ++j)
+			{
+				nameTaken = strcmp(result.animations[j].name.CStr(), animation.name.CStr()) == 0;
+			}
+			if (nameTaken)
+			{
+				snprintf(assetPath, sizeof(assetPath), "%s/%s_%s_%u%s", outputFolderPath, modelName, animation.name.CStr(), i, AssetConstants::c_AnimationFileExtension);
+			}
+			else
+			{
+				snprintf(assetPath, sizeof(assetPath), "%s/%s_%s%s", outputFolderPath, modelName, animation.name.CStr(), AssetConstants::c_AnimationFileExtension);
+			}
+
+			animation.clip.skeleton = outSkeletonID;
+			AssetUtil::CreateFullPath(absFilePath, assetPath);
+			WriteAssetFile(absFilePath, animation.clip);
+			registry.AddOrUpdateAsset(assetPath, &outSkeletonID, 1);
+		}
+
+		return true;
+	}
+
+	bool ModelImporter::ImportSkinnedMesh(const ModelImportMesh& mesh, const Skeleton& skeleton, AssetID skeletonID, const char* outputFolderPath,
+		const char* meshName, const Array<AssetID>& materialIDs) const
+	{
+		m_Header.Reset();
+		m_Header.sphere = mesh.sphere;
+		m_Header.aabbMin = mesh.aabbMin;
+		m_Header.aabbMax = mesh.aabbMax;
+		m_Header.skeleton = skeletonID;
+
+		// Slots are given out in the order the mesh first uses each material.
+		constexpr uint c_NoSlot = ~0u;
+		m_MaterialSlots.Clear();
+		m_MaterialSlots.Resize(materialIDs.Size(), c_NoSlot);
+		for (const ModelImportSubmesh& submesh : mesh.submeshes)
+		{
+			if (m_MaterialSlots[submesh.materialIndex] == c_NoSlot)
+			{
+				m_MaterialSlots[submesh.materialIndex] = m_Header.materials.Size();
+				m_Header.materials.Add(materialIDs[submesh.materialIndex]);
+			}
+		}
+		if (m_Header.materials.Size() > MeshConstants::c_MaxSubmeshes)
+		{
+			TYR_LOG_ERROR("Skinned mesh %s uses %u materials - at most %u are supported.", meshName, m_Header.materials.Size(), (uint)MeshConstants::c_MaxSubmeshes);
+			return false;
+		}
+
+		// The furthest a vertex sits from its most weighted bone's bind position.
+		const uint boneCount = skeleton.BoneCount();
+		SmartStack<Vector3> bonePositionsStack = SmartStackAlloc<Vector3>(boneCount);
+		Vector3* bonePositions = bonePositionsStack;
+		for (uint bone = 0; bone < boneCount; ++bone)
+		{
+			const Matrix4 bindModel = skeleton.inverseBindMatrices[bone].Inverse();
+			bonePositions[bone] = Vector3(bindModel[3].x, bindModel[3].y, bindModel[3].z);
+		}
+		float margin = 0.0f;
+		for (uint v = 0; v < mesh.vertices.Size(); ++v)
+		{
+			const ModelImportSkinWeights& weights = mesh.skinWeights[v];
+			uint main = 0;
+			for (uint i = 1; i < 4; ++i)
+			{
+				main = weights.weights[i] > weights.weights[main] ? i : main;
+			}
+			const float distance = (mesh.vertices[v].position - bonePositions[weights.bones[main]]).Length();
+			margin = distance > margin ? distance : margin;
+		}
+		m_Header.boneBoundsMargin = margin;
+
+		char meshPath[PathConstants::c_MaxAssetPathTotalSize];
+		snprintf(meshPath, sizeof(meshPath), "%s/%s%s", outputFolderPath, meshName, AssetConstants::c_SkeletalMeshFileExtension);
+
+		char absMeshFolderPath[TYR_MAX_PATH_TOTAL_SIZE];
+		AssetUtil::CreateFullPath(absMeshFolderPath, outputFolderPath);
+		if (!PathUtil::CreateDirectories(absMeshFolderPath))
+		{
+			TYR_LOG_ERROR("Error creating directory %s.", absMeshFolderPath);
+			return false;
+		}
+
+		char absMeshFilePath[TYR_MAX_PATH_TOTAL_SIZE];
+		AssetUtil::CreateFullPath(absMeshFilePath, meshPath);
+
+		ModelImportOptions lod0Only;
+		lod0Only.generateLods = false;
+		if (!ImportMeshGeometry(mesh, m_Header, lod0Only, absMeshFilePath, m_MaterialSlots.Data()))
+		{
+			TYR_LOG_ERROR("Failed to export geometry for skinned mesh %s.", meshName);
+			return false;
+		}
+
+		// Depends on its materials and its skeleton.
+		LocalArray<AssetID, MeshConstants::c_MaxSubmeshes + 1> dependencies;
+		for (const AssetID& materialID : m_Header.materials)
+		{
+			dependencies.Add(materialID);
+		}
+		dependencies.Add(skeletonID);
+		AssetRegistry::Instance().AddOrUpdateAsset(meshPath, dependencies.Data(), dependencies.Size());
+		return true;
+	}
+
+	namespace
+	{
 		// 64 vertices / 124 triangles is the commonly recommended sweet spot for good
 		// occupancy on typical mesh-shader hardware.
 		constexpr size_t c_MaxMeshletVertices = 64;
@@ -205,6 +358,26 @@ namespace tyr
 		// Never simplify a submesh below this many triangles.
 		constexpr uint c_MinLodTriangleCount = 8;
 
+		// Weights are quantized to bytes that add up to exactly 255.
+		ShaderSkinVertex PackSkinWeights(const ModelImportSkinWeights& weights)
+		{
+			uint quantized[4];
+			uint total = 0;
+			uint largest = 0;
+			for (uint i = 0; i < 4; ++i)
+			{
+				quantized[i] = (uint)Math::Clamp(Math::Round(weights.weights[i] * 255.0f), 0.0f, 255.0f);
+				total += quantized[i];
+				largest = quantized[i] > quantized[largest] ? i : largest;
+			}
+			quantized[largest] = (uint)((int)quantized[largest] + (255 - (int)total));
+
+			ShaderSkinVertex packed;
+			packed.boneIndices = (uint)weights.bones[0] | ((uint)weights.bones[1] << 8) | ((uint)weights.bones[2] << 16) | ((uint)weights.bones[3] << 24);
+			packed.boneWeights = quantized[0] | (quantized[1] << 8) | (quantized[2] << 16) | (quantized[3] << 24);
+			return packed;
+		}
+
 		// Rounds down to a whole number of triangles, never below c_MinLodTriangleCount.
 		uint ComputeLodTargetIndexCount(uint originalIndexCount, uint lodIndex)
 		{
@@ -217,8 +390,10 @@ namespace tyr
 		}
 	}
 
-	bool ModelImporter::ImportMeshGeometry(const ModelImportMesh& mesh, MeshHeader& header, const ModelImportOptions& options, const char* absFilePath) const
+	bool ModelImporter::ImportMeshGeometry(const ModelImportMesh& mesh, MeshHeader& header, const ModelImportOptions& options, const char* absFilePath,
+		const uint* materialSlots) const
 	{
+		const bool skinned = !mesh.skinWeights.IsEmpty();
 		const uint indexCount = mesh.indices.Size();
 		if (indexCount == 0 || mesh.vertices.Size() == 0)
 		{
@@ -273,7 +448,7 @@ namespace tyr
 				// this submesh have actually been built.
 				outSubmesh.meshletOffset = 0;
 				outSubmesh.meshletCount = 0;
-				outSubmesh.materialSlot = submesh.materialIndex;
+				outSubmesh.materialSlot = materialSlots ? materialSlots[submesh.materialIndex] : submesh.materialIndex;
 			}
 
 			// Worst-case bounds for everything this LOD accumulates across all its submeshes -
@@ -284,9 +459,12 @@ namespace tyr
 			SmartStack<MeshChunkMeshlet> meshletsStack = SmartStackAlloc<MeshChunkMeshlet>((uint)maxMeshlets);
 			SmartStack<ShaderVertex> verticesStack = SmartStackAlloc<ShaderVertex>(lodIndexCount);
 			SmartStack<uint> indicesStack = SmartStackAlloc<uint>(lodIndexCount);
+			// Only filled for a skinned mesh, one per vertex.
+			SmartStack<ShaderSkinVertex> skinStack = SmartStackAlloc<ShaderSkinVertex>(skinned ? lodIndexCount : 1);
 			MeshChunkMeshlet* meshlets = meshletsStack;
 			ShaderVertex* vertices = verticesStack;
 			uint* indices = indicesStack;
+			ShaderSkinVertex* skinVertices = skinStack;
 
 			uint meshletCount = 0;
 			uint vertexCount = 0;
@@ -369,13 +547,18 @@ namespace tyr
 					for (uint v = 0; v < raw.vertex_count; ++v)
 					{
 						const uint originalVertexIndex = meshletVertices[raw.vertex_offset + v];
+						if (skinned)
+						{
+							skinVertices[vertexCount] = PackSkinWeights(mesh.skinWeights[originalVertexIndex]);
+						}
 						MeshUtil::VertexToShaderVertex(lodVertices[originalVertexIndex], vertices[vertexCount++]);
 					}
 
+					// triangle_offset already counts indices into meshletTriangles, not triangles.
 					const uint triangleIndexCount = raw.triangle_count * 3;
 					for (uint i = 0; i < triangleIndexCount; ++i)
 					{
-						indices[outIndexCount++] = meshletTriangles[raw.triangle_offset * 3 + i];
+						indices[outIndexCount++] = meshletTriangles[raw.triangle_offset + i];
 					}
 				}
 			}
@@ -392,11 +575,25 @@ namespace tyr
 			chunk.indicesOffset = chunk.verticesOffset + chunk.decompressedVerticesSize;
 			chunk.decompressedBlobSize = chunk.indicesOffset + chunk.decompressedIndicesSize;
 
+			// A skinned mesh's bone weights go after the indices.
+			if (skinned)
+			{
+				MeshChunkSkin& chunkSkin = header.chunkSkins.ExpandOne();
+				chunkSkin.skinOffset = chunk.decompressedBlobSize;
+				chunkSkin.decompressedSkinSize = vertexCount * (uint)sizeof(ShaderSkinVertex);
+				chunk.decompressedBlobSize += chunkSkin.decompressedSkinSize;
+			}
+
 			SmartStack<uint8> decompressedBlobStack = SmartStackAlloc<uint8>(chunk.decompressedBlobSize);
 			uint8* decompressedBlob = decompressedBlobStack;
 			memcpy(decompressedBlob + chunk.meshletsOffset, meshlets, chunk.decompressedMeshletsSize);
 			memcpy(decompressedBlob + chunk.verticesOffset, vertices, chunk.decompressedVerticesSize);
 			memcpy(decompressedBlob + chunk.indicesOffset, indices, chunk.decompressedIndicesSize);
+			if (skinned)
+			{
+				const MeshChunkSkin& chunkSkin = header.chunkSkins.Back();
+				memcpy(decompressedBlob + chunkSkin.skinOffset, skinVertices, chunkSkin.decompressedSkinSize);
+			}
 
 			const size_t compressedBound = ZSTD_compressBound(chunk.decompressedBlobSize);
 			SmartStack<uint8> compressedBlobStack = SmartStackAlloc<uint8>((uint)compressedBound);
@@ -424,7 +621,14 @@ namespace tyr
 
 		SmartStack<uint8> streamBufferStack = SmartStackAlloc<uint8>((uint)c_StreamBufferSize);
 		BufferedFileStream stream(streamBufferStack, c_StreamBufferSize, absFilePath, BinaryStream::Operation::Write, true);
-		Serialize<MeshHeader>(stream, header);
+		if (skinned)
+		{
+			SerializeSkinnedMesh(stream, header);
+		}
+		else
+		{
+			Serialize<MeshHeader>(stream, header);
+		}
 		for (uint i = 0; i < m_LodCompressedBlobs.Size(); ++i)
 		{
 			const Array<uint8>& blob = m_LodCompressedBlobs[i];

@@ -91,22 +91,14 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 	const float4 worldPosH = mul(float4(ndc, deviceDepth, 1.0f), InvViewProj);
 	const float3 worldPos = worldPosH.xyz / worldPosH.w;
 
-	float3 rayDirection;
-	float rayTMax;
-	if (g_PushConstants.lightType == c_LightTypeDirectional)
-	{
-		// A directional light has no position to aim at - trace back along its own direction,
-		// far enough to clear any realistic scene extent.
-		rayDirection = -normalize(float3(g_PushConstants.lightX, g_PushConstants.lightY, g_PushConstants.lightZ));
-		rayTMax = 10000.0f;
-	}
-	else
-	{
-		const float3 lightPos = float3(g_PushConstants.lightX, g_PushConstants.lightY, g_PushConstants.lightZ);
-		const float3 toLight = lightPos - worldPos;
-		rayTMax = length(toLight);
-		rayDirection = toLight / max(rayTMax, 0.0001f);
-	}
+	// A directional light has no position to aim at - trace back along its own direction, far
+	// enough to clear any realistic scene extent. Both are worked out and one picked.
+	const float3 light = float3(g_PushConstants.lightX, g_PushConstants.lightY, g_PushConstants.lightZ);
+	const bool directional = g_PushConstants.lightType == c_LightTypeDirectional;
+	const float3 toLight = light - worldPos;
+	const float toLightDistance = length(toLight);
+	const float3 rayDirection = directional ? -normalize(light) : toLight / max(toLightDistance, 0.0001f);
+	const float rayTMax = directional ? 10000.0f : toLightDistance;
 
 	// Biased off the surface along its own normal to avoid the ray immediately re-hitting the
 	// triangle it started from ("shadow acne").

@@ -45,7 +45,9 @@ namespace tyr
 			m_Resources->shadowLightSlotMapBuffer,
 			// The active scene's lights this tick.
 			m_Resources->lightIndexBuffer,
-			m_Resources->debugLineVertexBuffer
+			m_Resources->debugLineVertexBuffer,
+			// Skinned meshes' bone weights, and this tick's poses.
+			m_Resources->skinVertexBuffer, m_Resources->boneMatrixBuffer
 		};
 
 		for (RenderBufferHandle buffer : buffers)

@@ -6,6 +6,9 @@
 #include "RenderRegistry.h"
 #include "RenderTransfer/RenderTransferTypes.h"
 #include "GUIDrawData.h"
+#include "RenderResource/Mesh.h"
+#include "RenderTransfer/BufferAllocation.h"
+#include "Geometry/BoundingSphere.h"
 
 namespace tyr
 {
@@ -16,6 +19,21 @@ namespace tyr
 		{
 			TYR_ASSERT(lights.Size() < N);
 			lights.Add(handle);
+		}
+
+		// Returns false if the handle wasn't in the list.
+		template<typename HandleType>
+		bool RemoveFromList(Array<HandleType>& list, HandleType handle)
+		{
+			for (uint i = 0; i < list.Size(); ++i)
+			{
+				if (list[i] == handle)
+				{
+					list.SwapAndPopBack(i);
+					return true;
+				}
+			}
+			return false;
 		}
 
 		template<typename LightHandleType, uint N>
@@ -357,6 +375,25 @@ namespace tyr
 		return true;
 	}
 
+	bool RendererAPI::RequestSkinVertexBufferAllocation(MeshHandle handle, uint lodIndex, size_t size, GpuBufferAllocation& allocation)
+	{
+		RenderResources& resources = m_Renderer.GetRenderResources();
+		const Mesh& mesh = m_Registry.GetMesh(handle);
+
+		BufferAllocation alloc;
+		if (!m_AllocManager.RequestSkinVertexBufferAllocation(size, alloc))
+		{
+			return false;
+		}
+
+		allocation.buffer = resources.skinVertexBuffer;
+		allocation.offset = alloc.offset;
+		allocation.size = alloc.size;
+
+		m_AllocManager.GetMeshLODAllocInfo(mesh.lodOffset + lodIndex).skinBufferAllocation = alloc;
+		return true;
+	}
+
 	// Frees vertex, index and meshlet allocations referenced by the mesh lod
 	void RendererAPI::FreeMeshLODAllocations(MeshHandle handle, uint lodIndex)
 	{
@@ -375,11 +412,12 @@ namespace tyr
 		renderFrame.meshesToBuildBLAS.Add(handle);
 	}
 
-	MeshInstanceHandle RendererAPI::CreateMeshInstance(const MeshInstanceDesc& desc)
+	MeshInstanceHandle RendererAPI::CreateMeshInstance(SceneHandle scene, const MeshInstanceDesc& desc)
 	{
+		TYR_ASSERT(scene);
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
-		RenderResources& resources = m_Renderer.GetRenderResources();
 		const MeshInstanceHandle handle = m_Registry.CreateMeshInstance(desc);
+		m_Registry.GetMeshInstance(handle).scene = scene;
 		UploadMeshInstance(desc.info, handle.h.index);
 		renderFrame.sceneFrame.meshInstancesToAdd.Add(handle);
 		return handle;
@@ -395,15 +433,149 @@ namespace tyr
 	void RendererAPI::DeleteMeshInstance(MeshInstanceHandle handle)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
-		renderFrame.sceneFrame.meshInstancesToRemove.Add(handle);
+		// One created this frame hasn't reached its scene yet, so it's only taken back out.
+		if (!RemoveFromList(renderFrame.sceneFrame.meshInstancesToAdd, handle))
+		{
+			renderFrame.sceneFrame.meshInstancesToRemove.Add(handle);
+		}
 		renderFrame.meshInstancesToDelete.Add(handle);
+	}
+
+	SkeletalMeshInstanceHandle RendererAPI::CreateSkeletalMeshInstance(SceneHandle scene, const SkeletalMeshInstanceDesc& desc)
+	{
+		TYR_ASSERT(scene);
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		const Mesh& mesh = m_Registry.GetMesh(desc.info.mesh);
+		TYR_ASSERT(mesh.skinned);
+
+		// Only LOD0 is skinned. This frame's vertices are followed by last frame's.
+		const MeshLODAllocInfo& lodAlloc = m_AllocManager.GetMeshLODAllocInfo(mesh.lodOffset);
+		const uint vertexCount = (uint)(lodAlloc.vertexBufferAllocation.size / sizeof(ShaderVertex));
+		BufferAllocation skinnedAlloc;
+		if (!m_AllocManager.RequestVertexBufferAllocation(sizeof(ShaderVertex) * vertexCount * 2, skinnedAlloc))
+		{
+			TYR_LOG_ERROR("Out of vertex buffer space for a skinned mesh instance.");
+			return {};
+		}
+
+		MeshInstanceDesc meshInstanceDesc;
+		meshInstanceDesc.info.transform = desc.info.transform;
+		meshInstanceDesc.info.mesh = desc.info.mesh;
+		meshInstanceDesc.info.materials = desc.info.materials;
+		const MeshInstanceHandle meshInstance = m_Registry.CreateMeshInstance(meshInstanceDesc);
+		m_Registry.GetMeshInstance(meshInstance).scene = scene;
+
+		const SkeletalMeshInstanceHandle handle = m_Registry.CreateSkeletalMeshInstance(desc);
+		SkeletalMeshInstance& instance = m_Registry.GetSkeletalMeshInstance(handle);
+		instance.skinnedSphere = mesh.sphere;
+		instance.scene = scene;
+		instance.meshInstance = meshInstance;
+		instance.mesh = desc.info.mesh;
+		instance.skinnedVertexAllocation = skinnedAlloc;
+		instance.restVertexOffset = (uint)(lodAlloc.vertexBufferAllocation.offset / sizeof(ShaderVertex));
+		instance.skinVertexOffset = (uint)(lodAlloc.skinBufferAllocation.offset / sizeof(ShaderSkinVertex));
+		instance.outputVertexOffset = (uint)(skinnedAlloc.offset / sizeof(ShaderVertex));
+		instance.prevOutputVertexOffset = instance.outputVertexOffset + vertexCount;
+		instance.vertexCount = vertexCount;
+
+		// Identity bone matrices leave it in the bind pose until a pose is set.
+		Matrix4 bindPose[TYR_MAX_BONES];
+		for (Matrix4& matrix : bindPose)
+		{
+			matrix = Matrix4::c_Identity;
+		}
+		UpdateSkeletalMeshPose(handle, bindPose, TYR_MAX_BONES, mesh.sphere);
+
+		renderFrame.sceneFrame.meshInstancesToAdd.Add(meshInstance);
+		renderFrame.sceneFrame.skeletalMeshInstancesToAdd.Add(handle);
+		m_Renderer.GetSkinnedInstances().Add(handle);
+		return handle;
+	}
+
+	void RendererAPI::UpdateSkeletalMeshInstance(SkeletalMeshInstanceHandle handle, const SkeletalMeshInstanceDesc& desc)
+	{
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		SkeletalMeshInstance& instance = m_Registry.GetSkeletalMeshInstance(handle);
+		TYR_ASSERT(desc.info.mesh == instance.mesh);
+		instance.info = desc.info;
+		UploadSkinnedMeshInstance(instance);
+
+		// Ray tracing reads the transform from the mesh instance, on the worker thread.
+		MeshInstanceUpdate& update = renderFrame.sceneFrame.meshInstancesToUpdate.ExpandOne();
+		update.handle = instance.meshInstance;
+		update.desc.info.transform = desc.info.transform;
+		update.desc.info.mesh = desc.info.mesh;
+		update.desc.info.materials = desc.info.materials;
+	}
+
+	void RendererAPI::UpdateSkeletalMeshPose(SkeletalMeshInstanceHandle handle, const Matrix4* skinMatrices, uint boneCount, const BoundingSphere& localBounds)
+	{
+		TYR_ASSERT(boneCount <= TYR_MAX_BONES);
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		RenderResources& resources = m_Renderer.GetRenderResources();
+		SkeletalMeshInstance& instance = m_Registry.GetSkeletalMeshInstance(handle);
+
+		instance.skinnedSphere = localBounds;
+		UploadSkinnedMeshInstance(instance);
+
+		const size_t size = sizeof(Matrix4) * boneCount;
+		UploadBufferAllocation alloc;
+		const bool uploadSuccess = m_AllocManager.RequestFrameUploadAllocation(size, alloc);
+		TYR_ASSERT(uploadSuccess);
+		if (!uploadSuccess)
+		{
+			return;
+		}
+
+		RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), m_Device, alloc.offset, (void*)skinMatrices, size);
+
+		BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
+		request.srcBuffer = alloc.buffer;
+		request.srcOffset = alloc.offset;
+		request.dstBuffer = resources.boneMatrixBuffer;
+		request.dstOffset = sizeof(Matrix4) * TYR_MAX_BONES * handle.h.index;
+		request.size = size;
+	}
+
+	void RendererAPI::DeleteSkeletalMeshInstance(SkeletalMeshInstanceHandle handle)
+	{
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		SceneFrame& sceneFrame = renderFrame.sceneFrame;
+		const SkeletalMeshInstance& instance = m_Registry.GetSkeletalMeshInstance(handle);
+
+		// One created this frame hasn't reached the scene yet, so it's only taken back out.
+		if (!RemoveFromList(sceneFrame.meshInstancesToAdd, instance.meshInstance))
+		{
+			sceneFrame.meshInstancesToRemove.Add(instance.meshInstance);
+		}
+		if (!RemoveFromList(sceneFrame.skeletalMeshInstancesToAdd, handle))
+		{
+			sceneFrame.skeletalMeshInstancesToRemove.Add(handle);
+		}
+		renderFrame.meshInstancesToDelete.Add(instance.meshInstance);
+		renderFrame.skeletalMeshInstancesToDelete.Add(handle);
+
+		RemoveFromList(m_Renderer.GetSkinnedInstances(), handle);
+	}
+
+	void RendererAPI::UploadSkinnedMeshInstance(const SkeletalMeshInstance& instance)
+	{
+		ShaderMeshInstance shaderMeshInstance;
+		shaderMeshInstance.transform = instance.info.transform;
+		shaderMeshInstance.meshIndex = instance.mesh.h.index;
+		for (uint i = 0; i < MeshConstants::c_MaxSubmeshes; ++i)
+		{
+			shaderMeshInstance.materialIndices[i] = i < instance.info.materials.Size() ? instance.info.materials[i].h.index : c_InvalidRenderIndex;
+		}
+		shaderMeshInstance.skinnedVertexOffset = instance.outputVertexOffset;
+		shaderMeshInstance.prevSkinnedVertexOffset = instance.prevOutputVertexOffset;
+		const BoundingSphere& sphere = instance.skinnedSphere;
+		shaderMeshInstance.skinnedSphere = Vector4(sphere.m_Centre.x, sphere.m_Centre.y, sphere.m_Centre.z, sphere.m_Radius);
+		WriteMeshInstance(shaderMeshInstance, instance.meshInstance.h.index);
 	}
 
 	void RendererAPI::UploadMeshInstance(const MeshInstanceInfo& info, uint index)
 	{
-		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
-		RenderResources& resources = m_Renderer.GetRenderResources();
-
 		ShaderMeshInstance shaderMeshInstance;
 		shaderMeshInstance.transform = info.transform;
 		shaderMeshInstance.meshIndex = info.mesh.h.index;
@@ -411,6 +583,16 @@ namespace tyr
 		{
 			shaderMeshInstance.materialIndices[i] = i < info.materials.Size() ? info.materials[i].h.index : c_InvalidRenderIndex;
 		}
+		shaderMeshInstance.skinnedVertexOffset = TYR_INVALID_INDEX;
+		shaderMeshInstance.prevSkinnedVertexOffset = TYR_INVALID_INDEX;
+		shaderMeshInstance.skinnedSphere = Vector4(0.0f, 0.0f, 0.0f, 0.0f);
+		WriteMeshInstance(shaderMeshInstance, index);
+	}
+
+	void RendererAPI::WriteMeshInstance(const ShaderMeshInstance& shaderMeshInstance, uint index)
+	{
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		RenderResources& resources = m_Renderer.GetRenderResources();
 
 		UploadBufferAllocation alloc;
 		const bool uploadSuccess = m_AllocManager.RequestFrameUploadAllocation(sizeof(ShaderMeshInstance), alloc);
@@ -418,7 +600,7 @@ namespace tyr
 
 		if (uploadSuccess)
 		{
-			RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), m_Device, alloc.offset, &shaderMeshInstance, sizeof(ShaderMeshInstance));
+			RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), m_Device, alloc.offset, const_cast<ShaderMeshInstance*>(&shaderMeshInstance), sizeof(ShaderMeshInstance));
 
 			BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
 			request.srcBuffer = alloc.buffer;

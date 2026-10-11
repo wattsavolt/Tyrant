@@ -4,13 +4,13 @@
 #include "PropertiesReflector.h"
 #include "Actor/ActorTypes.h"
 #include "AssetSystem/AssetID.h"
+#include "RenderResource/MeshDesc.h"
 
 namespace tyr
 {
 	class WorldManager;
 	class AssetManager;
 	struct World;
-	struct MeshComponent;
 
 	// Right panel showing the selected actor's components, with their fields editable.
 	class TYR_EDITOR_EXPORT PropertiesPanel final
@@ -27,12 +27,16 @@ namespace tyr
 		// The component's value in the actor type, which the instance's values are compared with.
 		static const void* GetDefaults(const ActorEntityDesc* entityDesc, ComponentTypeID typeID, bool isRoot);
 
-		// A mesh field that only lists meshes.
-		static bool ReflectMesh(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData);
+		// An asset field that only lists assets with the file extension passed as userData.
+		static bool ReflectAsset(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData);
 		// A mesh's materials as one fixed slot per submesh, each its override or the mesh's own.
+		// Component is a MeshComponent or SkeletalMeshComponent.
+		template<typename Component>
 		static bool ReflectMeshMaterials(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData);
+		// A uint8 field holding an enum, shown as a list of the names passed as userData.
+		static bool ReflectEnum(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData);
 		// One slot's row. Returns true when it was changed.
-		bool DrawMaterialSlot(MeshComponent& meshComponent, AssetID meshMaterial, uint slot);
+		bool DrawMaterialSlot(LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials, AssetID meshMaterial, uint slot);
 
 		WorldManager& m_WorldManager;
 		AssetManager& m_AssetManager;

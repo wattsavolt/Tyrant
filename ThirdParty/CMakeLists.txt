@@ -98,6 +98,36 @@ if (TYR_EDITOR_MODE)
 	set_target_properties(meshoptimizer PROPERTIES FOLDER ThirdParty)
 endif()
 
+## Jolt Physics - submodule, pinned to v5.6.0. Runtime physics, so always built. Only the core
+## library is built (its samples/tests only build when it's the root project), with our own
+## compiler flags, the DLL runtime, and no GPU compute, debug renderer or profiler.
+set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
+set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "" FORCE)
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+set(CPP_RTTI_ENABLED OFF CACHE BOOL "" FORCE)
+set(CPP_EXCEPTIONS_ENABLED OFF CACHE BOOL "" FORCE)
+set(JPH_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(JPH_USE_DX12 OFF CACHE BOOL "" FORCE)
+set(JPH_USE_VK OFF CACHE BOOL "" FORCE)
+set(JPH_USE_MTL OFF CACHE BOOL "" FORCE)
+set(JPH_USE_CPU_COMPUTE OFF CACHE BOOL "" FORCE)
+set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+set(PROFILER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+set(ENABLE_OBJECT_STREAM OFF CACHE BOOL "" FORCE)
+set(ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(Submodule/JoltPhysics/Build)
+
+if(MSVC)
+	# Vendored code - don't hold it to our own warning level.
+	target_compile_options(Jolt PRIVATE /w)
+	# Same reasoning as the libraries above - keep _ITERATOR_DEBUG_LEVEL in sync for the linker.
+	target_compile_definitions(Jolt PRIVATE _ITERATOR_DEBUG_LEVEL=0)
+endif()
+
+set_target_properties(Jolt PROPERTIES FOLDER ThirdParty)
+
 ## Dear ImGui - submodule, pinned to v1.92.9. Editor-tool UI only, driven through the engine's
 ## own GUIModule - so only built when TYR_FINAL_MODE is off, same as GUIModule.cpp's own
 ## #if !TYR_FINAL gate on the C++ side. No official Vulkan/Win32 backend files are used here -

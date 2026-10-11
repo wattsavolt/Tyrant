@@ -8,6 +8,8 @@ struct MeshTaskPayload
 	uint meshInstanceIndex;
 	uint globalMeshletIndex;
 	uint globalVertexBase;
+	// The same as globalVertexBase unless the instance is skinned.
+	uint prevGlobalVertexBase;
 	uint globalIndexBase;
 };
 
@@ -50,7 +52,10 @@ void main(uint3 groupId : SV_GroupID)
 
 	s_Payload.meshInstanceIndex = meshInstanceIndex;
 	s_Payload.globalMeshletIndex = lod.meshletOffset + groupId.x;
-	s_Payload.globalVertexBase = lod.vertexOffset;
+	// A skinned instance draws its own skinned copy of the mesh's vertices.
+	const bool skinned = instance.skinnedVertexOffset != TYR_INVALID_INDEX;
+	s_Payload.globalVertexBase = skinned ? instance.skinnedVertexOffset : lod.vertexOffset;
+	s_Payload.prevGlobalVertexBase = skinned ? instance.prevSkinnedVertexOffset : lod.vertexOffset;
 	s_Payload.globalIndexBase = lod.indexOffset;
 
 	DispatchMesh(1, 1, 1, s_Payload);

@@ -8,6 +8,7 @@ struct MeshTaskPayload
 	uint meshInstanceIndex;
 	uint globalMeshletIndex;
 	uint globalVertexBase;
+	uint prevGlobalVertexBase;
 	uint globalIndexBase;
 };
 
@@ -51,9 +52,13 @@ void main(
 		float bitangentSign;
 		const float3 tangentDir = DecodeOctTangent(v.tangentOct, bitangentSign);
 
+		// Only a skinned vertex moves on its own. Rigid instances' own movement isn't tracked yet.
+		const float3 prevPosition = vertices[payload.prevGlobalVertexBase + meshlet.vertexOffset + groupThreadId.x].position;
+
 		VS_OUTPUT output = (VS_OUTPUT)0;
 		output.pos = mul(float4(v.position, 1.0f), wvp);
 		output.worldPos = mul(float4(v.position, 1.0f), instance.transform);
+		output.prevWorldPos = mul(float4(prevPosition, 1.0f), instance.transform);
 		output.normal = normalize(mul(float4(DecodeOct(v.normalOct), 0.0f), instance.transform).xyz);
 		output.tangent = float4(normalize(mul(float4(tangentDir, 0.0f), instance.transform).xyz), bitangentSign);
 		output.uv = (float2)v.uv;
@@ -63,8 +68,9 @@ void main(
 
 	if (groupThreadId.x < triangleCount)
 	{
+		// Indices are stored relative to the LOD's first vertex, which ray tracing also uses.
 		const uint base = payload.globalIndexBase + meshlet.indexOffset + groupThreadId.x * 3;
-		tris[groupThreadId.x] = uint3(indices[base + 0], indices[base + 1], indices[base + 2]);
+		tris[groupThreadId.x] = uint3(indices[base + 0], indices[base + 1], indices[base + 2]) - meshlet.vertexOffset;
 	}
 }
 

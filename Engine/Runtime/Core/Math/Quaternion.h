@@ -3,6 +3,7 @@
 
 #include "Math/Math.h"
 #include "Math/Vector3.h"
+#include "Math/SIMD.h"
 
 
 namespace tyr
@@ -162,28 +163,30 @@ namespace tyr
 
 		Quaternion operator+ (const Quaternion& rhs) const
 		{
-			return Quaternion(w + rhs.w, x + rhs.x, y + rhs.y, z + rhs.z);
+			return FromRegister(SIMD::Add4(ToRegister(), rhs.ToRegister()));
 		}
 
 		Quaternion operator- (const Quaternion& rhs) const
 		{
-			return Quaternion(w - rhs.w, x - rhs.x, y - rhs.y, z - rhs.z);
+			return FromRegister(SIMD::Sub4(ToRegister(), rhs.ToRegister()));
 		}
 
+		// The Hamilton product, as each of this quaternion's components times a signed
+		// rearrangement of rhs, summed.
 		Quaternion operator* (const Quaternion& rhs) const
 		{
-			return Quaternion
-			(
-				w * rhs.w - x * rhs.x - y * rhs.y - z * rhs.z,
-				w * rhs.x + x * rhs.w + y * rhs.z - z * rhs.y,
-				w * rhs.y + y * rhs.w + z * rhs.x - x * rhs.z,
-				w * rhs.z + z * rhs.w + x * rhs.y - y * rhs.x
-			);
+			const Reg128 lhsReg = ToRegister();
+			const Reg128 rhsReg = rhs.ToRegister();
+			Reg128 result = SIMD::Mul4(SIMD::Splat4<3>(lhsReg), rhsReg);
+			result = SIMD::Add4(result, SIMD::Mul4(SIMD::Mul4(SIMD::Splat4<0>(lhsReg), SIMD::Shuffle4<3, 2, 1, 0>(rhsReg)), SIMD::Set4(1.0f, -1.0f, 1.0f, -1.0f)));
+			result = SIMD::Add4(result, SIMD::Mul4(SIMD::Mul4(SIMD::Splat4<1>(lhsReg), SIMD::Shuffle4<2, 3, 0, 1>(rhsReg)), SIMD::Set4(1.0f, 1.0f, -1.0f, -1.0f)));
+			result = SIMD::Add4(result, SIMD::Mul4(SIMD::Mul4(SIMD::Splat4<2>(lhsReg), SIMD::Shuffle4<1, 0, 3, 2>(rhsReg)), SIMD::Set4(-1.0f, 1.0f, 1.0f, -1.0f)));
+			return FromRegister(result);
 		}
 
 		Quaternion operator* (float rhs) const
 		{
-			return Quaternion(rhs * w, rhs * x, rhs * y, rhs * z);
+			return FromRegister(SIMD::Mul4(ToRegister(), SIMD::Set4(rhs)));
 		}
 
 		Quaternion operator/ (float rhs) const
@@ -211,48 +214,31 @@ namespace tyr
 
 		Quaternion& operator+= (const Quaternion& rhs)
 		{
-			w += rhs.w;
-			x += rhs.x;
-			y += rhs.y;
-			z += rhs.z;
-
+			*this = *this + rhs;
 			return *this;
 		}
 
 		Quaternion& operator-= (const Quaternion& rhs)
 		{
-			w -= rhs.w;
-			x -= rhs.x;
-			y -= rhs.y;
-			z -= rhs.z;
-
+			*this = *this - rhs;
 			return *this;
 		}
 
 		Quaternion& operator*= (const Quaternion& rhs)
 		{
-			float newW = w * rhs.w - x * rhs.x - y * rhs.y - z * rhs.z;
-			float newX = w * rhs.x + x * rhs.w + y * rhs.z - z * rhs.y;
-			float newY = w * rhs.y + y * rhs.w + z * rhs.x - x * rhs.z;
-			float newZ = w * rhs.z + z * rhs.w + x * rhs.y - y * rhs.x;
-
-			w = newW;
-			x = newX;
-			y = newY;
-			z = newZ;
-
+			*this = *this * rhs;
 			return *this;
 		}
 
 		friend Quaternion operator* (float lhs, const Quaternion& rhs)
 		{
-			return Quaternion(lhs * rhs.w, lhs * rhs.x, lhs * rhs.y, lhs * rhs.z);
+			return rhs * lhs;
 		}
-		
-		/// Calculates the dot product of this quaternion and another. 
+
+		/// Calculates the dot product of this quaternion and another.
 		float Dot(const Quaternion& other) const
 		{
-			return w * other.w + x * other.x + y * other.y + z * other.z;
+			return SIMD::Dot4(ToRegister(), other.ToRegister());
 		}
 
 		/// Normalizes this quaternion and returns the previous length. 
@@ -313,10 +299,10 @@ namespace tyr
 			return Math::IsNaN(x) || Math::IsNaN(y) || Math::IsNaN(z) || Math::IsNaN(w);
 		}
 
-		/// Calculates the dot product between two quaternions. 
+		/// Calculates the dot product between two quaternions.
 		static float Dot(const Quaternion& lhs, const Quaternion& rhs)
 		{
-			return lhs.w * rhs.w + lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z;
+			return SIMD::Dot4(lhs.ToRegister(), rhs.ToRegister());
 		}
 
 		/// Normalizes the provided quaternion. 	 
@@ -341,15 +327,16 @@ namespace tyr
 		/// two rotations without modifying the size of the vector it is applied to (unlike linear interpolation). 
 		static Quaternion Slerp(float t, const Quaternion& p, const Quaternion& q, bool shortestPath = true);
 
-		/// Linearly interpolates between the two quaternions using @p t. t should be in [0, 1] range, where t = 0
-		/// corresponds to the left vector, while t = 1 corresponds to the right vector.	
+		/// Linearly interpolates between the two quaternions using @p t, then normalizes. t should be in [0, 1]
+		/// range, where t = 0 corresponds to a and t = 1 to b. Takes the shortest path between them.
 		static Quaternion Lerp(float t, const Quaternion& a, const Quaternion& b)
 		{
-			float d = Dot(a, b);
-			float flip = d >= 0.0f ? 1.0f : -1.0f;
-
-			Quaternion output = flip * (1.0f - t) * a + t * b;
-			return SafeNormalize(output);
+			const Reg128 aReg = a.ToRegister();
+			const Reg128 bReg = b.ToRegister();
+			// a and -a are the same rotation, so a is flipped when that's nearer b.
+			const float aWeight = SIMD::Dot4(aReg, bReg) >= 0.0f ? 1.0f - t : t - 1.0f;
+			const Reg128 blended = SIMD::Add4(SIMD::Mul4(aReg, SIMD::Set4(aWeight)), SIMD::Mul4(bReg, SIMD::Set4(t)));
+			return SafeNormalize(FromRegister(blended));
 		}
 
 		/// Gets the shortest arc quaternion to rotate this vector to the destination vector. 
@@ -360,7 +347,20 @@ namespace tyr
 		static const Quaternion c_Zero;
 		static const Quaternion c_Identity;
 
-		float x, y, z, w; 
+		float x, y, z, w;
+
+	private:
+		Reg128 ToRegister() const
+		{
+			return SIMD::Load4(&x);
+		}
+
+		static Quaternion FromRegister(Reg128 v)
+		{
+			Quaternion q;
+			SIMD::Store4(&q.x, v);
+			return q;
+		}
 	};
 }
 

@@ -76,6 +76,10 @@ namespace tyr
 
 		void FreeMeshletBufferAllocation(const BufferAllocation& allocation);
 
+		bool RequestSkinVertexBufferAllocation(size_t size, BufferAllocation& allocation);
+
+		void FreeSkinVertexBufferAllocation(const BufferAllocation& allocation);
+
 		// Suballocates from one shared buffer instead of each BLAS getting its own dedicated
 		// buffer.
 		bool RequestBLASStorageAllocation(size_t size, BufferAllocation& allocation);
@@ -96,6 +100,7 @@ namespace tyr
 		GpuBufferAllocator* m_VertexBufferAllocator;
 		GpuBufferAllocator* m_IndexBufferAllocator;
 		GpuBufferAllocator* m_MeshletBufferAllocator;
+		GpuBufferAllocator* m_SkinVertexBufferAllocator;
 		GpuBufferAllocator* m_BLASStorageAllocator;
 	};
 	

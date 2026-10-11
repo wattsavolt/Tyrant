@@ -66,7 +66,10 @@ namespace tyr
 		void AddMeshDrop(const EditorViewport::MeshDrop& drop, const char* folderPath);
 		void ProcessPendingMeshDrops();
 		// Places a static mesh actor where the drop's ray lands and returns its entity.
-		Entity SpawnStaticMeshActor(const PendingMeshDrop& pending, const MeshHeader& header);
+		// Places a StaticMeshActor, or a SkeletalMeshActor for a skinned mesh.
+		Entity SpawnMeshActor(const PendingMeshDrop& pending, const MeshHeader& header);
+		// Static colliders are grey, kinematic ones cyan and dynamic ones orange.
+		static void DrawColliders(World& world);
 		// Places an actor of a registered type in front of the camera, and selects it.
 		void PlaceActor(const Id64& actorType, const char* folderPath);
 		// Adds an actor of the type to the level, named after it, and returns its root entity.

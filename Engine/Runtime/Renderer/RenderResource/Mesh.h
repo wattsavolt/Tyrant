@@ -14,6 +14,8 @@ namespace tyr
 		BufferAllocation vertexBufferAllocation{};
 		BufferAllocation indexBufferAllocation{};
 		BufferAllocation meshletBufferAllocation{};
+		// Skinned meshes only: one ShaderSkinVertex per vertex.
+		BufferAllocation skinBufferAllocation{};
 	};
 
 	struct Mesh
@@ -23,6 +25,7 @@ namespace tyr
 		Vector3 aabbMax;
 		uint lodOffset;
 		uint lodCount;
+		bool skinned = false;
 		// The resource queue's timeline value that needs to be reached before this mesh's
 		// geometry is safely readable - 0 means its transfer hasn't been submitted yet.
 		uint64 geometryReadyValue = 0;
@@ -32,15 +35,5 @@ namespace tyr
 		// Where blas's backing storage lives within the shared BLAS storage buffer - only
 		// meaningful while blas is valid; freed alongside it.
 		BufferAllocation blasStorageAllocation{};
-	};
-
-	struct SkeletalMesh
-	{
-		BoundingSphere sphere;
-		Vector3 aabbMin;
-		Vector3 aabbMax;
-		uint lodOffset;
-		uint lodCount;
-		uint64 geometryReadyValue = 0;
 	};
 }

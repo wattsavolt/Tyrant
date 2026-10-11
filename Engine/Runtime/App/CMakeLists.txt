@@ -53,6 +53,10 @@ if(TYR_EDITOR_MODE)
 target_link_libraries(TyrantApp PRIVATE TyrantEditor)
 endif()
 
+# The app's DLL is only loaded at runtime, so it's built with the exe to stay in step with the
+# engine headers it shares structs with.
+add_dependencies(TyrantApp ${TYR_APP_LIB_NAME})
+
 # IDE specific
 set_property(TARGET TyrantApp PROPERTY FOLDER Runtime)
 

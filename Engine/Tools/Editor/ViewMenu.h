@@ -13,6 +13,8 @@ namespace tyr
 		bool showActorBounds = false;
 		bool showLightRanges = false;
 		bool showActorNames = false;
+		// Drawn while playing too, where they follow the physics.
+		bool showColliders = false;
 	};
 
 	// Draws the View menu, which opens and closes the editor's tabs and viewport aids.

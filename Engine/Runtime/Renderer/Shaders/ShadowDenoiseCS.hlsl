@@ -55,30 +55,21 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 	{
 		for (int x = -radius; x <= radius; ++x)
 		{
-			const int2 sampleCoord = int2(dispatchThreadId.xy) + int2(x, y);
-			if (sampleCoord.x < 0 || sampleCoord.y < 0 ||
-				sampleCoord.x >= (int)g_PushConstants.width || sampleCoord.y >= (int)g_PushConstants.height)
-			{
-				continue;
-			}
-
-			const float sampleDepth = textures[g_PushConstants.depthIndex].Load(int3(sampleCoord, 0)).r;
-			if (sampleDepth <= 0.0f)
-			{
-				continue;
-			}
+			// Off-screen neighbours are clamped to the edge and given no weight.
+			const int2 offsetCoord = int2(dispatchThreadId.xy) + int2(x, y);
+			const int2 maxCoord = int2(g_PushConstants.width - 1, g_PushConstants.height - 1);
+			const int2 sampleCoord = clamp(offsetCoord, int2(0, 0), maxCoord);
+			const float onScreen = all(offsetCoord == sampleCoord) ? 1.0f : 0.0f;
 
 			// Reverse-Z - a relative difference rather than an absolute one, so this works at
 			// both near and far depths without needing a scene-scale-dependent threshold.
+			const float sampleDepth = textures[g_PushConstants.depthIndex].Load(int3(sampleCoord, 0)).r;
 			const float depthDiff = abs(sampleDepth - centreDepth) / max(centreDepth, 0.0001f);
-			if (depthDiff > 0.05f)
-			{
-				continue;
-			}
+			const float weight = onScreen * step(0.0000001f, sampleDepth) * step(depthDiff, 0.05f);
 
 			const float raw = shadowMasksRaw[g_PushConstants.renderFrameIndex][uint3(sampleCoord, g_PushConstants.slot)].r;
-			spatialSum += raw;
-			spatialWeight += 1.0f;
+			spatialSum += raw * weight;
+			spatialWeight += weight;
 		}
 	}
 	const float rawCentre = shadowMasksRaw[g_PushConstants.renderFrameIndex][uint3(dispatchThreadId.xy, g_PushConstants.slot)].r;
@@ -94,16 +85,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 		const float2 uv = (float2(dispatchThreadId.xy) + 0.5f) / float2(g_PushConstants.width, g_PushConstants.height);
 		const float2 prevUv = uv - motion * 0.5f;
 
-		if (prevUv.x >= 0.0f && prevUv.x <= 1.0f && prevUv.y >= 0.0f && prevUv.y <= 1.0f)
-		{
-			const int2 prevPixelCoord = int2(prevUv * float2(g_PushConstants.width, g_PushConstants.height));
-			const float history = shadowMasks[g_PushConstants.prevRenderFrameIndex][uint3(prevPixelCoord, g_PushConstants.slot)].r;
-			// Exponential moving average - no disocclusion rejection beyond the on-screen check
-			// above. A bad blend self-corrects within a few frames as new raw samples keep
-			// arriving, the same trade-off already accepted for this feature's slot-reassignment
-			// cold-start case.
-			finalResult = lerp(spatialResult, history, 0.85f);
-		}
+		// Exponential moving average, with no history for a pixel that was off-screen last frame.
+		// A bad blend self-corrects within a few frames as new raw samples keep arriving.
+		const float onScreen = all(prevUv == saturate(prevUv)) ? 1.0f : 0.0f;
+		const int2 maxCoord = int2(g_PushConstants.width - 1, g_PushConstants.height - 1);
+		const int2 prevPixelCoord = min(int2(saturate(prevUv) * float2(g_PushConstants.width, g_PushConstants.height)), maxCoord);
+		const float history = shadowMasks[g_PushConstants.prevRenderFrameIndex][uint3(prevPixelCoord, g_PushConstants.slot)].r;
+		finalResult = lerp(spatialResult, history, 0.85f * onScreen);
 	}
 
 	shadowMasks[g_PushConstants.renderFrameIndex][outputCoord] = float2(finalResult, 0.0f);

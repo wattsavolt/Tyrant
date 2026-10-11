@@ -10,9 +10,8 @@ namespace tyr
 {
 	// Wraps fastgltf to load glTF/GLB files into a ModelImportResult.
 	//
-	// Only static (non-skeletal) meshes and core PBR metallic-roughness materials are read.
-	// TODO: skins, joints and animations are not read at all yet - skeletal import is a
-	// separate, later piece of work.
+	// Reads meshes, core PBR metallic-roughness materials, and one skin with its animations.
+	// Meshes bound to a different skin are imported unskinned.
 	//
 	// Lifetime note: embedded textures (GLB bufferView-backed images) come back as
 	// TextureSource entries pointing straight at bytes owned by this loader's parsed
@@ -31,10 +30,13 @@ namespace tyr
 
 	private:
 		void CollectMeshNodes(size_t nodeIndex, Array<size_t>& outMeshNodeIndices) const;
-		ModelImportMesh* LoadMesh(size_t meshIndex, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap);
+		ModelImportMesh* LoadMesh(size_t meshIndex, bool skinned, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap);
 		bool LoadPreAuthoredLod(size_t meshIndex, ModelImportMesh& mesh, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap);
+		// outSkinWeights is null for a mesh that isn't skinned.
 		bool LoadMeshPrimitives(size_t meshIndex, Array<Vertex>& outVertices, Array<uint>& outIndices,
-			Array<ModelImportSubmesh>& outSubmeshes, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap);
+			Array<ModelImportSubmesh>& outSubmeshes, Array<ModelImportSkinWeights>* outSkinWeights,
+			ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap);
+		void LoadSkinWeights(const fastgltf::Primitive& primitive, uint vertexCount, ModelImportSkinWeights* outWeights) const;
 		uint ResolveMaterial(size_t gltfMaterialIndex, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap);
 		uint GetOrCreateDefaultMaterial(ModelImportResult& outResult);
 
@@ -45,6 +47,16 @@ namespace tyr
 		// as someone else's alternate, so the main loop doesn't also import it standalone).
 		void ParseMsftLodChains();
 		void BuildNameBasedLodChains();
+
+		// Fills the skeleton from one glTF skin, with bones ordered parents first.
+		bool BuildSkeleton(size_t skinIndex, Skeleton& outSkeleton);
+		// A node's own transform in engine space.
+		Matrix4 GetNodeLocalMatrix(size_t nodeIndex) const;
+		void LoadAnimations(ModelImportResult& outResult);
+		bool LoadAnimation(const fastgltf::Animation& animation, const Skeleton& skeleton, AnimationClip& outClip);
+		// Reads a channel's key times and values, converted to engine space.
+		void ReadChannelKeys(const fastgltf::AnimationSampler& sampler, fastgltf::AnimationPath path);
+		Vector4 SampleChannelKeys(fastgltf::AnimationInterpolation interpolation, bool isRotation, float time) const;
 
 		// Keeps the file's bytes and the parsed asset alive for the lifetime of this loader -
 		// see the lifetime note above.
@@ -75,5 +87,23 @@ namespace tyr
 
 		// The model file's folder, which loose texture paths are relative to.
 		Path m_BaseDirectory;
+
+		// The skin the skeleton was built from, or -1 when nothing is skinned.
+		int m_SkinIndex = -1;
+		// Per node: its parent node (-1 for scene roots) and the bone it became, if any.
+		Array<int> m_NodeParents;
+		Array<uint16> m_NodeToBone;
+		// Per bone: the glTF node it came from, and the fixed transform of any non-bone nodes
+		// between it and its parent bone, which is folded into the bone's own transform.
+		Array<uint> m_BoneNodes;
+		Array<Matrix4> m_BoneParentOffsets;
+		Array<bool> m_BoneHasParentOffset;
+
+		// Scratch for one animation channel and one bone's resampled keys, reused across calls.
+		Array<float> m_KeyTimes;
+		Array<Vector4> m_KeyValues;
+		Array<Vector3> m_TrackTranslations;
+		Array<Quaternion> m_TrackRotations;
+		Array<Vector3> m_TrackScales;
 	};
 }

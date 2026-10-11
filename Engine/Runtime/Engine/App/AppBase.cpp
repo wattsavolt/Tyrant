@@ -36,7 +36,7 @@ namespace tyr
 	void AppBase::DestroyPrimaryWorld(WindowModule& windowModule, WorldManager& worldManager,
 		Handle worldHandle, WindowHandle windowHandle)
 	{
-		const RenderWindowHandle renderWindow = worldManager.GetWorld(worldHandle).windowHandle;
+		const RenderWindowHandle renderWindow = worldManager.GetWorld(worldHandle).renderWindowHandle;
 		worldManager.RemoveWorld(worldHandle);
 
 		RendererModule* rendererModule;

@@ -64,7 +64,22 @@ namespace tyr
 		// Loads the mesh and its materials, then creates the instance on the renderer. An invalid
 		// or missing entry in materials uses the mesh's own material for that submesh. onCreated
 		// receives the instance and the material actually used for each submesh.
-		void CreateMeshInstance(AssetID meshAssetID, const Matrix4& transform, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials, Function<void(MeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated);
+		void CreateMeshInstance(SceneHandle scene, AssetID meshAssetID, const Matrix4& transform, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials, Function<void(MeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated);
+
+		// Like CreateMeshInstance for a skinned mesh, which also waits for its geometry and skeleton.
+		void CreateSkeletalMeshInstance(SceneHandle scene, AssetID meshAssetID, const Matrix4& transform, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials,
+			Function<void(SkeletalMeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated);
+
+		// Skeletons and animation clips only live on the CPU, and are freed with their last reference.
+		void LoadSkeleton(AssetID assetID);
+		void DeleteSkeleton(AssetID assetID);
+		// Null until loaded.
+		const Skeleton* GetSkeleton(AssetID assetID) const;
+
+		void LoadAnimation(AssetID assetID);
+		void DeleteAnimation(AssetID assetID);
+		// Null until loaded.
+		const AnimationClip* GetAnimation(AssetID assetID) const;
 
 		void LoadLocation(AssetID assetID);
 
@@ -76,6 +91,8 @@ namespace tyr
 		static constexpr uint c_EvictionDelayFrames = RenderConstants::c_BufferedFrameCount + 1;
 		// Also bounds how many renderer pool slots the cache can hold on to.
 		static constexpr uint c_MaxUnreferencedAssets = 256;
+		static constexpr uint c_MaxSkeletons = 64;
+		static constexpr uint c_MaxAnimations = 1024;
 
 		// Called once per frame from the main thread - also the only place allowed to
 		// create/delete renderer resources, since doing so isn't safe against a worker
@@ -118,6 +135,11 @@ namespace tyr
 		AssetID GetEffectiveMaterialForSlot(const MeshHeader& header, const MeshInstanceCreateData& instData, uint slot) const;
 		void CreateResolvedMeshInstance(MeshInstanceCreateData* instData);
 
+		void LoadCpuAsset(AssetID assetID, AssetLoadType type);
+		void DeleteCpuAsset(AssetID assetID, AssetLoadType type);
+		void FreeCpuAsset(AssetID assetID, const AssetData& assetData, AssetLoadType type);
+		void FinishCpuAssetLoad(CpuAssetLoadData* ld);
+
 		// Defers a delete until loading finishes. Immediate wins if the asset is already pending.
 		static void AddPendingDelete(Array<PendingAssetDelete>& pendingDeletes, AssetID assetID, AssetDeletePolicy policy);
 		// Called once a loaded texture or mesh has no references left.
@@ -134,6 +156,8 @@ namespace tyr
 		HashMap<AssetID, AssetData> m_AssetMap;
 		LocalObjectPool<Location, 9, ResetObjectPolicy> m_LocationPool;
 		LocalObjectPool<MeshHeader, RenderConstants::c_MaxMeshes, ResetObjectPolicy> m_MeshHeaderPool;
+		LocalObjectPool<Skeleton, c_MaxSkeletons, ResetObjectPolicy> m_SkeletonPool;
+		LocalObjectPool<AnimationClip, c_MaxAnimations, ResetObjectPolicy> m_AnimationPool;
 		// Loaded batches ready to be processed
 		MPSCRingBuffer<AssetLoadBatch*, 32> m_BatchesLoadedQueue;
 		// Headers/files loaded and ready for their main-thread follow-up (GPU/upload
@@ -144,6 +168,7 @@ namespace tyr
 		// Textures that have had their header and raw data loaded but yet to be uploaded to the GPU
 		MPSCRingBuffer<TexturePixelLoadData*, 32> m_TexturesLoadedQueue;
 		MPSCRingBuffer<MeshGeometryLoadData*, 32> m_MeshesLoadedQueue;
+		MPSCRingBuffer<CpuAssetLoadData*, 32> m_CpuAssetsLoadedQueue;
 		// Materials that have had the file loaded but waiting on their textures to load
 		Array<MaterialLoadData*> m_MaterialsAwaitingTextures;
 		// Mesh instances requested but not yet created - waiting on their mesh's header and

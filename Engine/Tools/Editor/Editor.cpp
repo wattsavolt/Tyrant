@@ -39,6 +39,30 @@ namespace tyr
 {
 	namespace
 	{
+		// The animation clip made for the skeleton that comes first by name, or an invalid ID.
+		AssetID FindFirstAnimation(AssetID skeleton)
+		{
+			AssetID found = AssetConstants::c_InvalidAssetID;
+			const char* foundPath = nullptr;
+			const AssetRegistry& registry = AssetRegistry::Instance();
+			for (std::pair<const AssetID&, const RegAssetData&> asset : registry.GetAssets())
+			{
+				const char* path = asset.second.filePath.CStr();
+				if (!AssetUtil::HasExtension(path, AssetConstants::c_AnimationFileExtension))
+				{
+					continue;
+				}
+				uint dependencyCount = 0;
+				const AssetID* dependencies = registry.GetAssetDependencies(asset.first, dependencyCount);
+				if (dependencyCount > 0 && dependencies[0] == skeleton && (!foundPath || strcmp(path, foundPath) < 0))
+				{
+					found = asset.first;
+					foundPath = path;
+				}
+			}
+			return found;
+		}
+
 		// How far in front of the camera a mesh dropped onto nothing is placed.
 		constexpr float c_BackgroundDropDistance = 5.0f;
 		// The level made when there aren't any yet.
@@ -413,6 +437,10 @@ namespace tyr
 		{
 			DrawDebugOverlays();
 		}
+		if (m_EditorUI->GetViewSettings().showColliders)
+		{
+			DrawColliders(m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld()));
+		}
 
 		const ViewSettings& viewSettings = m_EditorUI->GetViewSettings();
 		EditorViewport::EditState editState;
@@ -476,6 +504,41 @@ namespace tyr
 		m_Grid.enabled = showGrid;
 		const World& levelWorld = m_WorldManager->GetWorld(m_LevelEditorWorld);
 		m_RendererAPI->SetRenderViewportGrid(levelWorld.renderViewportHandle, m_Grid);
+	}
+
+	void Editor::DrawColliders(World& world)
+	{
+		world.entities.ForEach<ColliderComponent>([&world](Entity entity, ColliderComponent& collider)
+		{
+			if (!world.entities.HasComponent<ComponentTransform>(entity))
+			{
+				return;
+			}
+
+			uint colour = DebugColour::c_Grey;
+			if (world.entities.HasComponent<RigidBodyComponent>(entity))
+			{
+				const MotionType motionType = static_cast<MotionType>(world.entities.GetComponent<RigidBodyComponent>(entity).motionType);
+				colour = motionType == MotionType::Dynamic ? DebugColour::c_Orange : (motionType == MotionType::Kinematic ? DebugColour::c_Cyan : colour);
+			}
+
+			// Sized the same way the physics bodies are.
+			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+			const Vector3 scale(Math::Abs(transform.scale.x), Math::Abs(transform.scale.y), Math::Abs(transform.scale.z));
+			const Vector3 center = transform.position + transform.rotation.Rotate(collider.center * transform.scale);
+			switch (static_cast<ColliderShape>(collider.shape))
+			{
+			case ColliderShape::Sphere:
+				DebugDraw::Sphere(center, collider.radius * std::max(scale.x, std::max(scale.y, scale.z)), colour);
+				break;
+			case ColliderShape::Capsule:
+				DebugDraw::Capsule(center, collider.radius * std::max(scale.x, scale.z), collider.halfHeight * scale.y, transform.rotation, colour);
+				break;
+			default:
+				DebugDraw::Box(center, collider.halfExtents * scale, transform.rotation, colour);
+				break;
+			}
+		});
 	}
 
 	void Editor::DrawDebugOverlays()
@@ -703,13 +766,17 @@ namespace tyr
 				{
 					continue;
 				}
-				pending.entity = SpawnStaticMeshActor(pending, *header);
+				pending.entity = SpawnMeshActor(pending, *header);
 				m_SelectedActor = pending.entity;
 			}
 
 			// Released once the actor's mesh instance has its own reference, or the actor is gone.
-			if (!world.entities.HasComponent<MeshComponent>(pending.entity)
-				|| world.entities.GetComponent<MeshComponent>(pending.entity).meshInstanceRequested)
+			const bool requested = world.entities.HasComponent<MeshComponent>(pending.entity)
+				? world.entities.GetComponent<MeshComponent>(pending.entity).meshInstanceRequested
+				: world.entities.HasComponent<SkeletalMeshComponent>(pending.entity)
+					&& world.entities.GetComponent<SkeletalMeshComponent>(pending.entity).meshInstanceRequested;
+			const bool removed = !world.entities.HasComponent<MeshComponent>(pending.entity) && !world.entities.HasComponent<SkeletalMeshComponent>(pending.entity);
+			if (removed || requested)
 			{
 				m_AssetManager->DeleteMesh(pending.drop.mesh);
 				m_PendingMeshDrops.SwapAndPopBack(i);
@@ -717,7 +784,7 @@ namespace tyr
 		}
 	}
 
-	Entity Editor::SpawnStaticMeshActor(const PendingMeshDrop& pending, const MeshHeader& header)
+	Entity Editor::SpawnMeshActor(const PendingMeshDrop& pending, const MeshHeader& header)
 	{
 		World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
 		const bool snap = m_EditorUI->GetViewSettings().snapToGrid;
@@ -747,7 +814,8 @@ namespace tyr
 			position = GetBackgroundDropPosition(ray);
 		}
 
-		const ActorTypeDesc* actorType = ActorRegistry::Instance().FindActorType(Id64("StaticMeshActor"));
+		const bool skinned = header.IsSkinned();
+		const ActorTypeDesc* actorType = ActorRegistry::Instance().FindActorType(Id64(skinned ? "SkeletalMeshActor" : "StaticMeshActor"));
 		if (!actorType)
 		{
 			return c_InvalidEntity;
@@ -763,7 +831,16 @@ namespace tyr
 			return c_InvalidEntity;
 		}
 
-		world.entities.GetComponent<MeshComponent>(rootEntity).mesh = drop.mesh;
+		if (skinned)
+		{
+			world.entities.GetComponent<SkeletalMeshComponent>(rootEntity).mesh = drop.mesh;
+			// Starts playing the first clip made for its skeleton, if there is one.
+			world.entities.GetComponent<AnimatorComponent>(rootEntity).clip = FindFirstAnimation(header.skeleton);
+		}
+		else
+		{
+			world.entities.GetComponent<MeshComponent>(rootEntity).mesh = drop.mesh;
+		}
 		BoxComponent& box = world.entities.GetComponent<BoxComponent>(rootEntity);
 		box.center = (header.aabbMin + header.aabbMax) * 0.5f;
 		box.halfExtents = (header.aabbMax - header.aabbMin) * 0.5f;

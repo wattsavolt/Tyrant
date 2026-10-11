@@ -28,9 +28,20 @@ namespace tyr
 
 		// An invalid material makes the slot use the mesh's own. Trailing ones are dropped, so a
 		// mesh with no overrides has an empty list, the same as its actor type.
-		void SetMaterialSlot(MeshComponent& meshComponent, uint slot, AssetID material)
+		// The names of an enum's values, in order, for a uint8 field's dropdown.
+		struct EnumNames
 		{
-			LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials = meshComponent.materials;
+			const char* const* names;
+			uint count;
+		};
+
+		const char* const c_ColliderShapeNames[] = { "Box", "Sphere", "Capsule" };
+		const char* const c_MotionTypeNames[] = { "Static", "Kinematic", "Dynamic" };
+		const EnumNames c_ColliderShapes = { c_ColliderShapeNames, 3 };
+		const EnumNames c_MotionTypes = { c_MotionTypeNames, 3 };
+
+		void SetMaterialSlot(LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials, uint slot, AssetID material)
+		{
 			if (AssetUtil::IsValidAssetID(material))
 			{
 				while (materials.Size() <= slot)
@@ -57,42 +68,88 @@ namespace tyr
 		, m_AssetManager(assetManager)
 		, m_LevelWorld(levelWorld)
 	{
-		m_Reflector.RegisterFieldReflector(GetTypeID<MeshComponent>(), MakeFieldKey("mesh"), &ReflectMesh, this);
-		m_Reflector.RegisterFieldReflector(GetTypeID<MeshComponent>(), MakeFieldKey("materials"), &ReflectMeshMaterials, this);
+		// The asset filters are passed as the reflectors' userData.
+		void* meshExtension = const_cast<char*>(AssetConstants::c_MeshFileExtension);
+		void* skeletalMeshExtension = const_cast<char*>(AssetConstants::c_SkeletalMeshFileExtension);
+		void* animationExtension = const_cast<char*>(AssetConstants::c_AnimationFileExtension);
+
+		m_Reflector.RegisterFieldReflector(GetTypeID<MeshComponent>(), MakeFieldKey("mesh"), &ReflectAsset, meshExtension);
+		m_Reflector.RegisterFieldReflector(GetTypeID<MeshComponent>(), MakeFieldKey("materials"), &ReflectMeshMaterials<MeshComponent>, this);
+		m_Reflector.RegisterFieldReflector(GetTypeID<SkeletalMeshComponent>(), MakeFieldKey("mesh"), &ReflectAsset, skeletalMeshExtension);
+		m_Reflector.RegisterFieldReflector(GetTypeID<SkeletalMeshComponent>(), MakeFieldKey("materials"), &ReflectMeshMaterials<SkeletalMeshComponent>, this);
+		m_Reflector.RegisterFieldReflector(GetTypeID<ColliderComponent>(), MakeFieldKey("shape"), &ReflectEnum, const_cast<EnumNames*>(&c_ColliderShapes));
+		m_Reflector.RegisterFieldReflector(GetTypeID<RigidBodyComponent>(), MakeFieldKey("motionType"), &ReflectEnum, const_cast<EnumNames*>(&c_MotionTypes));
+		m_Reflector.RegisterFieldReflector(GetTypeID<AnimatorComponent>(), MakeFieldKey("clip"), &ReflectAsset, animationExtension);
+		m_Reflector.RegisterFieldReflector(GetTypeID<AnimatorComponent>(), MakeFieldKey("layerClip"), &ReflectAsset, animationExtension);
 	}
 
-	bool PropertiesPanel::ReflectMesh(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* /*userData*/)
+	bool PropertiesPanel::ReflectEnum(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData)
 	{
-		AssetID& mesh = *reinterpret_cast<AssetID*>(object + field.dataOffset);
+		const EnumNames& names = *static_cast<const EnumNames*>(userData);
+		uint8& value = *(object + field.dataOffset);
 		if (defaults)
 		{
-			reflector.SetNextRowOverridden(memcmp(&mesh, defaults + field.dataOffset, sizeof(AssetID)) != 0);
+			reflector.SetNextRowOverridden(value != *(defaults + field.dataOffset));
 		}
 		reflector.BeginValueRow(field.name);
 		bool changed = false;
 		if (reflector.TakeResetRequest() && defaults)
 		{
-			memcpy(&mesh, defaults + field.dataOffset, sizeof(AssetID));
+			value = *(defaults + field.dataOffset);
+			changed = true;
+		}
+
+		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+		const char* preview = value < names.count ? names.names[value] : "?";
+		if (ImGui::BeginCombo("##enum", preview))
+		{
+			for (uint i = 0; i < names.count; ++i)
+			{
+				if (ImGui::Selectable(names.names[i], value == i))
+				{
+					changed |= value != i;
+					value = static_cast<uint8>(i);
+				}
+			}
+			ImGui::EndCombo();
+		}
+		return changed;
+	}
+
+	bool PropertiesPanel::ReflectAsset(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData)
+	{
+		const char* extension = static_cast<const char*>(userData);
+		AssetID& asset = *reinterpret_cast<AssetID*>(object + field.dataOffset);
+		if (defaults)
+		{
+			reflector.SetNextRowOverridden(memcmp(&asset, defaults + field.dataOffset, sizeof(AssetID)) != 0);
+		}
+		reflector.BeginValueRow(field.name);
+		bool changed = false;
+		if (reflector.TakeResetRequest() && defaults)
+		{
+			memcpy(&asset, defaults + field.dataOffset, sizeof(AssetID));
 			changed = true;
 		}
 
 		const float clearWidth = ImGui::GetFrameHeight();
 		const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
-		changed |= reflector.GetAssetPicker().Draw(mesh, AssetConstants::c_MeshFileExtension, ImGui::GetContentRegionAvail().x - clearWidth - spacing);
+		changed |= reflector.GetAssetPicker().Draw(asset, extension, ImGui::GetContentRegionAvail().x - clearWidth - spacing);
 		ImGui::SameLine(0.0f, spacing);
 		if (ImGui::Button("X##clear", ImVec2(clearWidth, 0.0f)))
 		{
-			mesh = AssetConstants::c_InvalidAssetID;
+			asset = AssetConstants::c_InvalidAssetID;
 			changed = true;
 		}
 		ImGui::SetItemTooltip("Clear");
 		return changed;
 	}
 
+	template<typename Component>
 	bool PropertiesPanel::ReflectMeshMaterials(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData)
 	{
 		PropertiesPanel& panel = *static_cast<PropertiesPanel*>(userData);
-		MeshComponent& meshComponent = *reinterpret_cast<MeshComponent*>(object);
+		Component& meshComponent = *reinterpret_cast<Component*>(object);
 		const MeshHeader* header = AssetUtil::IsValidAssetID(meshComponent.mesh) ? panel.m_AssetManager.GetMeshHeader(meshComponent.mesh) : nullptr;
 
 		// Marked when any slot differs from the actor type, and reset as a whole from there.
@@ -125,7 +182,7 @@ namespace tyr
 				for (uint slot = 0; slot < header->materials.Size(); ++slot)
 				{
 					ImGui::PushID(static_cast<int>(slot));
-					changed |= panel.DrawMaterialSlot(meshComponent, header->materials[slot], slot);
+					changed |= panel.DrawMaterialSlot(meshComponent.materials, header->materials[slot], slot);
 					ImGui::PopID();
 				}
 			}
@@ -134,13 +191,13 @@ namespace tyr
 		return changed;
 	}
 
-	bool PropertiesPanel::DrawMaterialSlot(MeshComponent& meshComponent, AssetID meshMaterial, uint slot)
+	bool PropertiesPanel::DrawMaterialSlot(LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials, AssetID meshMaterial, uint slot)
 	{
 		char label[24];
 		snprintf(label, sizeof(label), "Element %u", slot);
 		m_Reflector.BeginValueRow(label);
 
-		const AssetID overrideMaterial = slot < meshComponent.materials.Size() ? meshComponent.materials[slot] : AssetConstants::c_InvalidAssetID;
+		const AssetID overrideMaterial = slot < materials.Size() ? materials[slot] : AssetConstants::c_InvalidAssetID;
 		const bool usesMeshMaterial = !AssetUtil::IsValidAssetID(overrideMaterial);
 
 		const ImGuiStyle& style = ImGui::GetStyle();
@@ -154,14 +211,14 @@ namespace tyr
 		const float pickerWidth = ImGui::GetContentRegionAvail().x - clearWidth - defaultWidth - spacing * 2.0f;
 		if (m_Reflector.GetAssetPicker().Draw(material, AssetConstants::c_MaterialFileExtension, pickerWidth, usesMeshMaterial))
 		{
-			SetMaterialSlot(meshComponent, slot, material);
+			SetMaterialSlot(materials, slot, material);
 			changed = true;
 		}
 
 		ImGui::SameLine(0.0f, spacing);
 		if (ImGui::Button("X##clear", ImVec2(clearWidth, 0.0f)))
 		{
-			SetMaterialSlot(meshComponent, slot, GetEngineDefaultMaterial());
+			SetMaterialSlot(materials, slot, GetEngineDefaultMaterial());
 			changed = true;
 		}
 		ImGui::SetItemTooltip("Use the engine's default material");
@@ -170,7 +227,7 @@ namespace tyr
 		ImGui::BeginDisabled(usesMeshMaterial);
 		if (ImGui::Button("Default##mesh"))
 		{
-			SetMaterialSlot(meshComponent, slot, AssetConstants::c_InvalidAssetID);
+			SetMaterialSlot(materials, slot, AssetConstants::c_InvalidAssetID);
 			changed = true;
 		}
 		ImGui::EndDisabled();

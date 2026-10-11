@@ -17,6 +17,13 @@ namespace tyr
 		}
 
 		static AssetID CreateAssetID();
+
+		// Whether the path ends in the extension, which includes its dot.
+		static bool HasExtension(const char* path, const char* extension)
+		{
+			const char* pathExtension = strrchr(path, '.');
+			return pathExtension && strcmp(pathExtension, extension) == 0;
+		}
 		// Note: absFilePath must be an empty preallocated char array that does not contain the null character.
 		static void CreateFullPath(char absFilePath[], const char* relativePath, size_t absFilePathSize = TYR_MAX_PATH_TOTAL_SIZE);
 		// Same as CreateFullPath, but relative to the source assets folder.

@@ -6,6 +6,8 @@
 #include "RenderResource/Vertex.h"
 #include "RenderResource/MeshDesc.h"
 #include "Geometry/BoundingSphere.h"
+#include "AssetSystem/SkeletonAsset.h"
+#include "AssetSystem/AnimationAsset.h"
 
 namespace tyr
 {
@@ -17,6 +19,13 @@ namespace tyr
 		uint indexCount = 0;
 		// Index into ModelImportResult::materials.
 		uint materialIndex = 0;
+	};
+
+	// Up to four bones per vertex, as skeleton bone indices. Unused slots have a weight of 0.
+	struct ModelImportSkinWeights
+	{
+		uint8 bones[4];
+		float weights[4];
 	};
 
 	// One pre-authored LOD's geometry (LOD1+) - a source file's own alternate, already at the
@@ -44,6 +53,8 @@ namespace tyr
 		Array<Vertex> vertices;
 		Array<uint> indices;
 		Array<ModelImportSubmesh> submeshes;
+		// One per vertex for a mesh bound to the result's skeleton, otherwise empty.
+		Array<ModelImportSkinWeights> skinWeights;
 		Vector3 aabbMin;
 		Vector3 aabbMax;
 		BoundingSphere sphere;
@@ -61,11 +72,19 @@ namespace tyr
 			vertices.Clear();
 			indices.Clear();
 			submeshes.Clear();
+			skinWeights.Clear();
 			aabbMin = Vector3();
 			aabbMax = Vector3();
 			sphere = BoundingSphere();
 			preAuthoredLods.Clear();
 		}
+	};
+
+	// One animation, already resampled into the result's skeleton bone order.
+	struct ModelImportAnimation
+	{
+		LocalString<63> name;
+		AnimationClip clip;
 	};
 
 	// Everything pulled out of a model file, ready for ModelImporter to hand off to
@@ -82,6 +101,12 @@ namespace tyr
 		// reallocated on the next import.
 		uint meshCount = 0;
 
+		// The skeleton skinned meshes are bound to, empty when nothing is skinned.
+		Skeleton skeleton;
+		// Reused across imports like meshes, see meshCount.
+		Array<ModelImportAnimation> animations;
+		uint animationCount = 0;
+
 		// Returns the next mesh slot to fill in, reusing a slot (and its arrays' existing
 		// capacity) left over from a previous import if one is available.
 		ModelImportMesh& AddMesh()
@@ -94,6 +119,16 @@ namespace tyr
 			return meshes.ExpandOne();
 		}
 
+		ModelImportAnimation& AddAnimation()
+		{
+			if (animationCount < animations.Size())
+			{
+				return animations[animationCount++];
+			}
+			animationCount++;
+			return animations.ExpandOne();
+		}
+
 		// Clears everything but keeps every mesh slot's arrays' capacity - see
 		// ModelImportMesh::Reset() and AddMesh() above.
 		void Reset()
@@ -104,6 +139,13 @@ namespace tyr
 			}
 			meshCount = 0;
 			materials.Clear();
+			skeleton.Reset();
+			for (ModelImportAnimation& animation : animations)
+			{
+				animation.name.Reset();
+				animation.clip.Reset();
+			}
+			animationCount = 0;
 		}
 	};
 

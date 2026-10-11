@@ -23,18 +23,12 @@ float3 ComputePointLightEffect(PointLight light, MaterialData mat, float3 positi
 	// The distance from the surface to the light.
 	float dist = length(lightVec);
 
-	float3 radiance = float3(0, 0, 0);
-	// Only go further if the surface point is in the range of the light.
-	[flatten]
-	if (dist <= light.range)
-	{
-		// Normalize the light vector to get the direction
-		lightVec /= dist;
-		// Modify the light intensity based on the attentuation
-        float lightIntensity = light.intensity / (light.attenuation[0] + (light.attenuation[1] * dist)) + (light.attenuation[2] * (dist * dist));
-        radiance = PBR(mat, position, normal, viewDir, light.colour, lightIntensity, lightVec);
-    }
-	return radiance;
+	// Nothing past the light's range is lit, applied as a multiply rather than a branch.
+	const float inRange = step(dist, light.range);
+	lightVec /= max(dist, 0.0001f);
+	const float attenuation = light.attenuation[0] + light.attenuation[1] * dist + light.attenuation[2] * dist * dist;
+	const float lightIntensity = inRange * light.intensity / max(attenuation, 0.0001f);
+	return PBR(mat, position, normal, viewDir, light.colour, lightIntensity, lightVec);
 }
 
 float3 ComputeSpotLightEffect(SpotLight light, MaterialData mat, float3 position, float3 normal, float3 viewDir)
@@ -45,22 +39,16 @@ float3 ComputeSpotLightEffect(SpotLight light, MaterialData mat, float3 position
 	// The distance from the surface to the light.
 	float dist = length(lightVec);
 
-	float3 radiance = float3(0, 0, 0);
-	// Only go further if the surface point is in the range of the light.
-	[flatten]
-	if (dist <= light.range)
-	{
-		// Normalize the light vector to get the direction
-		lightVec /= dist;
+	// Nothing past the light's range is lit, applied as a multiply rather than a branch.
+	const float inRange = step(dist, light.range);
+	lightVec /= max(dist, 0.0001f);
 
-		// Calculate falloff from center to edge of point light cone as light is less intense away from the cone centre
-		float falloff = pow(max(dot(-lightVec, light.direction), 0.0f), light.cone);
+	// Dimmer away from the centre of the cone.
+	const float falloff = pow(max(dot(-lightVec, light.direction), 0.0f), light.cone);
 
-		// Modify the light intensity based on the attentuation
-        float lightIntensity = (light.intensity * falloff) / (light.attenuation[0] + (light.attenuation[1] * dist)) + (light.attenuation[2] * (dist * dist));
-        radiance = PBR(mat, position, normal, viewDir, light.colour, lightIntensity, lightVec);
-    }
-	return radiance;
+	const float attenuation = light.attenuation[0] + light.attenuation[1] * dist + light.attenuation[2] * dist * dist;
+	const float lightIntensity = inRange * light.intensity * falloff / max(attenuation, 0.0001f);
+	return PBR(mat, position, normal, viewDir, light.colour, lightIntensity, lightVec);
 }
 
 #endif

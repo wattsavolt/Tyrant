@@ -1,6 +1,8 @@
 #include "GltfModelLoader.h"
 #include "RenderResource/MeshUtil.h"
 #include "Utility/PathUtil.h"
+#include "Memory/StackAllocation.h"
+#include <cmath>
 #include <cstdio>
 
 #include <fastgltf/tools.hpp>
@@ -208,6 +210,12 @@ namespace tyr
 		m_ConsumedLodNodeIndices.Clear();
 		m_HasDefaultMaterial = false;
 		m_DefaultMaterialIndex = 0;
+		m_SkinIndex = -1;
+		m_NodeParents.Clear();
+		m_NodeToBone.Clear();
+		m_BoneNodes.Clear();
+		m_BoneParentOffsets.Clear();
+		m_BoneHasParentOffset.Clear();
 
 		fastgltf::Expected<fastgltf::GltfDataBuffer> bufferExpected = fastgltf::GltfDataBuffer::FromPath(filePath);
 		if (!bufferExpected)
@@ -268,6 +276,30 @@ namespace tyr
 			return false;
 		}
 
+		m_NodeParents.Resize(static_cast<uint>(m_Asset.nodes.size()), -1);
+		for (size_t nodeIndex = 0; nodeIndex < m_Asset.nodes.size(); ++nodeIndex)
+		{
+			for (size_t childIndex : m_Asset.nodes[nodeIndex].children)
+			{
+				m_NodeParents[static_cast<uint>(childIndex)] = static_cast<int>(nodeIndex);
+			}
+		}
+
+		// The first skinned mesh's skin becomes the model's skeleton.
+		for (size_t nodeIdx : m_MeshNodeIndices)
+		{
+			const fastgltf::Node& node = m_Asset.nodes[nodeIdx];
+			if (node.skinIndex.has_value())
+			{
+				if (!BuildSkeleton(*node.skinIndex, outResult.skeleton))
+				{
+					return false;
+				}
+				m_SkinIndex = static_cast<int>(*node.skinIndex);
+				break;
+			}
+		}
+
 		// Pre-authored LOD detection - MSFT_lod first (only attempted if the file actually
 		// declares using it, via the asset-level list fastgltf already parses for us), then a
 		// naming-convention fallback for any mesh node MSFT_lod didn't already account for.
@@ -293,12 +325,31 @@ namespace tyr
 			}
 
 			const fastgltf::Node& node = m_Asset.nodes[nodeIdx];
-			ModelImportMesh* mesh = LoadMesh(*node.meshIndex, outResult, m_MaterialIndexMap);
+			bool skinned = false;
+			if (node.skinIndex.has_value())
+			{
+				const fastgltf::Skin& skin = m_Asset.skins[*node.skinIndex];
+				const fastgltf::Skin& skeletonSkin = m_Asset.skins[m_SkinIndex];
+				skinned = static_cast<int>(*node.skinIndex) == m_SkinIndex
+					|| (skin.joints.size() == skeletonSkin.joints.size() && std::equal(skin.joints.begin(), skin.joints.end(), skeletonSkin.joints.begin()));
+				if (!skinned)
+				{
+					TYR_LOG_WARNING("Mesh %s uses a different skin to the rest of the model, so it's imported without skinning.", m_Asset.meshes[*node.meshIndex].name.c_str());
+				}
+			}
+
+			ModelImportMesh* mesh = LoadMesh(*node.meshIndex, skinned, outResult, m_MaterialIndexMap);
 			if (!mesh)
 			{
 				continue;
 			}
 			anyMeshLoaded = true;
+
+			// Skinned meshes only use LOD0, since simplifying needs to respect their weights.
+			if (skinned)
+			{
+				continue;
+			}
 
 			if (LocalArray<uint, MeshConstants::c_MaxLods - 1>* alternates = m_LodChains.Find(nodeIndex))
 			{
@@ -311,6 +362,11 @@ namespace tyr
 					}
 				}
 			}
+		}
+
+		if (anyMeshLoaded && m_SkinIndex >= 0)
+		{
+			LoadAnimations(outResult);
 		}
 
 		return anyMeshLoaded;
@@ -474,14 +530,15 @@ namespace tyr
 		// reused slot - see ModelImportMeshLod's own comment.
 		lod.Reset();
 
-		return LoadMeshPrimitives(meshIndex, lod.vertices, lod.indices, lod.submeshes, outResult, materialIndexMap);
+		return LoadMeshPrimitives(meshIndex, lod.vertices, lod.indices, lod.submeshes, nullptr, outResult, materialIndexMap);
 	}
 
-	ModelImportMesh* GltfModelLoader::LoadMesh(size_t meshIndex, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap)
+	ModelImportMesh* GltfModelLoader::LoadMesh(size_t meshIndex, bool skinned, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap)
 	{
 		ModelImportMesh& mesh = outResult.AddMesh();
 
-		if (!LoadMeshPrimitives(meshIndex, mesh.vertices, mesh.indices, mesh.submeshes, outResult, materialIndexMap))
+		Array<ModelImportSkinWeights>* skinWeights = skinned ? &mesh.skinWeights : nullptr;
+		if (!LoadMeshPrimitives(meshIndex, mesh.vertices, mesh.indices, mesh.submeshes, skinWeights, outResult, materialIndexMap))
 		{
 			return nullptr;
 		}
@@ -511,7 +568,8 @@ namespace tyr
 	}
 
 	bool GltfModelLoader::LoadMeshPrimitives(size_t meshIndex, Array<Vertex>& outVertices, Array<uint>& outIndices,
-		Array<ModelImportSubmesh>& outSubmeshes, ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap)
+		Array<ModelImportSubmesh>& outSubmeshes, Array<ModelImportSkinWeights>* outSkinWeights,
+		ModelImportResult& outResult, HashMap<uint, uint>& materialIndexMap)
 	{
 		const fastgltf::Mesh& gltfMesh = m_Asset.meshes[meshIndex];
 		bool anyPrimitiveLoaded = false;
@@ -551,6 +609,12 @@ namespace tyr
 			{
 				outVertices[baseVertex + static_cast<uint>(i)].position = Vector3(v[0], v[1], -v[2]);
 			});
+
+			if (outSkinWeights)
+			{
+				outSkinWeights->Resize(baseVertex + vertexCount);
+				LoadSkinWeights(primitive, vertexCount, outSkinWeights->Data() + baseVertex);
+			}
 
 			bool hasNormals = false;
 			const fastgltf::Attribute* normalAttribute = primitive.findAttribute("NORMAL");
@@ -713,5 +777,571 @@ namespace tyr
 		m_DefaultMaterialIndex = outResult.materials.Size() - 1;
 		m_HasDefaultMaterial = true;
 		return m_DefaultMaterialIndex;
+	}
+
+	namespace
+	{
+		constexpr float c_KeyEpsilon = 1e-5f;
+
+		// glTF is right-handed, so Z is flipped. Mirroring a rotation flips its X and Y.
+		Vector3 ToEngineTranslation(float x, float y, float z)
+		{
+			return Vector3(x, y, -z);
+		}
+
+		Quaternion ToEngineRotation(float x, float y, float z, float w)
+		{
+			return Quaternion(w, -x, -y, z);
+		}
+
+		bool IsIdentity(const Matrix4& matrix)
+		{
+			for (uint row = 0; row < 4; ++row)
+			{
+				for (uint col = 0; col < 4; ++col)
+				{
+					const float expected = row == col ? 1.0f : 0.0f;
+					if (Math::Abs(matrix[row][col] - expected) > c_KeyEpsilon)
+					{
+						return false;
+					}
+				}
+			}
+			return true;
+		}
+
+		bool NearlyEqual(const Vector3& a, const Vector3& b)
+		{
+			return Math::Abs(a.x - b.x) <= c_KeyEpsilon && Math::Abs(a.y - b.y) <= c_KeyEpsilon && Math::Abs(a.z - b.z) <= c_KeyEpsilon;
+		}
+
+		// q and -q are the same rotation.
+		bool NearlyEqual(const Quaternion& a, const Quaternion& b)
+		{
+			return Math::Abs(Math::Abs(a.Dot(b)) - 1.0f) <= c_KeyEpsilon;
+		}
+
+		BoneTransform ApplyParentOffset(const BoneTransform& local, const Matrix4& parentOffset)
+		{
+			const Matrix4 matrix = Matrix4::CreateTRS(local.translation, local.rotation, local.scale) * parentOffset;
+			BoneTransform result;
+			matrix.DecomposeTRS(result.translation, result.rotation, result.scale);
+			return result;
+		}
+
+		// Appends a channel's keys to the clip, as one key if they never change and none if
+		// they also match the bind pose.
+		template<typename T>
+		void AddTrackKeys(const Array<T>& keys, const T& bindValue, Array<T>& clipKeys, uint& outOffset, uint& outCount)
+		{
+			bool constant = true;
+			for (uint i = 1; i < keys.Size() && constant; ++i)
+			{
+				constant = NearlyEqual(keys[i], keys[0]);
+			}
+
+			outOffset = clipKeys.Size();
+			if (constant && NearlyEqual(keys[0], bindValue))
+			{
+				outCount = 0;
+				return;
+			}
+
+			outCount = constant ? 1 : keys.Size();
+			for (uint i = 0; i < outCount; ++i)
+			{
+				clipKeys.Add(keys[i]);
+			}
+		}
+	}
+
+	Matrix4 GltfModelLoader::GetNodeLocalMatrix(size_t nodeIndex) const
+	{
+		// DecomposeNodeMatrices means every node's transform comes back as TRS.
+		const fastgltf::TRS& trs = std::get<fastgltf::TRS>(m_Asset.nodes[nodeIndex].transform);
+		return Matrix4::CreateTRS(ToEngineTranslation(trs.translation[0], trs.translation[1], trs.translation[2]),
+			ToEngineRotation(trs.rotation[0], trs.rotation[1], trs.rotation[2], trs.rotation[3]),
+			Vector3(trs.scale[0], trs.scale[1], trs.scale[2]));
+	}
+
+	bool GltfModelLoader::BuildSkeleton(size_t skinIndex, Skeleton& outSkeleton)
+	{
+		const fastgltf::Skin& skin = m_Asset.skins[skinIndex];
+		const uint jointCount = static_cast<uint>(skin.joints.size());
+		if (jointCount == 0 || jointCount > SkeletonConstants::c_MaxBones)
+		{
+			TYR_LOG_ERROR("Skin %s has %u joints - between 1 and %u are supported.", skin.name.c_str(), jointCount, SkeletonConstants::c_MaxBones);
+			return false;
+		}
+
+		// Joints are marked first so each one's nearest joint ancestor can be found.
+		constexpr uint16 c_UnorderedJoint = SkeletonConstants::c_NoParent - 1;
+		m_NodeToBone.Resize(static_cast<uint>(m_Asset.nodes.size()), SkeletonConstants::c_NoParent);
+		for (size_t jointNode : skin.joints)
+		{
+			m_NodeToBone[static_cast<uint>(jointNode)] = c_UnorderedJoint;
+		}
+
+		// Bones are added once their parent bone has been, so parents always come first.
+		m_BoneNodes.Clear();
+		while (m_BoneNodes.Size() < jointCount)
+		{
+			const uint orderedBefore = m_BoneNodes.Size();
+			for (size_t jointNode : skin.joints)
+			{
+				const uint node = static_cast<uint>(jointNode);
+				if (m_NodeToBone[node] != c_UnorderedJoint)
+				{
+					continue;
+				}
+
+				int ancestor = m_NodeParents[node];
+				while (ancestor >= 0 && m_NodeToBone[static_cast<uint>(ancestor)] == SkeletonConstants::c_NoParent)
+				{
+					ancestor = m_NodeParents[static_cast<uint>(ancestor)];
+				}
+				if (ancestor >= 0 && m_NodeToBone[static_cast<uint>(ancestor)] == c_UnorderedJoint)
+				{
+					continue;
+				}
+
+				m_NodeToBone[node] = static_cast<uint16>(m_BoneNodes.Size());
+				m_BoneNodes.Add(node);
+			}
+
+			if (m_BoneNodes.Size() == orderedBefore)
+			{
+				TYR_LOG_ERROR("Skin %s's joints don't form a hierarchy.", skin.name.c_str());
+				return false;
+			}
+		}
+
+		outSkeleton.parents.Resize(jointCount);
+		outSkeleton.names.Resize(jointCount);
+		outSkeleton.bindPose.Resize(jointCount);
+		outSkeleton.inverseBindMatrices.Resize(jointCount);
+		m_BoneParentOffsets.Resize(jointCount);
+		m_BoneHasParentOffset.Resize(jointCount);
+
+		for (uint bone = 0; bone < jointCount; ++bone)
+		{
+			const uint node = m_BoneNodes[bone];
+
+			// Non-bone nodes above the bone are folded into it, up to its parent bone.
+			Matrix4 parentOffset = Matrix4::c_Identity;
+			int ancestor = m_NodeParents[node];
+			while (ancestor >= 0 && m_NodeToBone[static_cast<uint>(ancestor)] == SkeletonConstants::c_NoParent)
+			{
+				parentOffset = parentOffset * GetNodeLocalMatrix(static_cast<size_t>(ancestor));
+				ancestor = m_NodeParents[static_cast<uint>(ancestor)];
+			}
+			m_BoneParentOffsets[bone] = parentOffset;
+			m_BoneHasParentOffset[bone] = !IsIdentity(parentOffset);
+
+			outSkeleton.parents[bone] = ancestor >= 0 ? m_NodeToBone[static_cast<uint>(ancestor)] : SkeletonConstants::c_NoParent;
+			outSkeleton.names[bone] = m_Asset.nodes[node].name.c_str();
+
+			const fastgltf::TRS& trs = std::get<fastgltf::TRS>(m_Asset.nodes[node].transform);
+			BoneTransform& bind = outSkeleton.bindPose[bone];
+			bind.translation = ToEngineTranslation(trs.translation[0], trs.translation[1], trs.translation[2]);
+			bind.rotation = ToEngineRotation(trs.rotation[0], trs.rotation[1], trs.rotation[2], trs.rotation[3]);
+			bind.scale = Vector3(trs.scale[0], trs.scale[1], trs.scale[2]);
+			if (m_BoneHasParentOffset[bone])
+			{
+				bind = ApplyParentOffset(bind, parentOffset);
+			}
+		}
+
+		if (skin.inverseBindMatrices.has_value())
+		{
+			// glTF stores column-major matrices for column vectors, which is the same memory
+			// layout as this engine's row-major matrices for row vectors. Z is then mirrored.
+			fastgltf::iterateAccessorWithIndex<fastgltf::math::fmat4x4>(m_Asset, m_Asset.accessors[*skin.inverseBindMatrices],
+				[&](const fastgltf::math::fmat4x4& source, size_t joint)
+				{
+					const uint16 bone = m_NodeToBone[static_cast<uint>(skin.joints[joint])];
+					Matrix4& matrix = outSkeleton.inverseBindMatrices[bone];
+					for (uint row = 0; row < 4; ++row)
+					{
+						for (uint col = 0; col < 4; ++col)
+						{
+							const bool mirrored = (row == 2) != (col == 2);
+							matrix[row][col] = mirrored ? -source[row][col] : source[row][col];
+						}
+					}
+				});
+		}
+		else
+		{
+			// Without them, the mesh is bound in the skeleton's rest pose.
+			SmartStack<Matrix4> modelStack = SmartStackAlloc<Matrix4>(jointCount);
+			Matrix4* model = modelStack;
+			for (uint bone = 0; bone < jointCount; ++bone)
+			{
+				const BoneTransform& bind = outSkeleton.bindPose[bone];
+				const Matrix4 local = Matrix4::CreateTRS(bind.translation, bind.rotation, bind.scale);
+				const uint16 parent = outSkeleton.parents[bone];
+				model[bone] = parent == SkeletonConstants::c_NoParent ? local : local * model[parent];
+				outSkeleton.inverseBindMatrices[bone] = model[bone].Inverse();
+			}
+		}
+
+		return true;
+	}
+
+	void GltfModelLoader::LoadSkinWeights(const fastgltf::Primitive& primitive, uint vertexCount, ModelImportSkinWeights* outWeights) const
+	{
+		// Up to eight influences are read, and the four largest kept.
+		constexpr uint c_MaxSourceInfluences = 8;
+		SmartStack<uint16> sourceBonesStack = SmartStackAlloc<uint16>(vertexCount * c_MaxSourceInfluences);
+		SmartStack<float> sourceWeightsStack = SmartStackAlloc<float>(vertexCount * c_MaxSourceInfluences);
+		uint16* sourceBones = sourceBonesStack;
+		float* sourceWeights = sourceWeightsStack;
+		memset(sourceWeights, 0, sizeof(float) * vertexCount * c_MaxSourceInfluences);
+		memset(sourceBones, 0, sizeof(uint16) * vertexCount * c_MaxSourceInfluences);
+
+		const fastgltf::Skin& skin = m_Asset.skins[m_SkinIndex];
+		bool hasWeights = false;
+		for (uint set = 0; set < 2; ++set)
+		{
+			char jointsName[16];
+			char weightsName[16];
+			snprintf(jointsName, sizeof(jointsName), "JOINTS_%u", set);
+			snprintf(weightsName, sizeof(weightsName), "WEIGHTS_%u", set);
+			const fastgltf::Attribute* jointsAttribute = primitive.findAttribute(jointsName);
+			const fastgltf::Attribute* weightsAttribute = primitive.findAttribute(weightsName);
+			if (jointsAttribute == primitive.attributes.end() || weightsAttribute == primitive.attributes.end())
+			{
+				break;
+			}
+			hasWeights = true;
+
+			const uint base = set * 4;
+			fastgltf::iterateAccessorWithIndex<fastgltf::math::u16vec4>(m_Asset, m_Asset.accessors[jointsAttribute->accessorIndex],
+				[&](fastgltf::math::u16vec4 joints, size_t vertex)
+				{
+					for (uint i = 0; i < 4; ++i)
+					{
+						const uint16 joint = joints[i];
+						sourceBones[vertex * c_MaxSourceInfluences + base + i] = joint < skin.joints.size()
+							? m_NodeToBone[static_cast<uint>(skin.joints[joint])] : 0;
+					}
+				});
+			fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec4>(m_Asset, m_Asset.accessors[weightsAttribute->accessorIndex],
+				[&](fastgltf::math::fvec4 weights, size_t vertex)
+				{
+					for (uint i = 0; i < 4; ++i)
+					{
+						sourceWeights[vertex * c_MaxSourceInfluences + base + i] = weights[i];
+					}
+				});
+		}
+
+		if (!hasWeights)
+		{
+			TYR_LOG_WARNING("A skinned primitive has no bone weights, so it follows the first bone.");
+		}
+
+		for (uint vertex = 0; vertex < vertexCount; ++vertex)
+		{
+			const uint16* bones = sourceBones + vertex * c_MaxSourceInfluences;
+			float* weights = sourceWeights + vertex * c_MaxSourceInfluences;
+			ModelImportSkinWeights& out = outWeights[vertex];
+
+			float total = 0.0f;
+			for (uint slot = 0; slot < 4; ++slot)
+			{
+				// Takes the largest remaining influence each time.
+				uint best = 0;
+				for (uint i = 1; i < c_MaxSourceInfluences; ++i)
+				{
+					best = weights[i] > weights[best] ? i : best;
+				}
+				const float weight = weights[best] > 0.0f ? weights[best] : 0.0f;
+				out.bones[slot] = weight > 0.0f ? static_cast<uint8>(bones[best]) : 0;
+				out.weights[slot] = weight;
+				total += weight;
+				weights[best] = 0.0f;
+			}
+
+			if (total <= 0.0f)
+			{
+				out.bones[0] = 0;
+				out.weights[0] = 1.0f;
+				continue;
+			}
+			for (float& weight : out.weights)
+			{
+				weight /= total;
+			}
+		}
+	}
+
+	void GltfModelLoader::LoadAnimations(ModelImportResult& outResult)
+	{
+		for (const fastgltf::Animation& animation : m_Asset.animations)
+		{
+			ModelImportAnimation& imported = outResult.AddAnimation();
+			imported.name.Reset();
+			imported.clip.Reset();
+
+			if (!LoadAnimation(animation, outResult.skeleton, imported.clip))
+			{
+				TYR_LOG_WARNING("Animation %s doesn't move the skeleton, so it's skipped.", animation.name.c_str());
+				outResult.animationCount--;
+				continue;
+			}
+
+			char name[64];
+			if (animation.name.empty())
+			{
+				snprintf(name, sizeof(name), "Animation%u", outResult.animationCount - 1);
+			}
+			else
+			{
+				// Kept to characters that are safe in a file name.
+				uint length = 0;
+				for (char c : animation.name)
+				{
+					if (length + 1 >= sizeof(name))
+					{
+						break;
+					}
+					name[length++] = (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') ? c : '_';
+				}
+				name[length] = '\0';
+			}
+			imported.name = name;
+		}
+	}
+
+	bool GltfModelLoader::LoadAnimation(const fastgltf::Animation& animation, const Skeleton& skeleton, AnimationClip& outClip)
+	{
+		const uint boneCount = skeleton.BoneCount();
+
+		float duration = 0.0f;
+		bool movesSkeleton = false;
+		for (const fastgltf::AnimationChannel& channel : animation.channels)
+		{
+			if (!channel.nodeIndex.has_value() || m_NodeToBone[static_cast<uint>(*channel.nodeIndex)] == SkeletonConstants::c_NoParent
+				|| channel.path == fastgltf::AnimationPath::Weights)
+			{
+				continue;
+			}
+			movesSkeleton = true;
+
+			const fastgltf::Accessor& input = m_Asset.accessors[animation.samplers[channel.samplerIndex].inputAccessor];
+			if (input.count > 0)
+			{
+				duration = std::max(duration, fastgltf::getAccessorElement<float>(m_Asset, input, input.count - 1));
+			}
+		}
+
+		if (!movesSkeleton)
+		{
+			return false;
+		}
+
+		outClip.duration = duration;
+		outClip.frameCount = duration > 0.0f ? static_cast<uint>(std::ceil(duration * AnimationConstants::c_SampleRate)) + 1 : 1;
+		// Keys are spread evenly from 0 to the duration, so the last lands exactly on it.
+		outClip.sampleRate = outClip.frameCount > 1 ? static_cast<float>(outClip.frameCount - 1) / duration : AnimationConstants::c_SampleRate;
+		outClip.tracks.Resize(boneCount);
+
+		m_TrackTranslations.Resize(outClip.frameCount);
+		m_TrackRotations.Resize(outClip.frameCount);
+		m_TrackScales.Resize(outClip.frameCount);
+
+		for (uint bone = 0; bone < boneCount; ++bone)
+		{
+			const fastgltf::AnimationChannel* channels[3] = {};
+			const uint node = m_BoneNodes[bone];
+			for (const fastgltf::AnimationChannel& channel : animation.channels)
+			{
+				if (!channel.nodeIndex.has_value() || *channel.nodeIndex != node)
+				{
+					continue;
+				}
+				if (channel.path == fastgltf::AnimationPath::Translation)
+				{
+					channels[0] = &channel;
+				}
+				else if (channel.path == fastgltf::AnimationPath::Rotation)
+				{
+					channels[1] = &channel;
+				}
+				else if (channel.path == fastgltf::AnimationPath::Scale)
+				{
+					channels[2] = &channel;
+				}
+			}
+
+			AnimationTrack& track = outClip.tracks[bone];
+			track = {};
+			if (!channels[0] && !channels[1] && !channels[2])
+			{
+				continue;
+			}
+
+			// Unanimated channels hold the node's own rest value.
+			const fastgltf::TRS& rest = std::get<fastgltf::TRS>(m_Asset.nodes[node].transform);
+			const Vector3 restTranslation = ToEngineTranslation(rest.translation[0], rest.translation[1], rest.translation[2]);
+			const Quaternion restRotation = ToEngineRotation(rest.rotation[0], rest.rotation[1], rest.rotation[2], rest.rotation[3]);
+			const Vector3 restScale(rest.scale[0], rest.scale[1], rest.scale[2]);
+			for (uint frame = 0; frame < outClip.frameCount; ++frame)
+			{
+				m_TrackTranslations[frame] = restTranslation;
+				m_TrackRotations[frame] = restRotation;
+				m_TrackScales[frame] = restScale;
+			}
+
+			for (uint path = 0; path < 3; ++path)
+			{
+				if (!channels[path])
+				{
+					continue;
+				}
+
+				const fastgltf::AnimationSampler& sampler = animation.samplers[channels[path]->samplerIndex];
+				ReadChannelKeys(sampler, channels[path]->path);
+				for (uint frame = 0; frame < outClip.frameCount; ++frame)
+				{
+					const float time = std::min(static_cast<float>(frame) / outClip.sampleRate, duration);
+					const Vector4 value = SampleChannelKeys(sampler.interpolation, path == 1, time);
+					if (path == 0)
+					{
+						m_TrackTranslations[frame] = Vector3(value.x, value.y, value.z);
+					}
+					else if (path == 1)
+					{
+						m_TrackRotations[frame] = Quaternion(value.w, value.x, value.y, value.z);
+					}
+					else
+					{
+						m_TrackScales[frame] = Vector3(value.x, value.y, value.z);
+					}
+				}
+			}
+
+			if (m_BoneHasParentOffset[bone])
+			{
+				for (uint frame = 0; frame < outClip.frameCount; ++frame)
+				{
+					const BoneTransform local{ m_TrackTranslations[frame], m_TrackRotations[frame], m_TrackScales[frame] };
+					const BoneTransform offset = ApplyParentOffset(local, m_BoneParentOffsets[bone]);
+					m_TrackTranslations[frame] = offset.translation;
+					m_TrackRotations[frame] = offset.rotation;
+					m_TrackScales[frame] = offset.scale;
+				}
+			}
+
+			// Neighbouring keys are kept on the same side, so blending between them takes the short way.
+			for (uint frame = 1; frame < outClip.frameCount; ++frame)
+			{
+				if (m_TrackRotations[frame].Dot(m_TrackRotations[frame - 1]) < 0.0f)
+				{
+					m_TrackRotations[frame] = -m_TrackRotations[frame];
+				}
+			}
+
+			const BoneTransform& bind = skeleton.bindPose[bone];
+			AddTrackKeys(m_TrackTranslations, bind.translation, outClip.translations, track.translationOffset, track.translationCount);
+			AddTrackKeys(m_TrackRotations, bind.rotation, outClip.rotations, track.rotationOffset, track.rotationCount);
+			AddTrackKeys(m_TrackScales, bind.scale, outClip.scales, track.scaleOffset, track.scaleCount);
+		}
+
+		return true;
+	}
+
+	void GltfModelLoader::ReadChannelKeys(const fastgltf::AnimationSampler& sampler, fastgltf::AnimationPath path)
+	{
+		const fastgltf::Accessor& input = m_Asset.accessors[sampler.inputAccessor];
+		const fastgltf::Accessor& output = m_Asset.accessors[sampler.outputAccessor];
+
+		m_KeyTimes.Resize(static_cast<uint>(input.count));
+		fastgltf::iterateAccessorWithIndex<float>(m_Asset, input, [&](float time, size_t i)
+		{
+			m_KeyTimes[static_cast<uint>(i)] = time;
+		});
+
+		m_KeyValues.Resize(static_cast<uint>(output.count));
+		if (path == fastgltf::AnimationPath::Rotation)
+		{
+			fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec4>(m_Asset, output, [&](fastgltf::math::fvec4 v, size_t i)
+			{
+				const Quaternion rotation = ToEngineRotation(v[0], v[1], v[2], v[3]);
+				m_KeyValues[static_cast<uint>(i)] = Vector4(rotation.x, rotation.y, rotation.z, rotation.w);
+			});
+		}
+		else
+		{
+			const bool isTranslation = path == fastgltf::AnimationPath::Translation;
+			fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(m_Asset, output, [&](fastgltf::math::fvec3 v, size_t i)
+			{
+				m_KeyValues[static_cast<uint>(i)] = Vector4(v[0], v[1], isTranslation ? -v[2] : v[2], 0.0f);
+			});
+		}
+	}
+
+	Vector4 GltfModelLoader::SampleChannelKeys(fastgltf::AnimationInterpolation interpolation, bool isRotation, float time) const
+	{
+		const uint keyCount = m_KeyTimes.Size();
+		const bool cubic = interpolation == fastgltf::AnimationInterpolation::CubicSpline;
+		// Cubic spline keys are stored as in-tangent, value, out-tangent.
+		const uint stride = cubic ? 3 : 1;
+		const uint valueOffset = cubic ? 1 : 0;
+		if (keyCount == 0 || m_KeyValues.Size() < keyCount * stride)
+		{
+			return isRotation ? Vector4(0.0f, 0.0f, 0.0f, 1.0f) : Vector4(0.0f, 0.0f, 0.0f, 0.0f);
+		}
+
+		if (time <= m_KeyTimes[0] || keyCount == 1)
+		{
+			return m_KeyValues[valueOffset];
+		}
+		if (time >= m_KeyTimes[keyCount - 1])
+		{
+			return m_KeyValues[(keyCount - 1) * stride + valueOffset];
+		}
+
+		uint key = 0;
+		while (key + 1 < keyCount - 1 && m_KeyTimes[key + 1] <= time)
+		{
+			++key;
+		}
+
+		const float keyDuration = m_KeyTimes[key + 1] - m_KeyTimes[key];
+		const float t = keyDuration > 0.0f ? (time - m_KeyTimes[key]) / keyDuration : 0.0f;
+		const Vector4& a = m_KeyValues[key * stride + valueOffset];
+		const Vector4& b = m_KeyValues[(key + 1) * stride + valueOffset];
+
+		if (interpolation == fastgltf::AnimationInterpolation::Step)
+		{
+			return a;
+		}
+
+		if (cubic)
+		{
+			const Vector4& outTangent = m_KeyValues[key * stride + 2];
+			const Vector4& inTangent = m_KeyValues[(key + 1) * stride];
+			const float t2 = t * t;
+			const float t3 = t2 * t;
+			Vector4 value = a * (2.0f * t3 - 3.0f * t2 + 1.0f) + outTangent * ((t3 - 2.0f * t2 + t) * keyDuration)
+				+ b * (-2.0f * t3 + 3.0f * t2) + inTangent * ((t3 - t2) * keyDuration);
+			if (isRotation)
+			{
+				const Quaternion rotation = Quaternion::SafeNormalize(Quaternion(value.w, value.x, value.y, value.z));
+				value = Vector4(rotation.x, rotation.y, rotation.z, rotation.w);
+			}
+			return value;
+		}
+
+		if (isRotation)
+		{
+			const Quaternion rotation = Quaternion::Slerp(t, Quaternion(a.w, a.x, a.y, a.z), Quaternion(b.w, b.x, b.y, b.z));
+			const Quaternion normalized = Quaternion::SafeNormalize(rotation);
+			return Vector4(normalized.x, normalized.y, normalized.z, normalized.w);
+		}
+		return a + (b - a) * t;
 	}
 }

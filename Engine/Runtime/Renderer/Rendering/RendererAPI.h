@@ -20,6 +20,11 @@ namespace tyr
 	struct MeshDesc;
 	struct MeshInstanceDesc;
 	struct MeshInstanceInfo;
+	struct SkeletalMeshInstanceDesc;
+	struct SkeletalMeshInstance;
+	struct ShaderMeshInstance;
+	class BoundingSphere;
+	class Matrix4;
 	struct SceneView;
 	struct DirectionalLightDesc;
 	struct PointLightDesc;
@@ -99,6 +104,9 @@ namespace tyr
 
 		bool RequestMeshletBufferAllocation(MeshHandle handle, uint lodIndex, size_t size, GpuBufferAllocation& allocation);
 
+		// Skinned meshes only: room for one ShaderSkinVertex per vertex.
+		bool RequestSkinVertexBufferAllocation(MeshHandle handle, uint lodIndex, size_t size, GpuBufferAllocation& allocation);
+
 		// Frees vertex, index and meshlet allocations referenced by the mesh lod
 		void FreeMeshLODAllocations(MeshHandle handle, uint lodIndex);
 
@@ -109,14 +117,24 @@ namespace tyr
 		// already has one.
 		void RequestBLASBuild(MeshHandle handle);
 
-		MeshInstanceHandle CreateMeshInstance(const MeshInstanceDesc& desc);
+		// Takes an explicit scene handle, independent of which scene is currently active.
+		MeshInstanceHandle CreateMeshInstance(SceneHandle scene, const MeshInstanceDesc& desc);
 
 		void UpdateMeshInstance(MeshInstanceHandle handle, const MeshInstanceDesc& desc);
 
 		void DeleteMeshInstance(MeshInstanceHandle handle);
 
+		// The mesh must be skinned and its geometry already uploaded. Starts in the bind pose.
+		SkeletalMeshInstanceHandle CreateSkeletalMeshInstance(SceneHandle scene, const SkeletalMeshInstanceDesc& desc);
 
-		// TODO: Add create, update and delete functions for skeletal mesh instances here
+		// Updates the transform and materials.
+		void UpdateSkeletalMeshInstance(SkeletalMeshInstanceHandle handle, const SkeletalMeshInstanceDesc& desc);
+
+		// Sets this frame's pose: one skin matrix per bone, and the posed mesh's local bounds.
+		void UpdateSkeletalMeshPose(SkeletalMeshInstanceHandle handle, const Matrix4* skinMatrices, uint boneCount, const BoundingSphere& localBounds);
+
+		void DeleteSkeletalMeshInstance(SkeletalMeshInstanceHandle handle);
+
 		
 		// Takes an explicit scene handle, independent of which scene is currently active.
 		void SetSceneWindow(SceneHandle scene, RenderWindowHandle window);
@@ -177,6 +195,8 @@ namespace tyr
 
 	private:
 		void UploadMeshInstance(const MeshInstanceInfo& info, uint index);
+		void UploadSkinnedMeshInstance(const SkeletalMeshInstance& instance);
+		void WriteMeshInstance(const ShaderMeshInstance& shaderMeshInstance, uint index);
 		void UploadDirectionalLight(const DirectionalLightInfo& info, uint index);
 		void UploadPointLight(const PointLightInfo& info, uint index);
 		void UploadSpotLight(const SpotLightInfo& info, uint index);

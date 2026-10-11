@@ -4,6 +4,8 @@
 #include "Core.h"
 #include "World.h"
 #include "RenderInstance/RenderInstances.h"
+#include "Animation/AnimationSystem.h"
+#include "Physics/PhysicsManager.h"
 
 namespace tyr
 {
@@ -11,6 +13,8 @@ namespace tyr
 	class WindowModule;
 	class AssetManager;
 	struct MeshComponent;
+	struct SkeletalMeshComponent;
+	struct AnimatorComponent;
 	struct DirLightComponent;
 	struct PointLightComponent;
 	struct SpotLightComponent;
@@ -73,6 +77,12 @@ namespace tyr
 		// changed right now.
 		bool SetComponentData(Handle worldHandle, Entity entity, ComponentTypeID typeID, const void* data);
 
+		// Plays animator clips, such as cross-fading to another with AnimationSystem::Play.
+		AnimationSystem& GetAnimationSystem() { return m_AnimationSystem; }
+
+		// Raycasts and other queries against a simulated world's physics.
+		PhysicsManager& GetPhysicsManager() { return m_PhysicsManager; }
+
 	private:
 		// Only called from AddWorld/RemoveWorld(s), which keep the pool and m_Worlds in step.
 		void InitWorld(World& world, const WorldConfig& config);
@@ -83,6 +93,25 @@ namespace tyr
 		// Releases the component's mesh instance along with its mesh and materials.
 		void RemoveMeshInstance(const MeshComponent& meshComponent);
 		void ReleaseMeshInstance(MeshInstanceHandle handle, AssetID meshID, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials);
+		// The same for a skinned mesh.
+		void SyncSkeletalMeshInstance(Handle worldHandle, Entity entity, SkeletalMeshComponent& skeletalMesh);
+		void RemoveSkeletalMeshInstance(const SkeletalMeshComponent& skeletalMesh);
+		void ReleaseSkeletalMeshInstance(SkeletalMeshInstanceHandle handle, AssetID meshID, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials);
+		bool SetSkeletalMeshComponent(Handle worldHandle, Entity entity, const SkeletalMeshComponent& skeletalMesh);
+		// Only animation clips made for the entity's skeleton can go in its animator.
+		bool SetAnimatorComponent(Handle worldHandle, Entity entity, const AnimatorComponent& animator);
+		// Releases everything the world made from the entity's components, before it's removed.
+		void ReleaseEntity(World& world, Entity entity);
+		// Empty bounds and box colliders, such as on a newly placed actor, take the mesh's bounds.
+		void FitBoundsToMesh(World& world, Entity entity, AssetID meshID);
+		// Clears the bounds and box collider sized from a mesh, so they're fitted to a new one.
+		void ResetMeshBounds(World& world, Entity entity);
+		// Moves entities with dynamic bodies to where physics put them, blended between steps.
+		void ApplyPhysicsTransforms(World& world);
+		// Moves an entity in world space, carrying the actor's entities under it along.
+		void MoveEntity(World& world, Entity entity, const Vector3& position, const Quaternion& rotation);
+		// Recomputes the world transforms of the actor's entities under the moved one.
+		void PropagateActorTransforms(World& world, const ActorInstance& instance, Entity moved);
 		// Sends the entity's world transform to its mesh instance and lights, if it has them yet.
 		void UpdateEntityTransform(World& world, Entity entity);
 		// Removes the light from the renderer, if it was ever added.
@@ -96,6 +125,8 @@ namespace tyr
 		RendererAPI* m_RendererAPI;
 		WindowModule* m_WindowModule;
 		AssetManager* m_AssetManager;
+		AnimationSystem m_AnimationSystem;
+		PhysicsManager m_PhysicsManager;
 		LocalObjectPool<World, c_MaxWorlds, ResetObjectPolicy> m_WorldPool;
 		LocalArray<Handle, c_MaxWorlds> m_Worlds;
 		Handle m_ActiveWorld;

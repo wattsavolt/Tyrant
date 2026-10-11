@@ -81,30 +81,13 @@ namespace tyr
 		mesh.aabbMax = desc.aabbMax;
 		mesh.lodOffset = lodOffset;
 		mesh.lodCount = desc.lodCount;
+		mesh.skinned = desc.skinned;
 		return handle;
 	}
 
 	void RenderRegistry::DeleteMesh(MeshHandle handle)
 	{
 		m_MeshPool.Delete(handle.h);
-	}
-
-	SkeletalMeshHandle RenderRegistry::CreateSkeletalMesh(const SkeletalMeshDesc& desc, uint lodOffset)
-	{
-		const SkeletalMeshHandle handle(m_SkeletalMeshPool.Create());
-		SkeletalMesh& mesh = m_SkeletalMeshPool[handle.h];
-		mesh.sphere = desc.sphere;
-		mesh.aabbMin = desc.aabbMin;
-		mesh.aabbMax = desc.aabbMax;
-		mesh.aabbMax = desc.aabbMax;
-		mesh.lodOffset = lodOffset;
-		mesh.lodCount = desc.lodCount;
-		return handle;
-	}
-
-	void RenderRegistry::DeleteSkeletalMesh(SkeletalMeshHandle handle)
-	{
-		m_SkeletalMeshPool.Delete(handle.h);
 	}
 
 	MeshInstanceHandle RenderRegistry::CreateMeshInstance(const MeshInstanceDesc& desc)

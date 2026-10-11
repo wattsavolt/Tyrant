@@ -13,6 +13,8 @@ struct VS_OUTPUT
 {
 	float4 pos : SV_POSITION;
 	float4 worldPos : POSITION;
+	// Where this point was last frame, for motion vectors.
+	float4 prevWorldPos : POSITION1;
 	float3 normal : NORMAL;
 	// xyz = world-space tangent, w = bitangent sign (bitangent = cross(normal, tangent.xyz) * tangent.w)
 	float4 tangent : TANGENT0;
@@ -75,6 +77,20 @@ float2 EncodeOct(float3 n)
     n /= (abs(n.x) + abs(n.y) + abs(n.z));
     float2 e = n.z >= 0.0 ? n.xy : (1.0 - abs(n.yx)) * (step(0.0, n.xy) * 2.0 - 1.0);
     return e;
+}
+
+// Matches MeshUtil::EncodeOct - two snorm16 values, x in the low 16 bits.
+uint EncodeOctPacked(float3 n)
+{
+	const float2 e = EncodeOct(n);
+	const int2 quantized = int2(round(clamp(e, -1.0, 1.0) * 32767.0));
+	return ((uint)(quantized.y & 0xFFFF) << 16) | (uint)(quantized.x & 0xFFFF);
+}
+
+// Matches MeshUtil::VertexToShaderVertex's tangent packing, the sign in the top bit.
+uint EncodeOctTangentPacked(float3 t, float bitangentSign)
+{
+	return (EncodeOctPacked(t) & 0x7FFFFFFFu) | (bitangentSign < 0.0f ? 0x80000000u : 0u);
 }
 
 #endif

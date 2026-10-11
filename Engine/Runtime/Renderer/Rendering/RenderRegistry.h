@@ -16,8 +16,6 @@ namespace tyr
 	class Device;
 	class FrameUploadAllocator;
 
-	// TODO: Add skeleton buffer and bone buffer
-	
 	// Class that manages long-lived render resources.
 	//
 	// Deleting a resource here is only safe once nothing still reads it - deletions are
@@ -75,13 +73,6 @@ namespace tyr
 		const Mesh& GetMesh(MeshHandle handle) const
 		{
 			return m_MeshPool[handle.h];
-		}
-
-		SkeletalMeshHandle CreateSkeletalMesh(const SkeletalMeshDesc& desc, uint lodOffset);
-		void DeleteSkeletalMesh(SkeletalMeshHandle handle);
-		const SkeletalMesh& GetSkeletalMesh(SkeletalMeshHandle handle) const
-		{
-			return m_SkeletalMeshPool[handle.h];
 		}
 
 		MeshInstanceHandle CreateMeshInstance(const MeshInstanceDesc& desc);
@@ -148,7 +139,6 @@ namespace tyr
 		LocalObjectPool<Texture, RenderConstants::c_MaxTextures> m_TexturePool;
 		LocalObjectPool<Material, RenderConstants::c_MaxMaterials> m_MaterialPool;
 		LocalObjectPool<Mesh, RenderConstants::c_MaxMeshes> m_MeshPool;
-		LocalObjectPool<SkeletalMesh, RenderConstants::c_MaxSkeletalMeshes> m_SkeletalMeshPool;
 		LocalObjectPool<MeshInstance, RenderConstants::c_MaxMeshInstances> m_MeshInstancePool;
 		LocalObjectPool<SkeletalMeshInstance, RenderConstants::c_MaxSkeletalMeshInstances> m_SkeletalMeshInstancePool;
 		LocalObjectPool<DirectionalLight, RenderConstants::c_DirLightPoolSize> m_DirLightPool;

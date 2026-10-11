@@ -32,6 +32,9 @@ namespace tyr
 			Texture,
 			Material,
 			Mesh,
+			SkeletalMesh,
+			Skeleton,
+			Animation,
 			Level,
 			Other
 		};
@@ -48,6 +51,9 @@ namespace tyr
 			{ "Tex", IM_COL32(196, 82, 70, 255) },
 			{ "Mat", IM_COL32(146, 92, 214, 255) },
 			{ "Mesh", IM_COL32(84, 168, 92, 255) },
+			{ "SkMsh", IM_COL32(60, 150, 160, 255) },
+			{ "Skel", IM_COL32(150, 150, 170, 255) },
+			{ "Anim", IM_COL32(70, 120, 210, 255) },
 			{ "Lvl", IM_COL32(200, 150, 50, 255) },
 			{ "?", IM_COL32(110, 110, 110, 255) }
 		};
@@ -70,6 +76,18 @@ namespace tyr
 			if (strcmp(extension, AssetConstants::c_MeshFileExtension) == 0)
 			{
 				return AssetKind::Mesh;
+			}
+			if (strcmp(extension, AssetConstants::c_SkeletalMeshFileExtension) == 0)
+			{
+				return AssetKind::SkeletalMesh;
+			}
+			if (strcmp(extension, AssetConstants::c_SkeletonFileExtension) == 0)
+			{
+				return AssetKind::Skeleton;
+			}
+			if (strcmp(extension, AssetConstants::c_AnimationFileExtension) == 0)
+			{
+				return AssetKind::Animation;
 			}
 			if (strcmp(extension, AssetConstants::c_LevelFileExtension) == 0)
 			{
@@ -403,7 +421,9 @@ namespace tyr
 
 		if (ImGui::BeginDragDropSource())
 		{
-			ImGui::SetDragDropPayload(kind == AssetKind::Mesh ? c_MeshPayload : c_AssetPayload, &assetID, sizeof(AssetID));
+			// Either kind of mesh can be dropped into the viewport to place it.
+			const bool isMesh = kind == AssetKind::Mesh || kind == AssetKind::SkeletalMesh;
+			ImGui::SetDragDropPayload(isMesh ? c_MeshPayload : c_AssetPayload, &assetID, sizeof(AssetID));
 			ImGui::TextUnformatted(name);
 			ImGui::EndDragDropSource();
 		}

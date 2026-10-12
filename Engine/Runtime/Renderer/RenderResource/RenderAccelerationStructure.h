@@ -10,5 +10,8 @@ namespace tyr
 	struct RenderAccelerationStructure : public RenderResource
 	{
 		AccelerationStructureHandle accelerationStructure{};
+		// Set by the render worker for the frame whose graph builds it, so a frame still rendering
+		// when it's created never puts it in a TLAS unbuilt.
+		bool built = false;
 	};
 }

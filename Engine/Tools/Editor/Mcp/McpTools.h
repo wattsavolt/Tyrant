@@ -68,12 +68,28 @@ namespace tyr
 			uint framesWaited;
 		};
 
+		// A material tool waiting for its material to load, then run again from its request. The
+		// request's body stays in the server's buffer until it's replied to.
+		struct PendingMaterial
+		{
+			uint connection;
+			RequestID id;
+			const char* body;
+			uint bodySize;
+			AssetID material;
+			uint framesWaited;
+		};
+
 		void HandleMessage(McpServer& server, uint connection, const char* body, uint bodySize);
 		void ReplyResult(McpServer& server, uint connection, const RequestID& id);
 		void ReplyToolResult(McpServer& server, uint connection, const RequestID& id, bool isError);
 		void ReplyError(McpServer& server, uint connection, const RequestID* id, int code, const char* message);
 		void WriteID(const RequestID* id);
 		void UpdateCaptures(McpServer& server);
+		void UpdatePendingMaterials(McpServer& server);
+		// Finds the material at args' path. Pending until it's loaded, when the tool is run again.
+		ToolResult FindLoadedMaterial(const simdjson::dom::object& args, AssetID& outMaterial);
+		void WriteMaterial(AssetID material);
 		// Downscales and converts the capture to sRGB, then writes its PNG into m_Png.
 		void EncodeCapture(uint width, uint height, uint maxWidth);
 
@@ -117,6 +133,8 @@ namespace tyr
 		ToolResult CaptureScreenshot(const simdjson::dom::object& args);
 		ToolResult ReadLog(const simdjson::dom::object& args);
 		ToolResult SetCamera(const simdjson::dom::object& args);
+		ToolResult GetMaterial(const simdjson::dom::object& args);
+		ToolResult SetMaterial(const simdjson::dom::object& args);
 
 		static const Tool c_Tools[];
 
@@ -132,9 +150,13 @@ namespace tyr
 		// The tool call being run, for one that finishes later.
 		uint m_CurrentConnection = 0;
 		const RequestID* m_CurrentID = nullptr;
+		const char* m_CurrentBody = nullptr;
+		uint m_CurrentBodySize = 0;
 
 		static constexpr uint c_MaxPendingCaptures = 4;
 		LocalArray<PendingCapture, c_MaxPendingCaptures> m_PendingCaptures;
+		static constexpr uint c_MaxPendingMaterials = 8;
+		LocalArray<PendingMaterial, c_MaxPendingMaterials> m_PendingMaterials;
 		Array<uint8> m_CapturePixels;
 		Array<uint8> m_ImagePixels;
 		Array<uint8> m_Png;

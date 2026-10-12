@@ -25,6 +25,9 @@ namespace tyr
 		// level that was double clicked to open, otherwise an invalid ID.
 		AssetID Draw(AssetID openLevel);
 
+		// A material double clicked during the last Draw, to edit, otherwise an invalid ID.
+		AssetID GetMaterialToEdit() const { return m_MaterialToEdit; }
+
 	private:
 		// Changes chosen from an asset's menu, applied once the grid is drawn since they change
 		// the lists being drawn.
@@ -76,6 +79,7 @@ namespace tyr
 		AssetID m_SelectedAsset;
 		AssetID m_OpenLevel;
 		AssetID m_LevelToOpen;
+		AssetID m_MaterialToEdit;
 		uint m_RegistryVersion = 0;
 		bool m_RevealSelectedFolder = false;
 

@@ -57,13 +57,15 @@ namespace tyr
 	MaterialHandle RenderRegistry::CreateMaterial(const MaterialDesc& desc)
 	{
 		const MaterialHandle handle(m_MaterialPool.Create());
-		Material& material = m_MaterialPool[handle.h];
-		for (Handle handle : desc.textures)
-		{
-			material.textures.Add(handle);
-		}
-		material.type = desc.type;
+		UpdateMaterial(handle, desc);
 		return handle;
+	}
+
+	void RenderRegistry::UpdateMaterial(MaterialHandle handle, const MaterialDesc& desc)
+	{
+		Material& material = m_MaterialPool[handle.h];
+		material.textures = desc.textures;
+		material.type = desc.type;
 	}
 
 	void RenderRegistry::DeleteMaterial(MaterialHandle handle)

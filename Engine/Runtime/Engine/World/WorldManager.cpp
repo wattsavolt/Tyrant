@@ -345,34 +345,28 @@ namespace tyr
 		meshComponent.meshInstanceRequested = true;
 
 		const AssetID meshID = meshComponent.mesh;
-
-		Matrix4 transform = Matrix4::c_Identity;
-		EntitySystem& entities = m_WorldPool[worldHandle].entities;
-		if (entities.HasComponent<ComponentTransform>(entity))
-		{
-			const Transform& worldTransform = entities.GetComponent<ComponentTransform>(entity).world;
-			transform = Matrix4::CreateTRS(worldTransform.position, worldTransform.rotation, worldTransform.scale);
-		}
-
-		m_AssetManager->CreateMeshInstance(m_WorldPool[worldHandle].sceneHandle, meshID, transform, meshComponent.materials,
-			[this, worldHandle, entity, meshID](MeshInstanceHandle handle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials)
+		m_AssetManager->LoadMeshInstanceAssets(meshID, meshComponent.materials, false,
+			[this, worldHandle, entity, meshID](const MeshInstanceAssets& assets)
 			{
 				// The entity or its world was removed while this was loading, so nothing owns it.
 				if (!m_WorldPool.IsValid(worldHandle) || !m_WorldPool[worldHandle].entities.HasComponent<MeshComponent>(entity))
 				{
-					ReleaseMeshInstance(handle, meshID, materials);
+					ReleaseMeshInstance({}, meshID, assets.materialIDs);
 					return;
 				}
 
+				// Created where the entity is now, which may have changed while it was loading.
 				World& world = m_WorldPool[worldHandle];
+				const Transform transform = GetWorldTransform(world.entities, entity);
+				MeshInstanceDesc desc;
+				desc.info.transform = Matrix4::CreateTRS(transform.position, transform.rotation, transform.scale);
+				desc.info.mesh = assets.mesh;
+				desc.info.materials = assets.materials;
+
 				MeshComponent& comp = world.entities.GetComponent<MeshComponent>(entity);
-				comp.meshInstance = handle;
-				comp.loadedMaterials = materials;
-
+				comp.meshInstance = m_RendererAPI->CreateMeshInstance(world.sceneHandle, desc);
+				comp.loadedMaterials = assets.materialIDs;
 				FitBoundsToMesh(world, entity, meshID);
-
-				// The entity may have been moved while its mesh was loading.
-				UpdateEntityTransform(world, entity);
 			});
 	}
 
@@ -637,7 +631,10 @@ namespace tyr
 
 	void WorldManager::ReleaseMeshInstance(MeshInstanceHandle handle, AssetID meshID, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials)
 	{
-		m_RendererAPI->DeleteMeshInstance(handle);
+		if (handle)
+		{
+			m_RendererAPI->DeleteMeshInstance(handle);
+		}
 		for (AssetID materialID : materials)
 		{
 			m_AssetManager->DeleteMaterial(materialID);
@@ -650,34 +647,28 @@ namespace tyr
 		skeletalMesh.meshInstanceRequested = true;
 
 		const AssetID meshID = skeletalMesh.mesh;
-
-		Matrix4 transform = Matrix4::c_Identity;
-		EntitySystem& entities = m_WorldPool[worldHandle].entities;
-		if (entities.HasComponent<ComponentTransform>(entity))
-		{
-			const Transform& worldTransform = entities.GetComponent<ComponentTransform>(entity).world;
-			transform = Matrix4::CreateTRS(worldTransform.position, worldTransform.rotation, worldTransform.scale);
-		}
-
-		m_AssetManager->CreateSkeletalMeshInstance(m_WorldPool[worldHandle].sceneHandle, meshID, transform, skeletalMesh.materials,
-			[this, worldHandle, entity, meshID](SkeletalMeshInstanceHandle handle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials)
+		m_AssetManager->LoadMeshInstanceAssets(meshID, skeletalMesh.materials, true,
+			[this, worldHandle, entity, meshID](const MeshInstanceAssets& assets)
 			{
 				// The entity or its world was removed while this was loading, so nothing owns it.
 				if (!m_WorldPool.IsValid(worldHandle) || !m_WorldPool[worldHandle].entities.HasComponent<SkeletalMeshComponent>(entity))
 				{
-					ReleaseSkeletalMeshInstance(handle, meshID, materials);
+					ReleaseSkeletalMeshInstance({}, meshID, assets.materialIDs);
 					return;
 				}
 
+				// Created where the entity is now, which may have changed while it was loading.
 				World& world = m_WorldPool[worldHandle];
+				const Transform transform = GetWorldTransform(world.entities, entity);
+				SkeletalMeshInstanceDesc desc;
+				desc.info.transform = Matrix4::CreateTRS(transform.position, transform.rotation, transform.scale);
+				desc.info.mesh = assets.mesh;
+				desc.info.materials = assets.materials;
+
 				SkeletalMeshComponent& comp = world.entities.GetComponent<SkeletalMeshComponent>(entity);
-				comp.meshInstance = handle;
-				comp.loadedMaterials = materials;
-
+				comp.meshInstance = m_RendererAPI->CreateSkeletalMeshInstance(world.sceneHandle, desc);
+				comp.loadedMaterials = assets.materialIDs;
 				FitBoundsToMesh(world, entity, meshID);
-
-				// The entity may have been moved while its mesh was loading.
-				UpdateEntityTransform(world, entity);
 			});
 	}
 

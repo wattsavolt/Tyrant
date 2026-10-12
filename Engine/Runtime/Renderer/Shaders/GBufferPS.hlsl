@@ -37,11 +37,6 @@ struct GBufferOutput
 	float2 motion : SV_TARGET2;
 };
 
-// How far a texel's height (relative to 0.5, the neutral/no-height-data value) shifts the
-// UV used to sample this surface point, per unit of tangent-space view direction. Small
-// and constant for now - single-sample offset, not steep/relief parallax.
-static const float c_HeightScale = 0.03f;
-
 GBufferOutput main(VS_OUTPUT input)
 {
 	const float3 normal = normalize(input.normal);
@@ -60,16 +55,21 @@ GBufferOutput main(VS_OUTPUT input)
 	// Single texture holds normal (rgb) + height (a). Sampled once at the untouched UV to get
 	// this point's height, which then offsets every other sample the same way real parallax
 	// would - a flat/absent height map (0.5 everywhere) offsets by exactly zero.
+	const float2 baseUV = input.uv * material.uvScale + material.uvOffset;
 	const float3 viewDirTS = mul(TBN, viewDir);
-	const float height = textures[material.texture1].Sample(samplers[0], input.uv).a;
-	const float2 uv = input.uv - viewDirTS.xy * ((height - 0.5f) * c_HeightScale);
+	const float height = textures[material.texture1].Sample(samplers[0], baseUV).a;
+	const float2 uv = baseUV - viewDirTS.xy * ((height - 0.5f) * material.heightScale);
 
+	// Strength scales the normal's tilt away from the surface, as glTF's normal scale does.
 	const float3 normalSample = textures[material.texture1].Sample(samplers[0], uv).rgb;
-	const float3 tangentSpaceNormal = normalSample * 2.0f - 1.0f;
+	const float3 tangentSpaceNormal = (normalSample * 2.0f - 1.0f) * float3(material.normalStrength, material.normalStrength, 1.0f);
 	const float3 perturbedNormal = normalize(mul(tangentSpaceNormal, TBN));
 
-	const float3 albedo = textures[material.texture0].Sample(samplers[0], uv).rgb;
-	const float3 aoRoughMetal = textures[material.texture2].Sample(samplers[0], uv).rgb;
+	const float3 albedo = textures[material.texture0].Sample(samplers[0], uv).rgb * material.albedoTint.rgb;
+	const float3 aoRoughMetalSample = textures[material.texture2].Sample(samplers[0], uv).rgb;
+	const float ao = lerp(1.0f, aoRoughMetalSample.r, material.occlusionStrength);
+	const float roughness = lerp(material.roughnessRange.x, material.roughnessRange.y, aoRoughMetalSample.g);
+	const float metallic = lerp(material.metallicRange.x, material.metallicRange.y, aoRoughMetalSample.b);
 
 	// Perspective-divide both this frame's and last frame's clip-space position of the same
 	// world point to get their NDC.xy, then take the difference. ViewProj/PrevViewProj both
@@ -81,8 +81,8 @@ GBufferOutput main(VS_OUTPUT input)
 	const float2 motion = ((currentClip.xy / currentClip.w) - (previousClip.xy / previousClip.w)) - JitterDelta;
 
 	GBufferOutput output;
-	output.albedoAO = float4(albedo, aoRoughMetal.r);
-	output.normalRoughMetal = float4(EncodeOct(perturbedNormal), aoRoughMetal.g, aoRoughMetal.b);
+	output.albedoAO = float4(albedo, ao);
+	output.normalRoughMetal = float4(EncodeOct(perturbedNormal), roughness, metallic);
 	output.motion = motion;
 	return output;
 }

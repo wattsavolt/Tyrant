@@ -61,14 +61,11 @@ namespace tyr
 		// Invalid until the material has finished loading.
 		MaterialHandle GetMaterial(AssetID assetID) const;
 
-		// Loads the mesh and its materials, then creates the instance on the renderer. An invalid
-		// or missing entry in materials uses the mesh's own material for that submesh. onCreated
-		// receives the instance and the material actually used for each submesh.
-		void CreateMeshInstance(SceneHandle scene, AssetID meshAssetID, const Matrix4& transform, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials, Function<void(MeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated);
-
-		// Like CreateMeshInstance for a skinned mesh, which also waits for its geometry and skeleton.
-		void CreateSkeletalMeshInstance(SceneHandle scene, AssetID meshAssetID, const Matrix4& transform, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials,
-			Function<void(SkeletalMeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated);
+		// Loads a mesh and the materials an instance of it draws with, then passes them to onLoaded
+		// so the caller can create the instance. An invalid or missing entry in materials uses the
+		// mesh's own material for that submesh. A skinned mesh also waits for its geometry and
+		// skeleton. The caller is given a reference to the mesh and each of the materials.
+		void LoadMeshInstanceAssets(AssetID meshAssetID, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials, bool skinned, Function<void(const MeshInstanceAssets&)> onLoaded);
 
 		// Skeletons and animation clips only live on the CPU, and are freed with their last reference.
 		void LoadSkeleton(AssetID assetID);
@@ -82,6 +79,14 @@ namespace tyr
 		const AnimationClip* GetAnimation(AssetID assetID) const;
 
 		void LoadLocation(AssetID assetID);
+
+#if TYR_EDITOR
+		// A loaded material's file, for editing. Null until LoadMaterial has finished.
+		const MaterialAssetFile* GetMaterialFile(AssetID assetID) const;
+		// Changes a loaded material's parameters, drawn from the next frame. SaveMaterial keeps them.
+		void SetMaterialParams(AssetID assetID, const MaterialParams& params);
+		void SaveMaterial(AssetID assetID);
+#endif
 
 	private:
 		static constexpr float c_UnreferencedAssetMaxAge = 60.0f;
@@ -140,11 +145,11 @@ namespace tyr
 		void DeleteMeshResources(AssetID assetID, AssetData& assetData);
 		void ProcessPendingMeshDeletes();
 
-		// Resolves pending mesh instances once their mesh and every needed material are
+		// Passes on each mesh instance's assets once its mesh and every needed material are
 		// ready, called once per frame.
-		void TryResolvePendingMeshInstances();
-		AssetID GetEffectiveMaterialForSlot(const MeshHeader& header, const MeshInstanceCreateData& instData, uint slot) const;
-		void CreateResolvedMeshInstance(MeshInstanceCreateData* instData);
+		void TryResolvePendingMeshInstanceAssets();
+		AssetID GetEffectiveMaterialForSlot(const MeshHeader& header, const MeshInstanceAssetsRequest& request, uint slot) const;
+		void FinishMeshInstanceAssets(MeshInstanceAssetsRequest* request);
 
 		void LoadCpuAsset(AssetID assetID, AssetLoadType type);
 		void DeleteCpuAsset(AssetID assetID, AssetLoadType type);
@@ -182,9 +187,9 @@ namespace tyr
 		MPSCRingBuffer<CpuAssetLoadData*, c_CpuAssetLoadQueueSize> m_CpuAssetsLoadedQueue;
 		// Materials that have had the file loaded but waiting on their textures to load
 		Array<MaterialLoadData*> m_MaterialsAwaitingTextures;
-		// Mesh instances requested but not yet created - waiting on their mesh's header and
-		// every material they'll need.
-		Array<MeshInstanceCreateData*> m_PendingMeshInstances;
+		// Mesh instances' assets still loading - waiting on their mesh's header and every
+		// material they'll need.
+		Array<MeshInstanceAssetsRequest*> m_PendingMeshInstanceAssets;
 		// AssetIDs whose delete call arrived while still loading - tearing down renderer
 		// resources mid-load would race the in-flight load. refCount drops to 0 immediately
 		// (so a fresh load naturally resurrects the entry) and teardown is deferred until loading finishes.
@@ -193,6 +198,10 @@ namespace tyr
 		Array<PendingAssetDelete> m_PendingMeshDeletes;
 		// Oldest release first.
 		Array<UnreferencedAsset> m_UnreferencedAssets;
+#if TYR_EDITOR
+		// Each loaded material's file at its renderer handle's index, so it can be edited and saved.
+		Array<MaterialAssetFile> m_MaterialFiles;
+#endif
 		// Texture bytes evicted in each of the last few frames, whose memory may not be given back yet.
 		size_t m_EvictedBytes[c_EvictionDelayFrames] = {};
 		uint m_EvictedBytesIndex = 0;

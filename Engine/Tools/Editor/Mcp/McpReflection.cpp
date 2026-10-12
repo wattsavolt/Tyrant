@@ -6,7 +6,9 @@
 #include "AssetSystem/AssetRegistry.h"
 #include "AssetSystem/AssetUtil.h"
 #include "AssetSystem/AssetConstants.h"
+#include "Math/Vector2.h"
 #include "Math/Vector3.h"
+#include "Math/Vector4.h"
 #include "Math/Quaternion.h"
 #include "Math/Math.h"
 #include <cstdio>
@@ -92,16 +94,31 @@ namespace tyr
 				return typeInfo && typeInfo->fieldCount > 0 ? typeInfo : nullptr;
 			}
 
+			void WriteFloats(JsonWriter& writer, const float* values, uint count)
+			{
+				writer.BeginArray();
+				for (uint i = 0; i < count; ++i)
+				{
+					writer.Number(values[i]);
+				}
+				writer.EndArray();
+			}
+
 			void WriteValue(JsonWriter& writer, const void* data, const Id64& typeID, const CustomObjectPropertiesReflector* reflector)
 			{
+				if (typeID == GetTypeID<Vector2>())
+				{
+					WriteFloats(writer, &static_cast<const Vector2*>(data)->x, 2);
+					return;
+				}
 				if (typeID == GetTypeID<Vector3>())
 				{
-					const Vector3& vector = *static_cast<const Vector3*>(data);
-					writer.BeginArray();
-					writer.Number(vector.x);
-					writer.Number(vector.y);
-					writer.Number(vector.z);
-					writer.EndArray();
+					WriteFloats(writer, &static_cast<const Vector3*>(data)->x, 3);
+					return;
+				}
+				if (typeID == GetTypeID<Vector4>())
+				{
+					WriteFloats(writer, &static_cast<const Vector4*>(data)->x, 4);
 					return;
 				}
 				if (typeID == GetTypeID<Quaternion>())
@@ -184,9 +201,17 @@ namespace tyr
 
 			bool ReadValue(const dom::element& value, void* data, const Id64& typeID, const CustomObjectPropertiesReflector* reflector, const char* name, char* error, size_t errorSize)
 			{
+				if (typeID == GetTypeID<Vector2>())
+				{
+					return ReadFloats(value, &static_cast<Vector2*>(data)->x, 2) || Fail(error, errorSize, name, "[x, y]");
+				}
 				if (typeID == GetTypeID<Vector3>())
 				{
 					return ReadFloats(value, &static_cast<Vector3*>(data)->x, 3) || Fail(error, errorSize, name, "[x, y, z]");
+				}
+				if (typeID == GetTypeID<Vector4>())
+				{
+					return ReadFloats(value, &static_cast<Vector4*>(data)->x, 4) || Fail(error, errorSize, name, "[x, y, z, w]");
 				}
 				if (typeID == GetTypeID<Quaternion>())
 				{

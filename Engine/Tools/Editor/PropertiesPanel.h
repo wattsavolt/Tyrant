@@ -33,8 +33,6 @@ namespace tyr
 		// Component is a MeshComponent or SkeletalMeshComponent.
 		template<typename Component>
 		static bool ReflectMeshMaterials(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData);
-		// A uint8 field holding an enum, shown as a list of the names passed as userData.
-		static bool ReflectEnum(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData);
 		// One slot's row. Returns true when it was changed.
 		bool DrawMaterialSlot(LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials, AssetID meshMaterial, uint slot);
 

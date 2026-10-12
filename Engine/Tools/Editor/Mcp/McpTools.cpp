@@ -8,6 +8,8 @@
 #include "AssetSystem/AssetRegistry.h"
 #include "AssetSystem/AssetUtil.h"
 #include "AssetSystem/AssetConstants.h"
+#include "AssetSystem/AssetManager.h"
+#include "AssetSystem/MaterialAsset.h"
 #include "ECS/ComponentRegistry.h"
 #include "Importing/ModelImporter.h"
 #include "Logging/Logger.h"
@@ -46,6 +48,8 @@ namespace tyr
 
 		// How many frames a screenshot waits for the GPU before giving up.
 		constexpr uint c_MaxCaptureFrames = 600;
+		// How many frames a material tool waits for its material to load before giving up.
+		constexpr uint c_MaxMaterialLoadFrames = 600;
 		constexpr uint c_DefaultCaptureWidth = 1280;
 
 		// JSON-RPC's error codes.
@@ -155,6 +159,10 @@ namespace tyr
 			R"({"type":"object","properties":{"afterSequence":{"type":"integer","default":0},"maxEntries":{"type":"integer","default":100},"minLevel":{"type":"string","enum":["error","warning","info"],"default":"info"}}})", &McpTools::ReadLog },
 		{ "set_camera", "Moves the editor's camera and points it at a target.",
 			R"({"type":"object","properties":{"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"target":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3}}})", &McpTools::SetCamera },
+		{ "get_material", "A material's textures and parameters. list_assets with type mat lists materials.",
+			R"({"type":"object","properties":{"path":{"type":"string","description":"Such as Models/Crate/Crate_Material0.mat"}},"required":["path"]})", &McpTools::GetMaterial },
+		{ "set_material", "Changes a material's parameters, named as get_material shows them, and saves it. Only the values given change. Albedo Tint is linear [r, g, b, a] multiplying the albedo texture; roughness and metallic map the texture's 0 to 1 onto their Min to Max, so equal values give a constant; Blend Mode is 0 opaque, 1 masked, 2 translucent. Every actor using the material changes. Returns the material afterwards.",
+			R"({"type":"object","properties":{"path":{"type":"string"},"values":{"type":"object"}},"required":["path","values"]})", &McpTools::SetMaterial },
 	};
 
 	McpTools::McpTools(Editor& editor)
@@ -179,10 +187,40 @@ namespace tyr
 			HandleMessage(server, connection, body, bodySize);
 		}
 		UpdateCaptures(server);
+		UpdatePendingMaterials(server);
+	}
+
+	void McpTools::UpdatePendingMaterials(McpServer& server)
+	{
+		for (uint i = m_PendingMaterials.Size(); i-- > 0;)
+		{
+			PendingMaterial& pending = m_PendingMaterials[i];
+			const bool loaded = m_Editor.m_AssetManager->GetMaterialFile(pending.material) != nullptr;
+			if (!loaded && ++pending.framesWaited < c_MaxMaterialLoadFrames)
+			{
+				continue;
+			}
+
+			// Taken off the list first, since running the request again can add to it.
+			const PendingMaterial finished = pending;
+			m_PendingMaterials.SwapAndPopBack(i);
+			if (loaded)
+			{
+				HandleMessage(server, finished.connection, finished.body, finished.bodySize);
+			}
+			else
+			{
+				Fail("The material didn't finish loading. read_log may say why.");
+				ReplyToolResult(server, finished.connection, finished.id, true);
+			}
+			m_Editor.m_AssetManager->DeleteMaterial(finished.material);
+		}
 	}
 
 	void McpTools::HandleMessage(McpServer& server, uint connection, const char* body, uint bodySize)
 	{
+		m_CurrentBody = body;
+		m_CurrentBodySize = bodySize;
 		dom::element root;
 		if (m_Parser.parse(body, bodySize, false).get(root))
 		{
@@ -1462,5 +1500,99 @@ namespace tyr
 			camera.Target(target);
 		}
 		return GetEditorState(args);
+	}
+
+	McpTools::ToolResult McpTools::FindLoadedMaterial(const dom::object& args, AssetID& outMaterial)
+	{
+		char path[PathConstants::c_MaxAssetPathTotalSize];
+		const bool hasPath = GetString(args, "path", path, sizeof(path));
+		if (HasArgumentError())
+		{
+			return ToolResult::Failed;
+		}
+		if (!hasPath)
+		{
+			return Fail("path is needed.");
+		}
+
+		outMaterial = AssetRegistry::Instance().GetAssetID(path);
+		if (!AssetUtil::IsValidAssetID(outMaterial) || !AssetUtil::HasExtension(path, AssetConstants::c_MaterialFileExtension))
+		{
+			return Fail("There's no material at %s. list_assets with type mat lists them.", path);
+		}
+		if (m_Editor.m_AssetManager->GetMaterialFile(outMaterial))
+		{
+			return ToolResult::Done;
+		}
+
+		if (m_PendingMaterials.Size() == c_MaxPendingMaterials)
+		{
+			return Fail("Too many materials are still loading.");
+		}
+		PendingMaterial& pending = m_PendingMaterials.ExpandOne();
+		pending.connection = m_CurrentConnection;
+		pending.id = *m_CurrentID;
+		pending.body = m_CurrentBody;
+		pending.bodySize = m_CurrentBodySize;
+		pending.material = outMaterial;
+		pending.framesWaited = 0;
+		m_Editor.m_AssetManager->LoadMaterial(outMaterial);
+		return ToolResult::Pending;
+	}
+
+	void McpTools::WriteMaterial(AssetID material)
+	{
+		const MaterialAssetFile& file = *m_Editor.m_AssetManager->GetMaterialFile(material);
+		const AssetRegistry& registry = AssetRegistry::Instance();
+		m_Result.BeginObject();
+		m_Result.KeyString("path", registry.GetAssetData(material).filePath.CStr());
+		m_Result.Key("textures");
+		m_Result.BeginArray();
+		for (AssetID texture : file.textures)
+		{
+			m_Result.String(registry.GetAssetData(texture).filePath.CStr());
+		}
+		m_Result.EndArray();
+		m_Result.Key("parameters");
+		McpReflection::WriteObject(m_Result, &file.params, TypeRegistry::Instance().GetType(GetTypeID<MaterialParams>()));
+		m_Result.EndObject();
+	}
+
+	McpTools::ToolResult McpTools::GetMaterial(const dom::object& args)
+	{
+		AssetID material;
+		const ToolResult found = FindLoadedMaterial(args, material);
+		if (found != ToolResult::Done)
+		{
+			return found;
+		}
+		WriteMaterial(material);
+		return ToolResult::Done;
+	}
+
+	McpTools::ToolResult McpTools::SetMaterial(const dom::object& args)
+	{
+		dom::object values;
+		if (args["values"].get_object().get(values))
+		{
+			return Fail("values (an object) is needed.");
+		}
+		AssetID material;
+		const ToolResult found = FindLoadedMaterial(args, material);
+		if (found != ToolResult::Done)
+		{
+			return found;
+		}
+
+		// Edited as a copy, so a bad value leaves the material as it was.
+		MaterialParams params = m_Editor.m_AssetManager->GetMaterialFile(material)->params;
+		if (!McpReflection::ReadObject(values, &params, TypeRegistry::Instance().GetType(GetTypeID<MaterialParams>()), m_Error, sizeof(m_Error)))
+		{
+			return ToolResult::Failed;
+		}
+		m_Editor.m_AssetManager->SetMaterialParams(material, params);
+		m_Editor.m_AssetManager->SaveMaterial(material);
+		WriteMaterial(material);
+		return ToolResult::Done;
 	}
 }

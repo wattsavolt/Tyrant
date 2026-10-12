@@ -5,6 +5,7 @@
 #include "VulkanCommandList.h"
 #include "VulkanCommandQueue.h"
 #include "VulkanExtensions.h"
+#include "VulkanAddressBindingLog.h"
 #include "Memory/StackAllocation.h"
 
 #define VMA_IMPLEMENTATION
@@ -115,6 +116,7 @@ namespace tyr
 		bool dedicatedAllocExt = false;
 		bool getMemReqExt = false;
 		bool memoryBudgetExt = false;
+		bool addressBindingReportExt = false;
 
 		uint numAvailableExtensions = 0;
 		vkEnumerateDeviceExtensionProperties(device, nullptr, &numAvailableExtensions, nullptr);
@@ -149,6 +151,14 @@ namespace tyr
 						extensions[numExtensions++] = VK_EXT_DEVICE_FAULT_EXTENSION_NAME;
 						m_DeviceFaultSupported = true;
 					}
+#if !TYR_FINAL
+					// Reports each object's GPU addresses, so a fault's address can be traced to its object.
+					else if (strcmp(entry.extensionName, VK_EXT_DEVICE_ADDRESS_BINDING_REPORT_EXTENSION_NAME) == 0)
+					{
+						extensions[numExtensions++] = VK_EXT_DEVICE_ADDRESS_BINDING_REPORT_EXTENSION_NAME;
+						addressBindingReportExt = true;
+					}
+#endif
 				}
 			}
 		}
@@ -351,11 +361,20 @@ namespace tyr
 
 		VkPhysicalDeviceFaultFeaturesEXT enabledFaultFeatures{};
 		enabledFaultFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
-		enabledFaultFeatures.pNext = &enabledRayQueryFeatures;
+		enabledFaultFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
 		enabledFaultFeatures.deviceFault = VK_TRUE;
 		if (m_DeviceFaultSupported)
 		{
 			deviceInfo.pNext = &enabledFaultFeatures;
+		}
+
+		VkPhysicalDeviceAddressBindingReportFeaturesEXT enabledAddressBindingReportFeatures{};
+		enabledAddressBindingReportFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ADDRESS_BINDING_REPORT_FEATURES_EXT;
+		enabledAddressBindingReportFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
+		enabledAddressBindingReportFeatures.reportAddressBinding = VK_TRUE;
+		if (addressBindingReportExt)
+		{
+			deviceInfo.pNext = &enabledAddressBindingReportFeatures;
 		}
 
 		TYR_GASSERT(vkCreateDevice(device, &deviceInfo, g_VulkanAllocationCallbacks, &m_LogicalDevice));
@@ -457,6 +476,9 @@ namespace tyr
 			const char* typeName = typeIndex < sizeof(c_AddressTypeNames) / sizeof(c_AddressTypeNames[0]) ? c_AddressTypeNames[typeIndex] : "unknown";
 			TYR_LOG_ERROR("GPU fault: %s at address 0x%llx (to within 0x%llx bytes)", typeName,
 				(unsigned long long)address.reportedAddress, (unsigned long long)address.addressPrecision);
+#if !TYR_FINAL
+			VulkanAddressBindingLog::LogBindingsAt(address.reportedAddress, address.addressPrecision);
+#endif
 		}
 		for (uint i = 0; i < counts.vendorInfoCount; ++i)
 		{

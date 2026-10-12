@@ -8,6 +8,7 @@
 #include "LevelHierarchyPanel.h"
 #include "PropertiesPanel.h"
 #include "AssetBrowserPanel.h"
+#include "MaterialEditorWindow.h"
 #include "ActorPicker.h"
 #include "EditorRequests.h"
 
@@ -53,6 +54,7 @@ namespace tyr
 		LevelHierarchyPanel m_HierarchyPanel;
 		PropertiesPanel m_PropertiesPanel;
 		AssetBrowserPanel m_AssetBrowserPanel;
+		MaterialEditorWindow m_MaterialEditor;
 		// The Actors tab's list, for placing actors in the level's root folder.
 		ActorPicker m_ActorsTabPicker;
 		ViewSettings m_ViewSettings;

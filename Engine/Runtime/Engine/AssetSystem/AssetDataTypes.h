@@ -43,7 +43,7 @@ namespace tyr
 		uint pendingLodCount = 0;
 		// Mesh-specific for the oment: this mesh's header pool slot, set once CreateMesh has deserialized
 		// it (default-constructed Handle is invalid until then - check with an explicit
-		// bool). Lets other code (AssetManager::CreateMeshInstance) find a mesh's submesh/
+		// bool). Lets other code (AssetManager::LoadMeshInstanceAssets) find a mesh's submesh/
 		// default-material list once it's known, without waiting for its geometry to finish
 		// uploading too. Unused by every other asset type.
 		Handle assetHeader{};
@@ -163,19 +163,23 @@ namespace tyr
 		GpuBufferAllocation skinGpuAlloc;
 	};
 
-	// A mesh instance waiting for its mesh header and materials to load before it's created.
-	struct MeshInstanceCreateData
+	// The loaded renderer resources a mesh instance draws with.
+	struct MeshInstanceAssets
 	{
-		// The scene the instance is drawn in.
-		SceneHandle scene;
+		MeshHandle mesh;
+		LocalArray<MaterialHandle, MeshConstants::c_MaxSubmeshes> materials;
+		// The material asset each submesh uses: its override, or the mesh's own.
+		LocalArray<AssetID, MeshConstants::c_MaxSubmeshes> materialIDs;
+	};
+
+	// The assets of a mesh instance, waiting for its mesh header and materials to load.
+	struct MeshInstanceAssetsRequest
+	{
 		AssetID meshAssetID;
-		Matrix4 transform;
 		// One material per submesh. An invalid or missing entry uses the mesh's own material.
 		LocalArray<AssetID, MeshConstants::c_MaxSubmeshes> materials;
-		// Called once the instance is created, with the material used for each submesh.
-		Function<void(MeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated;
-		// Used instead of onCreated for a skinned mesh.
-		Function<void(SkeletalMeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onSkinnedCreated;
+		Function<void(const MeshInstanceAssets&)> onLoaded;
+		// Also waits for the mesh's geometry and skeleton.
 		bool skinned = false;
 		// Set once the materials have been requested, which needs the mesh header to be loaded.
 		bool materialsRequested = false;

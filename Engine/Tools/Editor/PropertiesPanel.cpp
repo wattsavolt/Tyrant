@@ -26,20 +26,13 @@ namespace tyr
 			return AssetRegistry::Instance().GetAssetID(path);
 		}
 
-		// An invalid material makes the slot use the mesh's own. Trailing ones are dropped, so a
-		// mesh with no overrides has an empty list, the same as its actor type.
-		// The names of an enum's values, in order, for a uint8 field's dropdown.
-		struct EnumNames
-		{
-			const char* const* names;
-			uint count;
-		};
-
 		const char* const c_ColliderShapeNames[] = { "Box", "Sphere", "Capsule" };
 		const char* const c_MotionTypeNames[] = { "Static", "Kinematic", "Dynamic" };
-		const EnumNames c_ColliderShapes = { c_ColliderShapeNames, 3 };
-		const EnumNames c_MotionTypes = { c_MotionTypeNames, 3 };
+		const PropertiesReflector::EnumNames c_ColliderShapes = { c_ColliderShapeNames, 3 };
+		const PropertiesReflector::EnumNames c_MotionTypes = { c_MotionTypeNames, 3 };
 
+		// An invalid material makes the slot use the mesh's own. Trailing ones are dropped, so a
+		// mesh with no overrides has an empty list, the same as its actor type.
 		void SetMaterialSlot(LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials, uint slot, AssetID material)
 		{
 			if (AssetUtil::IsValidAssetID(material))
@@ -77,43 +70,10 @@ namespace tyr
 		m_Reflector.RegisterFieldReflector(GetTypeID<MeshComponent>(), MakeFieldKey("materials"), &ReflectMeshMaterials<MeshComponent>, this);
 		m_Reflector.RegisterFieldReflector(GetTypeID<SkeletalMeshComponent>(), MakeFieldKey("mesh"), &ReflectAsset, skeletalMeshExtension);
 		m_Reflector.RegisterFieldReflector(GetTypeID<SkeletalMeshComponent>(), MakeFieldKey("materials"), &ReflectMeshMaterials<SkeletalMeshComponent>, this);
-		m_Reflector.RegisterFieldReflector(GetTypeID<ColliderComponent>(), MakeFieldKey("shape"), &ReflectEnum, const_cast<EnumNames*>(&c_ColliderShapes));
-		m_Reflector.RegisterFieldReflector(GetTypeID<RigidBodyComponent>(), MakeFieldKey("motionType"), &ReflectEnum, const_cast<EnumNames*>(&c_MotionTypes));
+		m_Reflector.RegisterFieldReflector(GetTypeID<ColliderComponent>(), MakeFieldKey("shape"), &PropertiesReflector::ReflectEnum, const_cast<PropertiesReflector::EnumNames*>(&c_ColliderShapes));
+		m_Reflector.RegisterFieldReflector(GetTypeID<RigidBodyComponent>(), MakeFieldKey("motionType"), &PropertiesReflector::ReflectEnum, const_cast<PropertiesReflector::EnumNames*>(&c_MotionTypes));
 		m_Reflector.RegisterFieldReflector(GetTypeID<AnimatorComponent>(), MakeFieldKey("clip"), &ReflectAsset, animationExtension);
 		m_Reflector.RegisterFieldReflector(GetTypeID<AnimatorComponent>(), MakeFieldKey("layerClip"), &ReflectAsset, animationExtension);
-	}
-
-	bool PropertiesPanel::ReflectEnum(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData)
-	{
-		const EnumNames& names = *static_cast<const EnumNames*>(userData);
-		uint8& value = *(object + field.dataOffset);
-		if (defaults)
-		{
-			reflector.SetNextRowOverridden(value != *(defaults + field.dataOffset));
-		}
-		reflector.BeginValueRow(field.name);
-		bool changed = false;
-		if (reflector.TakeResetRequest() && defaults)
-		{
-			value = *(defaults + field.dataOffset);
-			changed = true;
-		}
-
-		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-		const char* preview = value < names.count ? names.names[value] : "?";
-		if (ImGui::BeginCombo("##enum", preview))
-		{
-			for (uint i = 0; i < names.count; ++i)
-			{
-				if (ImGui::Selectable(names.names[i], value == i))
-				{
-					changed |= value != i;
-					value = static_cast<uint8>(i);
-				}
-			}
-			ImGui::EndCombo();
-		}
-		return changed;
 	}
 
 	bool PropertiesPanel::ReflectAsset(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData)

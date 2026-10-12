@@ -492,6 +492,7 @@ namespace tyr
 
 		MaterialAssetFile material;
 		material.type = MaterialType::PBR;
+		material.params = desc.params;
 		// Sized up front because the textures below are written by index.
 		material.textures.Resize(MaterialConstants::c_PbrAoRoughnessMetallicIndex + 1);
 

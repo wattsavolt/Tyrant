@@ -224,44 +224,45 @@ namespace tyr
 
 	MaterialHandle RendererAPI::CreateMaterial(const MaterialDesc& desc)
 	{
-		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
-		RenderResources& resources = m_Renderer.GetRenderResources();
-
 		const MaterialHandle handle = m_Registry.CreateMaterial(desc);
-		const Material& material = m_Registry.GetMaterial(handle);
+		UploadMaterial(handle, desc);
+		return handle;
+	}
+
+	void RendererAPI::UpdateMaterial(MaterialHandle handle, const MaterialDesc& desc)
+	{
+		m_Registry.UpdateMaterial(handle, desc);
+		UploadMaterial(handle, desc);
+	}
+
+	void RendererAPI::UploadMaterial(MaterialHandle handle, const MaterialDesc& desc)
+	{
+		TYR_STATIC_ASSERT(sizeof(ShaderMaterial) == 80, "ShaderMaterial must match the shaders' 16 byte rows.");
+		TYR_ASSERT(desc.type == MaterialType::PBR);
+		const MaterialParams& params = desc.params;
 
 		ShaderMaterial shaderMaterial;
+		shaderMaterial.texture0 = desc.textures[MaterialConstants::c_PbrAlbedoIndex].index;
+		shaderMaterial.texture1 = desc.textures[MaterialConstants::c_PbrNormalHeightIndex].index;
+		shaderMaterial.texture2 = desc.textures[MaterialConstants::c_PbrAoRoughnessMetallicIndex].index;
+		shaderMaterial.flags = params.blendMode;
+		shaderMaterial.albedoTint = params.albedoTint;
+		shaderMaterial.uvScale = params.uvScale;
+		shaderMaterial.uvOffset = params.uvOffset;
+		shaderMaterial.roughnessRange = Vector2(params.roughnessMin, params.roughnessMax);
+		shaderMaterial.metallicRange = Vector2(params.metallicMin, params.metallicMax);
+		shaderMaterial.normalStrength = params.normalStrength;
+		shaderMaterial.occlusionStrength = params.occlusionStrength;
+		shaderMaterial.heightScale = params.heightScale;
+		shaderMaterial.alphaCutoff = params.alphaCutoff;
 
-		if (material.type == MaterialType::PBR)
-		{
-			shaderMaterial.texture0 = material.textures[MaterialConstants::c_PbrAlbedoIndex].index;
-			shaderMaterial.texture1 = material.textures[MaterialConstants::c_PbrNormalHeightIndex].index;
-			shaderMaterial.texture2 = material.textures[MaterialConstants::c_PbrAoRoughnessMetallicIndex].index;
-			shaderMaterial.flags = 0;
-		}
-
-		UploadBufferAllocation alloc;
-		const bool uploadSuccess = m_AllocManager.RequestFrameUploadAllocation(sizeof(ShaderMaterial), alloc);
-		TYR_ASSERT(uploadSuccess);
-
-		if (uploadSuccess)
-		{
-			RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), m_Device, alloc.offset, &shaderMaterial, sizeof(ShaderMaterial));
-
-			BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
-			request.srcBuffer = alloc.buffer;
-			request.srcOffset = alloc.offset;
-			request.dstBuffer = resources.materialBuffer;
-			request.dstOffset = sizeof(ShaderMaterial) * handle.h.index;
-			request.size = sizeof(ShaderMaterial);
-		}
-
-		return handle;
+		m_Renderer.GetRecords().materials.Set(handle.h.index, shaderMaterial);
 	}
 
 	void RendererAPI::DeleteMaterial(MaterialHandle handle)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		m_Renderer.GetRecords().materials.ClearDirty(handle.h.index);
 		renderFrame.materialsToDelete.Add(handle);
 	}
 
@@ -433,6 +434,7 @@ namespace tyr
 	void RendererAPI::DeleteMeshInstance(MeshInstanceHandle handle)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		m_Renderer.GetRecords().meshInstances.ClearDirty(handle.h.index);
 		// One created this frame hasn't reached its scene yet, so it's only taken back out.
 		if (!RemoveFromList(renderFrame.sceneFrame.meshInstancesToAdd, handle))
 		{
@@ -511,30 +513,15 @@ namespace tyr
 	void RendererAPI::UpdateSkeletalMeshPose(SkeletalMeshInstanceHandle handle, const Matrix4* skinMatrices, uint boneCount, const BoundingSphere& localBounds)
 	{
 		TYR_ASSERT(boneCount <= TYR_MAX_BONES);
-		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
-		RenderResources& resources = m_Renderer.GetRenderResources();
 		SkeletalMeshInstance& instance = m_Registry.GetSkeletalMeshInstance(handle);
 
 		instance.skinnedSphere = localBounds;
 		UploadSkinnedMeshInstance(instance);
 
-		const size_t size = sizeof(Matrix4) * boneCount;
-		UploadBufferAllocation alloc;
-		const bool uploadSuccess = m_AllocManager.RequestFrameUploadAllocation(size, alloc);
-		TYR_ASSERT(uploadSuccess);
-		if (!uploadSuccess)
-		{
-			return;
-		}
-
-		RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), m_Device, alloc.offset, (void*)skinMatrices, size);
-
-		BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
-		request.srcBuffer = alloc.buffer;
-		request.srcOffset = alloc.offset;
-		request.dstBuffer = resources.boneMatrixBuffer;
-		request.dstOffset = sizeof(Matrix4) * TYR_MAX_BONES * handle.h.index;
-		request.size = size;
+		BonePalette& palette = m_Renderer.GetRecords().bonePalettes.GetRecord(handle.h.index);
+		memcpy(palette.matrices, skinMatrices, sizeof(Matrix4) * boneCount);
+		palette.boneCount = boneCount;
+		m_Renderer.GetRecords().bonePalettes.Set(handle.h.index, palette);
 	}
 
 	void RendererAPI::DeleteSkeletalMeshInstance(SkeletalMeshInstanceHandle handle)
@@ -554,6 +541,8 @@ namespace tyr
 		}
 		renderFrame.meshInstancesToDelete.Add(instance.meshInstance);
 		renderFrame.skeletalMeshInstancesToDelete.Add(handle);
+		m_Renderer.GetRecords().meshInstances.ClearDirty(instance.meshInstance.h.index);
+		m_Renderer.GetRecords().bonePalettes.ClearDirty(handle.h.index);
 
 		RemoveFromList(m_Renderer.GetSkinnedInstances(), handle);
 	}
@@ -591,24 +580,7 @@ namespace tyr
 
 	void RendererAPI::WriteMeshInstance(const ShaderMeshInstance& shaderMeshInstance, uint index)
 	{
-		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
-		RenderResources& resources = m_Renderer.GetRenderResources();
-
-		UploadBufferAllocation alloc;
-		const bool uploadSuccess = m_AllocManager.RequestFrameUploadAllocation(sizeof(ShaderMeshInstance), alloc);
-		TYR_ASSERT(uploadSuccess);
-
-		if (uploadSuccess)
-		{
-			RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), m_Device, alloc.offset, const_cast<ShaderMeshInstance*>(&shaderMeshInstance), sizeof(ShaderMeshInstance));
-
-			BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
-			request.srcBuffer = alloc.buffer;
-			request.srcOffset = alloc.offset;
-			request.dstBuffer = resources.meshInstanceBuffer;
-			request.dstOffset = sizeof(ShaderMeshInstance) * index;
-			request.size = sizeof(ShaderMeshInstance);
-		}
+		m_Renderer.GetRecords().meshInstances.Set(index, shaderMeshInstance);
 	}
 
 	void RendererAPI::SetSceneWindow(SceneHandle scene, RenderWindowHandle window)
@@ -649,6 +621,7 @@ namespace tyr
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		RemoveSceneLight(m_Renderer.GetImmediateSceneData(scene).lights.dirLights, handle);
 		renderFrame.dirLightsToDelete.Add(handle);
+		m_Renderer.GetRecords().dirLights.ClearDirty(handle.h.index);
 	}
 
 	PointLightHandle RendererAPI::CreatePointLight(SceneHandle scene, const PointLightDesc& desc)
@@ -671,6 +644,7 @@ namespace tyr
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		RemoveSceneLight(m_Renderer.GetImmediateSceneData(scene).lights.pointLights, handle);
 		renderFrame.pointLightsToDelete.Add(handle);
+		m_Renderer.GetRecords().pointLights.ClearDirty(handle.h.index);
 	}
 
 	SpotLightHandle RendererAPI::CreateSpotLight(SceneHandle scene, const SpotLightDesc& desc)
@@ -693,40 +667,21 @@ namespace tyr
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
 		RemoveSceneLight(m_Renderer.GetImmediateSceneData(scene).lights.spotLights, handle);
 		renderFrame.spotLightsToDelete.Add(handle);
+		m_Renderer.GetRecords().spotLights.ClearDirty(handle.h.index);
 	}
 
 	void RendererAPI::UploadDirectionalLight(const DirectionalLightInfo& info, uint index)
 	{
-		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
-		RenderResources& resources = m_Renderer.GetRenderResources();
-
 		ShaderDirectionalLight shaderLight{};
 		shaderLight.direction = info.direction;
 		shaderLight.intensity = info.intensity;
 		shaderLight.colour = info.colour;
 
-		UploadBufferAllocation alloc;
-		const bool uploadSuccess = m_AllocManager.RequestFrameUploadAllocation(sizeof(ShaderDirectionalLight), alloc);
-		TYR_ASSERT(uploadSuccess);
-
-		if (uploadSuccess)
-		{
-			RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), m_Device, alloc.offset, &shaderLight, sizeof(ShaderDirectionalLight));
-
-			BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
-			request.srcBuffer = alloc.buffer;
-			request.srcOffset = alloc.offset;
-			request.dstBuffer = resources.directionalLightBuffer;
-			request.dstOffset = sizeof(ShaderDirectionalLight) * index;
-			request.size = sizeof(ShaderDirectionalLight);
-		}
+		m_Renderer.GetRecords().dirLights.Set(index, shaderLight);
 	}
 
 	void RendererAPI::UploadPointLight(const PointLightInfo& info, uint index)
 	{
-		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
-		RenderResources& resources = m_Renderer.GetRenderResources();
-
 		ShaderPointLight shaderLight{};
 		shaderLight.position = info.position;
 		shaderLight.range = info.range;
@@ -735,28 +690,11 @@ namespace tyr
 		shaderLight.colour = info.colour;
 
 
-		UploadBufferAllocation alloc;
-		const bool uploadSuccess = m_AllocManager.RequestFrameUploadAllocation(sizeof(ShaderPointLight), alloc);
-		TYR_ASSERT(uploadSuccess);
-
-		if (uploadSuccess)
-		{
-			RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), m_Device, alloc.offset, &shaderLight, sizeof(ShaderPointLight));
-
-			BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
-			request.srcBuffer = alloc.buffer;
-			request.srcOffset = alloc.offset;
-			request.dstBuffer = resources.pointLightBuffer;
-			request.dstOffset = sizeof(ShaderPointLight) * index;
-			request.size = sizeof(ShaderPointLight);
-		}
+		m_Renderer.GetRecords().pointLights.Set(index, shaderLight);
 	}
 
 	void RendererAPI::UploadSpotLight(const SpotLightInfo& info, uint index)
 	{
-		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
-		RenderResources& resources = m_Renderer.GetRenderResources();
-
 		ShaderSpotLight shaderLight{};
 		shaderLight.position = info.position;
 		shaderLight.range = info.range;
@@ -766,21 +704,7 @@ namespace tyr
 		shaderLight.intensity = info.intensity;
 		shaderLight.colour = info.colour;
 
-		UploadBufferAllocation alloc;
-		const bool uploadSuccess = m_AllocManager.RequestFrameUploadAllocation(sizeof(ShaderSpotLight), alloc);
-		TYR_ASSERT(uploadSuccess);
-
-		if (uploadSuccess)
-		{
-			RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), m_Device, alloc.offset, &shaderLight, sizeof(ShaderSpotLight));
-
-			BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
-			request.srcBuffer = alloc.buffer;
-			request.srcOffset = alloc.offset;
-			request.dstBuffer = resources.spotLightBuffer;
-			request.dstOffset = sizeof(ShaderSpotLight) * index;
-			request.size = sizeof(ShaderSpotLight);
-		}
+		m_Renderer.GetRecords().spotLights.Set(index, shaderLight);
 	}
 
 	bool RendererAPI::RequestResourceUploadAllocation(size_t size, UploadBufferAllocation& allocation)

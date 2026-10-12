@@ -9,8 +9,8 @@ namespace tyr
 	class JsonWriter;
 
 	// Reads and writes reflected objects as JSON, covering the same fields and value types the
-	// Properties panel can edit. Vectors are [x, y, z], rotations [x, y, z, w] (or [x, y, z] Euler
-	// degrees when set), and assets their path.
+	// Properties panel can edit. Vectors are arrays such as [x, y, z], rotations [x, y, z, w]
+	// (or [x, y, z] Euler degrees when set), and assets their path.
 	namespace McpReflection
 	{
 		// Writes the object's visible fields as a JSON object.

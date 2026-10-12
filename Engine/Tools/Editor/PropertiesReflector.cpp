@@ -4,6 +4,8 @@
 #include "AssetSystem/AssetUtil.h"
 #include "Utility/PathUtil.h"
 #include "Math/Math.h"
+#include "Math/Vector2.h"
+#include "Math/Vector4.h"
 #include "imgui.h"
 #include <cfloat>
 #include <cstdio>
@@ -52,14 +54,14 @@ namespace tyr
 			return false;
 		}
 
-		// Three number boxes side by side, each marked with its axis' colour like Unreal's.
-		bool DrawAxisFloats(float* values, float speed, const char* format)
+		// Number boxes side by side, each marked with its axis' colour like Unreal's. Up to three.
+		bool DrawAxisFloats(float* values, uint count, float speed, const char* format)
 		{
 			const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
-			const float width = (ImGui::GetContentRegionAvail().x - spacing * 2.0f) / 3.0f;
+			const float width = (ImGui::GetContentRegionAvail().x - spacing * static_cast<float>(count - 1)) / static_cast<float>(count);
 
 			bool changed = false;
-			for (uint i = 0; i < 3; ++i)
+			for (uint i = 0; i < count; ++i)
 			{
 				if (i > 0)
 				{
@@ -79,6 +81,7 @@ namespace tyr
 
 	PropertiesReflector::PropertiesReflector()
 	{
+		RegisterCustomReflector(GetTypeID<Vector2>(), &ReflectVector2);
 		RegisterCustomReflector(GetTypeID<Vector3>(), &ReflectVector3);
 		RegisterCustomReflector(GetTypeID<Quaternion>(), &ReflectQuaternion);
 		RegisterCustomReflector(GetTypeID<AssetID>(), &ReflectAssetID);
@@ -321,11 +324,71 @@ namespace tyr
 		return changed;
 	}
 
+	bool PropertiesReflector::ReflectEnum(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData)
+	{
+		const EnumNames& names = *static_cast<const EnumNames*>(userData);
+		uint8& value = *(object + field.dataOffset);
+		if (defaults)
+		{
+			reflector.SetNextRowOverridden(value != *(defaults + field.dataOffset));
+		}
+		reflector.BeginValueRow(field.name);
+		bool changed = false;
+		if (reflector.TakeResetRequest() && defaults)
+		{
+			value = *(defaults + field.dataOffset);
+			changed = true;
+		}
+
+		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+		const char* preview = value < names.count ? names.names[value] : "?";
+		if (ImGui::BeginCombo("##enum", preview))
+		{
+			for (uint i = 0; i < names.count; ++i)
+			{
+				if (ImGui::Selectable(names.names[i], value == i))
+				{
+					changed |= value != i;
+					value = static_cast<uint8>(i);
+				}
+			}
+			ImGui::EndCombo();
+		}
+		return changed;
+	}
+
+	bool PropertiesReflector::ReflectColour(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData)
+	{
+		Vector4& colour = *reinterpret_cast<Vector4*>(object + field.dataOffset);
+		if (defaults)
+		{
+			reflector.SetNextRowOverridden(memcmp(&colour, defaults + field.dataOffset, sizeof(Vector4)) != 0);
+		}
+		reflector.BeginValueRow(field.name);
+		bool changed = false;
+		if (reflector.TakeResetRequest() && defaults)
+		{
+			memcpy(&colour, defaults + field.dataOffset, sizeof(Vector4));
+			changed = true;
+		}
+
+		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+		changed |= ImGui::ColorEdit4("##colour", &colour.x, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_AlphaBar);
+		return changed;
+	}
+
+	bool PropertiesReflector::ReflectVector2(PropertiesReflector& reflector, const char* label, void* data)
+	{
+		reflector.BeginValueRow(label);
+		Vector2& vector = *static_cast<Vector2*>(data);
+		return DrawAxisFloats(&vector.x, 2, 0.01f, "%.3f");
+	}
+
 	bool PropertiesReflector::ReflectVector3(PropertiesReflector& reflector, const char* label, void* data)
 	{
 		reflector.BeginValueRow(label);
 		Vector3& vector = *static_cast<Vector3*>(data);
-		return DrawAxisFloats(&vector.x, 0.01f, "%.3f");
+		return DrawAxisFloats(&vector.x, 3, 0.01f, "%.3f");
 	}
 
 	bool PropertiesReflector::ReflectQuaternion(PropertiesReflector& reflector, const char* label, void* data)
@@ -366,7 +429,7 @@ namespace tyr
 		}
 
 		Vector3 degrees = entry->degrees;
-		if (!DrawAxisFloats(&degrees.x, 0.5f, "%.2f"))
+		if (!DrawAxisFloats(&degrees.x, 3, 0.5f, "%.2f"))
 		{
 			return false;
 		}

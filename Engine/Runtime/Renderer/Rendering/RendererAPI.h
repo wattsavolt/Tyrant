@@ -93,6 +93,9 @@ namespace tyr
 
 		MaterialHandle CreateMaterial(const MaterialDesc& desc);
 
+		// Changes a material's textures and parameters, seen from the next frame drawn.
+		void UpdateMaterial(MaterialHandle handle, const MaterialDesc& desc);
+
 		void DeleteMaterial(MaterialHandle handle);
 
 		MeshHandle CreateMesh(const MeshDesc& desc);
@@ -207,6 +210,7 @@ namespace tyr
 		void UploadDirectionalLight(const DirectionalLightInfo& info, uint index);
 		void UploadPointLight(const PointLightInfo& info, uint index);
 		void UploadSpotLight(const SpotLightInfo& info, uint index);
+		void UploadMaterial(MaterialHandle handle, const MaterialDesc& desc);
 
 		Renderer& m_Renderer;
 		RenderRegistry& m_Registry;

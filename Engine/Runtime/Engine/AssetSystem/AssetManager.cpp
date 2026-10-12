@@ -72,11 +72,14 @@ namespace tyr
 
 		AssetRegistry::Instance().Load();
 		m_MaterialsAwaitingTextures.Reserve(100);
-		m_PendingMeshInstances.Reserve(100);
+		m_PendingMeshInstanceAssets.Reserve(100);
 		m_PendingTextureDeletes.Reserve(16);
 		m_PendingMaterialDeletes.Reserve(16);
 		m_PendingMeshDeletes.Reserve(16);
 		m_UnreferencedAssets.Reserve(c_MaxUnreferencedAssets);
+#if TYR_EDITOR
+		m_MaterialFiles.Resize(RenderConstants::c_MaxMaterials);
+#endif
 	}
 
 	AssetManager::~AssetManager()
@@ -156,7 +159,7 @@ namespace tyr
 			}
 		}
 
-		TryResolvePendingMeshInstances();
+		TryResolvePendingMeshInstanceAssets();
 
 		ProcessPendingTextureDeletes();
 		ProcessPendingMaterialDeletes();
@@ -204,11 +207,11 @@ namespace tyr
 		}
 		m_MaterialsAwaitingTextures.Clear();
 
-		for (MeshInstanceCreateData* instData : m_PendingMeshInstances)
+		for (MeshInstanceAssetsRequest* request : m_PendingMeshInstanceAssets)
 		{
-			TempDelete<MeshInstanceCreateData>(instData);
+			TempDelete<MeshInstanceAssetsRequest>(request);
 		}
-		m_PendingMeshInstances.Clear();
+		m_PendingMeshInstanceAssets.Clear();
 	}
 
 	void AssetManager::LoadTexture(AssetID assetID)
@@ -655,16 +658,51 @@ namespace tyr
 
 		MaterialDesc desc;
 		desc.type = ld->file.type;
+		desc.params = ld->file.params;
 		for (AssetID id : ld->file.textures)
 		{
 			desc.textures.Add(m_AssetMap[id].resourceHandle);
 		}
 
-		TempDelete<MaterialLoadData>(ld);
-
 		asset.loadState = AssetLoadState::Loaded;
 		asset.resourceHandle = m_RendererAPI->CreateMaterial(desc).h;
+#if TYR_EDITOR
+		m_MaterialFiles[asset.resourceHandle.index] = ld->file;
+#endif
+		TempDelete<MaterialLoadData>(ld);
 	}
+
+#if TYR_EDITOR
+	const MaterialAssetFile* AssetManager::GetMaterialFile(AssetID assetID) const
+	{
+		const MaterialHandle material = GetMaterial(assetID);
+		return material ? &m_MaterialFiles[material.h.index] : nullptr;
+	}
+
+	void AssetManager::SetMaterialParams(AssetID assetID, const MaterialParams& params)
+	{
+		const MaterialHandle material = GetMaterial(assetID);
+		TYR_ASSERT(material);
+		MaterialAssetFile& file = m_MaterialFiles[material.h.index];
+		file.params = params;
+
+		MaterialDesc desc;
+		desc.type = file.type;
+		desc.params = params;
+		for (AssetID id : file.textures)
+		{
+			desc.textures.Add(m_AssetMap[id].resourceHandle);
+		}
+		m_RendererAPI->UpdateMaterial(material, desc);
+	}
+
+	void AssetManager::SaveMaterial(AssetID assetID)
+	{
+		const MaterialHandle material = GetMaterial(assetID);
+		TYR_ASSERT(material);
+		AssetUtil::SaveAsset<MaterialAssetFile>(AssetRegistry::Instance().GetAssetData(assetID).filePath.CStr(), m_MaterialFiles[material.h.index]);
+	}
+#endif
 
 	void AssetManager::LoadMesh(AssetID assetID)
 	{
@@ -1016,34 +1054,33 @@ namespace tyr
 		TempDelete<MeshGeometryLoadData>(ld);
 	}
 
-	void AssetManager::CreateMeshInstance(SceneHandle scene, AssetID meshAssetID, const Matrix4& transform, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials, Function<void(MeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated)
+	void AssetManager::LoadMeshInstanceAssets(AssetID meshAssetID, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials, bool skinned, Function<void(const MeshInstanceAssets&)> onLoaded)
 	{
 		LoadMesh(meshAssetID);
 
-		MeshInstanceCreateData* instData = TempNew<MeshInstanceCreateData>();
-		instData->scene = scene;
-		instData->meshAssetID = meshAssetID;
-		instData->transform = transform;
-		instData->materials = materials;
-		instData->onCreated = std::move(onCreated);
-		m_PendingMeshInstances.Add(instData);
+		MeshInstanceAssetsRequest* request = TempNew<MeshInstanceAssetsRequest>();
+		request->meshAssetID = meshAssetID;
+		request->materials = materials;
+		request->onLoaded = std::move(onLoaded);
+		request->skinned = skinned;
+		m_PendingMeshInstanceAssets.Add(request);
 	}
 
-	AssetID AssetManager::GetEffectiveMaterialForSlot(const MeshHeader& header, const MeshInstanceCreateData& instData, uint slot) const
+	AssetID AssetManager::GetEffectiveMaterialForSlot(const MeshHeader& header, const MeshInstanceAssetsRequest& request, uint slot) const
 	{
-		if (slot < instData.materials.Size() && AssetUtil::IsValidAssetID(instData.materials[slot]))
+		if (slot < request.materials.Size() && AssetUtil::IsValidAssetID(request.materials[slot]))
 		{
-			return instData.materials[slot];
+			return request.materials[slot];
 		}
 		return header.materials[slot];
 	}
 
-	void AssetManager::TryResolvePendingMeshInstances()
+	void AssetManager::TryResolvePendingMeshInstanceAssets()
 	{
-		for (uint i = 0; i < m_PendingMeshInstances.Size();)
+		for (uint i = 0; i < m_PendingMeshInstanceAssets.Size();)
 		{
-			MeshInstanceCreateData* instData = m_PendingMeshInstances[i];
-			const AssetData& meshAssetData = m_AssetMap[instData->meshAssetID];
+			MeshInstanceAssetsRequest* request = m_PendingMeshInstanceAssets[i];
+			const AssetData& meshAssetData = m_AssetMap[request->meshAssetID];
 
 			bool ready = false;
 
@@ -1054,23 +1091,23 @@ namespace tyr
 				const MeshHeader& header = m_MeshHeaderPool[meshAssetData.assetHeader];
 				TYR_ASSERT(header.materials.Size() <= MeshConstants::c_MaxSubmeshes);
 
-				if (!instData->materialsRequested)
+				if (!request->materialsRequested)
 				{
 					// Every slot needs *something* loaded - either its override or the
 					// mesh's own default for that slot. Only safe to work out now that the
 					// header (and so the default list) is actually available.
 					for (uint slot = 0; slot < header.materials.Size(); ++slot)
 					{
-						LoadMaterial(GetEffectiveMaterialForSlot(header, *instData, slot));
+						LoadMaterial(GetEffectiveMaterialForSlot(header, *request, slot));
 					}
-					instData->materialsRequested = true;
+					request->materialsRequested = true;
 				}
 
 				// A skinned instance is skinned from the uploaded geometry by its skeleton.
-				ready = !instData->skinned || (meshAssetData.loadState == AssetLoadState::Loaded && GetSkeleton(header.skeleton));
+				ready = !request->skinned || (meshAssetData.loadState == AssetLoadState::Loaded && GetSkeleton(header.skeleton));
 				for (uint slot = 0; ready && slot < header.materials.Size(); ++slot)
 				{
-					const AssetID materialID = GetEffectiveMaterialForSlot(header, *instData, slot);
+					const AssetID materialID = GetEffectiveMaterialForSlot(header, *request, slot);
 					if (m_AssetMap[materialID].loadState != AssetLoadState::Loaded)
 					{
 						ready = false;
@@ -1081,8 +1118,9 @@ namespace tyr
 
 			if (ready)
 			{
-				CreateResolvedMeshInstance(instData);
-				m_PendingMeshInstances.SwapAndPopBack(i);
+				// Taken off the list first, since the callback can request more.
+				m_PendingMeshInstanceAssets.SwapAndPopBack(i);
+				FinishMeshInstanceAssets(request);
 			}
 			else
 			{
@@ -1091,60 +1129,25 @@ namespace tyr
 		}
 	}
 
-	void AssetManager::CreateResolvedMeshInstance(MeshInstanceCreateData* instData)
+	void AssetManager::FinishMeshInstanceAssets(MeshInstanceAssetsRequest* request)
 	{
-		const AssetData& meshAssetData = m_AssetMap[instData->meshAssetID];
+		const AssetData& meshAssetData = m_AssetMap[request->meshAssetID];
 		const MeshHeader& header = m_MeshHeaderPool[meshAssetData.assetHeader];
 
-		MeshInstanceDesc desc;
-		desc.info.transform = instData->transform;
-		desc.info.mesh = MeshHandle(meshAssetData.resourceHandle);
-		desc.info.materials.Resize(header.materials.Size());
-		LocalArray<AssetID, MeshConstants::c_MaxSubmeshes> materialAssetIDs;
+		MeshInstanceAssets assets;
+		assets.mesh = MeshHandle(meshAssetData.resourceHandle);
 		for (uint slot = 0; slot < header.materials.Size(); ++slot)
 		{
-			const AssetID materialID = GetEffectiveMaterialForSlot(header, *instData, slot);
-			desc.info.materials[slot] = MaterialHandle(m_AssetMap[materialID].resourceHandle);
-			materialAssetIDs.Add(materialID);
+			const AssetID materialID = GetEffectiveMaterialForSlot(header, *request, slot);
+			assets.materials.Add(MaterialHandle(m_AssetMap[materialID].resourceHandle));
+			assets.materialIDs.Add(materialID);
 		}
 
-		if (instData->skinned)
+		if (request->onLoaded)
 		{
-			SkeletalMeshInstanceDesc skinnedDesc;
-			skinnedDesc.info.transform = desc.info.transform;
-			skinnedDesc.info.mesh = desc.info.mesh;
-			skinnedDesc.info.materials = desc.info.materials;
-			const SkeletalMeshInstanceHandle handle = m_RendererAPI->CreateSkeletalMeshInstance(instData->scene, skinnedDesc);
-			if (instData->onSkinnedCreated)
-			{
-				instData->onSkinnedCreated(handle, materialAssetIDs);
-			}
+			request->onLoaded(assets);
 		}
-		else
-		{
-			const MeshInstanceHandle handle = m_RendererAPI->CreateMeshInstance(instData->scene, desc);
-			if (instData->onCreated)
-			{
-				instData->onCreated(handle, materialAssetIDs);
-			}
-		}
-
-		TempDelete<MeshInstanceCreateData>(instData);
-	}
-
-	void AssetManager::CreateSkeletalMeshInstance(SceneHandle scene, AssetID meshAssetID, const Matrix4& transform, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>& materials,
-		Function<void(SkeletalMeshInstanceHandle, const LocalArray<AssetID, MeshConstants::c_MaxSubmeshes>&)> onCreated)
-	{
-		LoadMesh(meshAssetID);
-
-		MeshInstanceCreateData* instData = TempNew<MeshInstanceCreateData>();
-		instData->scene = scene;
-		instData->meshAssetID = meshAssetID;
-		instData->transform = transform;
-		instData->materials = materials;
-		instData->onSkinnedCreated = std::move(onCreated);
-		instData->skinned = true;
-		m_PendingMeshInstances.Add(instData);
+		TempDelete<MeshInstanceAssetsRequest>(request);
 	}
 
 	void AssetManager::LoadSkeleton(AssetID assetID)

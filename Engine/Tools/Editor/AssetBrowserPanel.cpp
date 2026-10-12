@@ -156,6 +156,7 @@ namespace tyr
 	{
 		m_OpenLevel = openLevel;
 		m_LevelToOpen = {};
+		m_MaterialToEdit = {};
 		RefreshIfNeeded();
 
 		ImGui::BeginChild("##Folders", ImVec2(c_FolderTreeWidth, 0.0f), ImGuiChildFlags_Borders);
@@ -413,9 +414,10 @@ namespace tyr
 		{
 			m_SelectedAsset = assetID;
 		}
-		if (kind == AssetKind::Level && hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+		if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
 		{
-			m_LevelToOpen = assetID;
+			m_LevelToOpen = kind == AssetKind::Level ? assetID : m_LevelToOpen;
+			m_MaterialToEdit = kind == AssetKind::Material ? assetID : m_MaterialToEdit;
 		}
 		ImGui::SetItemTooltip("%s", path);
 

@@ -19,6 +19,7 @@
 #include "RenderRegistry.h"
 #include "RenderTargetPool.h"
 #include "RenderAllocationManager.h"
+#include "RenderRecordTable.h"
 #include "Window/WindowConstants.h"
 
 namespace tyr
@@ -44,6 +45,25 @@ namespace tyr
 		// from a stale one left over from an earlier use of the same slot. Starts at an
 		// otherwise-unreachable sentinel, not 0, since 0 is itself a legitimate frame number.
 		uint64 frameNumber = ~uint64(0);
+	};
+
+	// A skinned instance's bone matrices. Only the first boneCount are uploaded.
+	struct BonePalette
+	{
+		Matrix4 matrices[TYR_MAX_BONES];
+		uint boneCount = 0;
+	};
+
+	// The main thread's copies of the GPU's per-slot records. Each changed slot is uploaded once
+	// a frame, when the frame is rendered.
+	struct RenderRecords
+	{
+		RenderRecordTable<ShaderMeshInstance, RenderConstants::c_MaxMeshInstances> meshInstances;
+		RenderRecordTable<ShaderMaterial, RenderConstants::c_MaxMaterials> materials;
+		RenderRecordTable<ShaderDirectionalLight, RenderConstants::c_MaxDirLights> dirLights;
+		RenderRecordTable<ShaderPointLight, RenderConstants::c_MaxPointLights> pointLights;
+		RenderRecordTable<ShaderSpotLight, RenderConstants::c_MaxSpotLights> spotLights;
+		RenderRecordTable<BonePalette, RenderConstants::c_MaxSkeletalMeshInstances> bonePalettes;
 	};
 
 	class Renderer final : INonCopyable
@@ -95,6 +115,12 @@ namespace tyr
 			return m_RenderFrames[m_RenderFrameIndex];
 		}
 
+		// Copies data to dstBuffer at the start of the next frame drawn. Each place may be written
+		// once a frame, so per-slot records go through GetRecords instead. Main thread only.
+		void QueueFrameUpload(RenderBufferHandle dstBuffer, size_t dstOffset, const void* data, size_t size);
+
+		RenderRecords& GetRecords() { return m_Records; }
+
 		// Which buffered RenderFrame slot (and so which RenderViewportTextureData entry) this
 		// tick's Update()/EndFrame() calls are all operating on - stable for the whole tick,
 		// only advancing in PrepareForNextFrame. Main thread only, like GetRenderFrame().
@@ -131,6 +157,11 @@ namespace tyr
 		void QueueAccelerationStructureBindingUpdate(uint bindingIndex, uint descriptorArrayIndex, const AccelerationStructureBindingInfo& info);
 
 	private:
+		// Uploads every record changed since the last frame, then clears their dirty bits.
+		void FlushRecords();
+		template<typename T, uint N>
+		void FlushRecordTable(RenderRecordTable<T, N>& table, RenderBufferHandle buffer);
+
 		// Waits for the last RenderAsync task to finish (CPU-side) and releases every buffered
 		// slot's task. Used internally by Shutdown() and StallUntilGPUIdle(), both of which need
 		// "nothing is still recording" before touching shared state.
@@ -337,6 +368,7 @@ namespace tyr
 		// next mesh would exceed the per-frame byte budget.
 		Array<MeshHandle> m_PendingBLASBuilds;
 		Array<SkeletalMeshInstanceHandle> m_SkinnedInstances;
+		RenderRecords m_Records;
 		// Current per-slot capacity of m_Resources.blasScratchBuffer.
 		size_t m_BLASScratchCapacity = 0;
 		// How many floats each slot's Hi-Z buffer holds.

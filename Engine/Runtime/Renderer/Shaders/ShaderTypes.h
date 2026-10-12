@@ -209,14 +209,25 @@ namespace tyr
 		float padding;
 	};
 
+	// A MaterialParams laid out in 16 byte rows.
 	TYR_SHADER_STRUCT(Material)
 	{
 		// PBR textures: 0=albedo, 1=RGB normal/A height, 2=R ambient occlusion/G roughness/B metallic.
 		uint texture0;
-		uint texture1; 
+		uint texture1;
 		uint texture2;
-		uint texture3; // could be used with a non-PBR material type 
+		// Bits 0 and 1 hold the MaterialBlendMode.
 		uint flags;
+		TYR_SHADER_FLOAT4 albedoTint;
+		TYR_SHADER_FLOAT2 uvScale;
+		TYR_SHADER_FLOAT2 uvOffset;
+		// x min and y max, the range a texel's 0 to 1 maps onto.
+		TYR_SHADER_FLOAT2 roughnessRange;
+		TYR_SHADER_FLOAT2 metallicRange;
+		float normalStrength;
+		float occlusionStrength;
+		float heightScale;
+		float alphaCutoff;
 	};
 
 	TYR_SHADER_STRUCT(Vertex)

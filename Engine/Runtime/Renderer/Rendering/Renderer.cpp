@@ -232,6 +232,7 @@ namespace tyr
 
 		RenderFrame& renderFrame = GetRenderFrame();
 		renderFrame.deltaTime = deltaTime;
+		FlushRecords();
 
 		// Keeps the GPU memory budget the render target pool and asset cache go by up to date.
 		m_Ctx.device->SetCurrentFrameIndex(static_cast<uint>(m_FrameNumber));
@@ -563,22 +564,9 @@ namespace tyr
 					m_PrevJitterNDC = jitterNDC;
 				}
 
-				{
-					UploadBufferAllocation alloc;
-					const bool allocSuccess = m_AllocManager.RequestFrameUploadAllocation(sizeof(ShaderSceneInfo), alloc);
-					TYR_ASSERT(allocSuccess);
-
-					RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), *m_Ctx.device, alloc.offset, &sceneInfo, sizeof(ShaderSceneInfo));
-
-					BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
-					request.srcBuffer = alloc.buffer;
-					request.srcOffset = alloc.offset;
-					request.dstBuffer = m_Resources.sceneInfoBuffer;
-					// The whole buffer is bound as a single cbuffer at offset 0 - only one scene ever
-					// renders at a time, so there's no per-scene slot to index into here.
-					request.dstOffset = 0;
-					request.size = sizeof(ShaderSceneInfo);
-				}
+				// The whole buffer is bound as a single cbuffer at offset 0 - only one scene ever
+				// renders at a time, so there's no per-scene slot to index into here.
+				QueueFrameUpload(m_Resources.sceneInfoBuffer, 0, &sceneInfo, sizeof(ShaderSceneInfo));
 
 				// The active scene's lights as their slots in the light buffers, so the lighting
 				// shader only sees this scene's lights, in order, whatever else is in the pools.
@@ -600,19 +588,7 @@ namespace tyr
 					{
 						lightIndices[count++] = handle.h.index;
 					}
-
-					UploadBufferAllocation alloc;
-					const bool allocSuccess = m_AllocManager.RequestFrameUploadAllocation(sizeof(lightIndices), alloc);
-					TYR_ASSERT(allocSuccess);
-
-					RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), *m_Ctx.device, alloc.offset, lightIndices, sizeof(lightIndices));
-
-					BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
-					request.srcBuffer = alloc.buffer;
-					request.srcOffset = alloc.offset;
-					request.dstBuffer = m_Resources.lightIndexBuffer;
-					request.dstOffset = 0;
-					request.size = sizeof(lightIndices);
+					QueueFrameUpload(m_Resources.lightIndexBuffer, 0, lightIndices, sizeof(lightIndices));
 				}
 
 				// Clear and update to get rid of old views
@@ -941,7 +917,11 @@ namespace tyr
 
 		// Rebuild the TLAS's instance buffer from this same active list. An instance whose mesh
 		// hasn't finished its one-time BLAS build yet is skipped - it simply doesn't
-		// cast/receive shadows for its first few frames.
+		// cast/receive shadows for its first few frames. This frame's builds run before its TLAS's.
+		for (const BLASBuildRecord& record : renderFrame.blasBuildsToRecord)
+		{
+			record.blasResource->built = true;
+		}
 		{
 			const uint activeInstanceCount = scene.content.meshInstances.Size();
 			uint tlasInstanceCount = 0;
@@ -956,7 +936,7 @@ namespace tyr
 					const MeshInstance& instance = registry.GetMeshInstance(handle);
 					const Mesh& mesh = registry.GetMesh(instance.info.mesh);
 					// A skinned mesh's own BLAS would be its bind pose - its instances are added below.
-					if (mesh.skinned || !mesh.blas.accelerationStructure)
+					if (mesh.skinned || !mesh.blas.built)
 					{
 						continue;
 					}
@@ -3846,6 +3826,54 @@ namespace tyr
 		desc.usage = RenderBufferUsage::RayTracing;
 		m_Resources.blasScratchBuffer = m_Registry.CreateBuffer(desc);
 		m_BLASScratchCapacity = requiredPerSlotSize;
+	}
+
+	void Renderer::QueueFrameUpload(RenderBufferHandle dstBuffer, size_t dstOffset, const void* data, size_t size)
+	{
+		UploadBufferAllocation alloc;
+		const bool allocSuccess = m_AllocManager.RequestFrameUploadAllocation(size, alloc);
+		TYR_ASSERT(allocSuccess);
+		if (!allocSuccess)
+		{
+			return;
+		}
+		RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), *m_Ctx.device, alloc.offset, const_cast<void*>(data), size);
+
+		BufferUploadRequest& request = GetRenderFrame().frameBufferUploadRequests.ExpandOne();
+		request.srcBuffer = alloc.buffer;
+		request.srcOffset = alloc.offset;
+		request.dstBuffer = dstBuffer;
+		request.dstOffset = dstOffset;
+		request.size = size;
+	}
+
+	template<typename T, uint N>
+	void Renderer::FlushRecordTable(RenderRecordTable<T, N>& table, RenderBufferHandle buffer)
+	{
+		// Neighbouring changed slots go up as one copy.
+		table.Flush([this, &table, buffer](uint first, uint count)
+		{
+			QueueFrameUpload(buffer, sizeof(T) * first, table.GetRecords() + first, sizeof(T) * count);
+		});
+	}
+
+	void Renderer::FlushRecords()
+	{
+		FlushRecordTable(m_Records.meshInstances, m_Resources.meshInstanceBuffer);
+		FlushRecordTable(m_Records.materials, m_Resources.materialBuffer);
+		FlushRecordTable(m_Records.dirLights, m_Resources.directionalLightBuffer);
+		FlushRecordTable(m_Records.pointLights, m_Resources.pointLightBuffer);
+		FlushRecordTable(m_Records.spotLights, m_Resources.spotLightBuffer);
+
+		// Each palette only uploads the bones it uses, so palettes go up one at a time.
+		m_Records.bonePalettes.Flush([this](uint first, uint count)
+		{
+			for (uint i = first; i < first + count; ++i)
+			{
+				const BonePalette& palette = m_Records.bonePalettes.GetRecord(i);
+				QueueFrameUpload(m_Resources.boneMatrixBuffer, sizeof(Matrix4) * TYR_MAX_BONES * i, palette.matrices, sizeof(Matrix4) * palette.boneCount);
+			}
+		});
 	}
 
 	uint Renderer::RequestViewportCapture()

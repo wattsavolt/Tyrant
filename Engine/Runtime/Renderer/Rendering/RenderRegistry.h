@@ -54,6 +54,7 @@ namespace tyr
 		}
 
 		MaterialHandle CreateMaterial(const MaterialDesc& desc);
+		void UpdateMaterial(MaterialHandle handle, const MaterialDesc& desc);
 		void DeleteMaterial(MaterialHandle handle);
 		Material& GetMaterial(MaterialHandle handle)
 		{

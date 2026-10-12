@@ -4,6 +4,7 @@
 #include "Core.h"
 #include "AssetSystem/AssetID.h"
 #include "String/Path.h"
+#include "RenderResource/MaterialDesc.h"
 
 namespace tyr
 {
@@ -35,6 +36,7 @@ namespace tyr
 		AssetID aoRoughnessMetallicID;
 		// Are input textures in sRGB colour space
 		bool isSRGB = true;
+		MaterialParams params;
 	};
 
 	struct MaterialAssetFile;

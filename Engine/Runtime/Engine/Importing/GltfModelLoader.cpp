@@ -18,6 +18,49 @@ namespace tyr
 {
 	namespace
 	{
+		// glTF's material factors. Without a roughness/metallic texture, the default texture's values
+		// are replaced by the factors alone, so their range collapses to the factor.
+		void SetMaterialParams(const fastgltf::Material& material, MaterialParams& params)
+		{
+			const fastgltf::PBRData& pbr = material.pbrData;
+			params.albedoTint = Vector4(pbr.baseColorFactor[0], pbr.baseColorFactor[1], pbr.baseColorFactor[2], pbr.baseColorFactor[3]);
+
+			const bool hasRoughnessMetallic = pbr.metallicRoughnessTexture.has_value();
+			params.roughnessMin = hasRoughnessMetallic ? 0.0f : pbr.roughnessFactor;
+			params.roughnessMax = pbr.roughnessFactor;
+			params.metallicMin = hasRoughnessMetallic ? 0.0f : pbr.metallicFactor;
+			params.metallicMax = pbr.metallicFactor;
+			params.normalStrength = material.normalTexture.has_value() ? material.normalTexture->scale : 1.0f;
+			params.occlusionStrength = material.occlusionTexture.has_value() ? material.occlusionTexture->strength : 1.0f;
+
+			params.alphaCutoff = material.alphaCutoff;
+			MaterialBlendMode blendMode = MaterialBlendMode::Opaque;
+			switch (material.alphaMode)
+			{
+			case fastgltf::AlphaMode::Mask:
+				blendMode = MaterialBlendMode::Masked;
+				break;
+			case fastgltf::AlphaMode::Blend:
+				blendMode = MaterialBlendMode::Translucent;
+				break;
+			default:
+				break;
+			}
+			params.blendMode = static_cast<uint8>(blendMode);
+
+			// One transform covers every texture, so the albedo texture's is used.
+			if (pbr.baseColorTexture.has_value() && pbr.baseColorTexture->transform)
+			{
+				const fastgltf::TextureTransform& transform = *pbr.baseColorTexture->transform;
+				params.uvScale = Vector2(transform.uvScale[0], transform.uvScale[1]);
+				params.uvOffset = Vector2(transform.uvOffset[0], transform.uvOffset[1]);
+				if (transform.rotation != 0.0f)
+				{
+					TYR_LOG_WARNING("The material %s rotates its textures, which isn't supported. It's imported without the rotation.", material.name.c_str());
+				}
+			}
+		}
+
 		// Copies a source name, keeping only characters that are safe in a file name.
 		template<typename NameType>
 		void CopyFileSafeName(const NameType& source, char* outName, uint capacity)
@@ -245,7 +288,7 @@ namespace tyr
 		PathUtil::GetDirectoryPathFromFilePath(filePath, baseDirectory);
 		m_BaseDirectory = baseDirectory;
 
-		fastgltf::Parser parser;
+		fastgltf::Parser parser(fastgltf::Extensions::KHR_texture_transform);
 
 		// LoadExternalBuffers so loose .bin files actually get read (a GLB's own embedded
 		// binary chunk is always available regardless of this flag). GenerateMeshIndices so
@@ -741,6 +784,7 @@ namespace tyr
 
 		PbrMaterialImportDesc& desc = outResult.materials.ExpandOne();
 		desc.isSRGB = true;
+		SetMaterialParams(gltfMaterial, desc.params);
 
 		if (gltfMaterial.pbrData.baseColorTexture.has_value())
 		{

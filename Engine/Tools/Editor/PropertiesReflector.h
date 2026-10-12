@@ -22,6 +22,13 @@ namespace tyr
 		// object or null. Returns true when the field was changed.
 		using FieldReflectFunction = bool (*)(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData);
 
+		// The names of an enum's values, in order, passed as ReflectEnum's userData.
+		struct EnumNames
+		{
+			const char* const* names;
+			uint count;
+		};
+
 		PropertiesReflector();
 
 		// Gives a type its own widget, like a Vector3's coloured X, Y and Z boxes.
@@ -57,6 +64,11 @@ namespace tyr
 		// Shared by every asset field, since only one asset list is open at a time.
 		AssetPicker& GetAssetPicker() { return m_AssetPicker; }
 
+		// A uint8 field holding an enum, shown as a list of the EnumNames passed as userData.
+		static bool ReflectEnum(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData);
+		// A Vector4 field holding a linear RGBA colour, shown with a colour picker.
+		static bool ReflectColour(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData);
+
 	private:
 		// Rotations are shown as angles about each axis. The angles are kept between frames, since
 		// working them out again from the quaternion can give different but equal angles.
@@ -75,6 +87,7 @@ namespace tyr
 		bool ReflectString(const char* label, void* data, const StringPropertiesReflector& reflector);
 		bool ReflectCArray(const char* label, uint8* data, uint count, const Id64& elementTypeID);
 
+		static bool ReflectVector2(PropertiesReflector& reflector, const char* label, void* data);
 		static bool ReflectVector3(PropertiesReflector& reflector, const char* label, void* data);
 		static bool ReflectQuaternion(PropertiesReflector& reflector, const char* label, void* data);
 		static bool ReflectAssetID(PropertiesReflector& reflector, const char* label, void* data);

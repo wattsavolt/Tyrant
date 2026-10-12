@@ -2,6 +2,7 @@
 #include "McpServer.h"
 #include "McpReflection.h"
 #include "Editor.h"
+#include "UndoHistory.h"
 #include "Actor/ActorRegistry.h"
 #include "Actor/ActorTypes.h"
 #include "AssetSystem/AssetRegistry.h"
@@ -40,7 +41,8 @@ namespace tyr
 			"Controls the Tyrant engine's editor. Units are metres, Y is up and space is left-handed with +Z forward. "
 			"Rotations are Euler degrees [x, y, z] or quaternions [x, y, z, w]. Asset paths are relative to the "
 			"project's Assets folder, such as Models/Cube/Cube.mesh. The level can only be edited while the game is "
-			"stopped. capture_screenshot shows the viewport, and read_log shows errors and warnings.";
+			"stopped. Each tool call that edits the level is one undo step, shared with the editor's own Ctrl+Z. "
+			"capture_screenshot shows the viewport, and read_log shows errors and warnings.";
 
 		// How many frames a screenshot waits for the GPU before giving up.
 		constexpr uint c_MaxCaptureFrames = 600;
@@ -111,7 +113,7 @@ namespace tyr
 
 	const McpTools::Tool McpTools::c_Tools[] =
 	{
-		{ "get_editor_state", "The editor's state: whether the game is playing, the open level and whether it has unsaved changes, the selected actor and the camera.",
+		{ "get_editor_state", "The editor's state: whether the game is playing, the open level and whether it has unsaved changes, whether there's anything to undo or redo, the selected actor and the camera.",
 			R"({"type":"object","properties":{}})", &McpTools::GetEditorState },
 		{ "list_assets", "Lists imported assets by path. Filter by type (the file extension without its dot: mesh, skmesh, mat, tex, level, skel, anim) and by folder.",
 			R"({"type":"object","properties":{"type":{"type":"string"},"folder":{"type":"string","description":"Only assets whose path starts with this, such as Models/"},"limit":{"type":"integer","default":500}}})", &McpTools::ListAssets },
@@ -143,6 +145,10 @@ namespace tyr
 			R"({"type":"object","properties":{}})", &McpTools::Play },
 		{ "stop", "Stops the game and goes back to editing the level.",
 			R"({"type":"object","properties":{}})", &McpTools::Stop },
+		{ "undo", "Undoes the last edits to the level, whether made by a tool or in the editor. Opening or making a level clears the history.",
+			R"({"type":"object","properties":{"steps":{"type":"integer","default":1}}})", &McpTools::Undo },
+		{ "redo", "Redoes edits that were undone, until another edit is made.",
+			R"({"type":"object","properties":{"steps":{"type":"integer","default":1}}})", &McpTools::Redo },
 		{ "capture_screenshot", "A PNG of what the viewport shows: the level, or the game while playing. The editor's own panels aren't in it.",
 			R"({"type":"object","properties":{"maxWidth":{"type":"integer","default":1280,"description":"Scaled down to this width if wider"}}})", &McpTools::CaptureScreenshot },
 		{ "read_log", "Recent log messages, oldest first. Pass the last sequence number seen to get only newer ones.",
@@ -303,6 +309,11 @@ namespace tyr
 			m_CurrentID = &id;
 			const ToolResult result = (this->*tool->function)(args);
 			m_CurrentID = nullptr;
+			// Each tool call's edits are their own undo step.
+			if (m_Editor.m_PlayState == PlayState::Editing)
+			{
+				m_Editor.m_UndoHistory->Commit();
+			}
 			if (result != ToolResult::Pending)
 			{
 				ReplyToolResult(server, connection, id, result == ToolResult::Failed);
@@ -590,6 +601,8 @@ namespace tyr
 			m_Result.Null();
 		}
 		m_Result.KeyBool("levelDirty", m_Editor.IsLevelDirty());
+		m_Result.KeyBool("canUndo", m_Editor.m_UndoHistory->CanUndo());
+		m_Result.KeyBool("canRedo", m_Editor.m_UndoHistory->CanRedo());
 
 		m_Result.Key("selectedActor");
 		const ActorInstance* selected = nullptr;
@@ -1227,6 +1240,47 @@ namespace tyr
 			m_Editor.SetPlayState(PlayState::Editing);
 		}
 		return GetEditorState(args);
+	}
+
+	McpTools::ToolResult McpTools::Undo(const dom::object& args)
+	{
+		return UndoSteps(args, false);
+	}
+
+	McpTools::ToolResult McpTools::Redo(const dom::object& args)
+	{
+		return UndoSteps(args, true);
+	}
+
+	McpTools::ToolResult McpTools::UndoSteps(const dom::object& args, bool redo)
+	{
+		double steps = 1.0;
+		GetNumber(args, "steps", steps);
+		if (HasArgumentError() || !RequireEditing())
+		{
+			return ToolResult::Failed;
+		}
+		if (steps < 1.0)
+		{
+			return Fail("steps must be at least 1.");
+		}
+
+		uint done = 0;
+		while (done < static_cast<uint>(steps) && m_Editor.ApplyUndo(redo))
+		{
+			++done;
+		}
+		if (done == 0)
+		{
+			return Fail(redo ? "There's nothing to redo." : "There's nothing to undo.");
+		}
+
+		m_Result.BeginObject();
+		m_Result.KeyUInt(redo ? "redone" : "undone", done);
+		m_Result.KeyBool("canUndo", m_Editor.m_UndoHistory->CanUndo());
+		m_Result.KeyBool("canRedo", m_Editor.m_UndoHistory->CanRedo());
+		m_Result.EndObject();
+		return ToolResult::Done;
 	}
 
 	McpTools::ToolResult McpTools::CaptureScreenshot(const dom::object& args)

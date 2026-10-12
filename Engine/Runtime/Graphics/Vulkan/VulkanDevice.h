@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include "RenderAPI/Device.h"
 #include "VulkanUtility.h"
 #include "VulkanBuffer.h"
@@ -73,8 +74,13 @@ namespace tyr
 		static const Array<const char*> c_RequiredDeviceExtensions;
 
 		VkInstance GetInstance() const { return m_Instance; }
+
+		/// Asserts on a failed result. A lost device also logs what the driver says caused it.
+		void CheckResult(VkResult result) const;
 		
 	private:
+		void ReportDeviceLost() const;
+
 		friend class Device;
 
 		static constexpr uint c_QueueGroupCount = (uint)CQ_COUNT;
@@ -90,6 +96,8 @@ namespace tyr
 		VkInstance m_Instance;
 		VkPhysicalDevice m_PhysicalDevice;
 		VkDevice m_LogicalDevice = VK_NULL_HANDLE;
+		bool m_DeviceFaultSupported = false;
+		mutable std::atomic<bool> m_DeviceLostReported = false;
 
 		VmaAllocator m_Allocator;
 

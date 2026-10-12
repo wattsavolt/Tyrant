@@ -9,6 +9,15 @@
 
 namespace tyr
 {
+    namespace
+    {
+        // All commands doesn't cover host access, so a resource last read or written by the CPU adds the host stage.
+        PipelineStage GetSourceStage(PipelineStage lastStageMask)
+        {
+            return static_cast<PipelineStage>(PIPELINE_STAGE_ALL_COMMANDS_BIT | (lastStageMask & PIPELINE_STAGE_HOST_BIT));
+        }
+    }
+
     // ----------------------------------------------------------------
     // Resource registration
     // ----------------------------------------------------------------
@@ -94,7 +103,7 @@ namespace tyr
 
                 BufferBarrier barrier{};
                 barrier.buffer = node.buffer->buffer;
-                barrier.srcStage = PIPELINE_STAGE_ALL_COMMANDS_BIT;
+                barrier.srcStage = GetSourceStage(currentStageMask);
                 barrier.srcAccess = currentAccess;
                 barrier.dstStage = usage.stage;
                 barrier.dstAccess = usage.access;
@@ -158,7 +167,7 @@ namespace tyr
 
                 ImageBarrier barrier{};
                 barrier.image = node.texture->image;
-                barrier.srcStage = PIPELINE_STAGE_ALL_COMMANDS_BIT;
+                barrier.srcStage = GetSourceStage(currentStageMask);
                 barrier.srcAccess = currentAccess;
                 barrier.srcLayout = currentLayout;
                 barrier.dstStage = usage.stage;
@@ -223,7 +232,7 @@ namespace tyr
                     continue;
 
                 PipelineBarrier barrier{};
-                barrier.srcStage = PIPELINE_STAGE_ALL_COMMANDS_BIT;
+                barrier.srcStage = GetSourceStage(currentStageMask);
                 barrier.srcAccess = currentAccess;
                 barrier.dstStage = usage.stage;
                 barrier.dstAccess = usage.access;

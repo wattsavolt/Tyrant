@@ -28,8 +28,9 @@ namespace tyr
 		// Returns where the viewport should be drawn this frame. playState changes when a
 		// toolbar button is clicked. selectedActor is the selected actor's root entity, or
 		// c_InvalidEntity. openLevel is the level being edited and levelDirty whether it has
-		// unsaved changes. requests is filled with anything the panels ask the editor to do.
-		PanelRect Draw(PlayState& playState, Entity& selectedActor, AssetID openLevel, bool levelDirty, EditorRequests& requests);
+		// unsaved changes, and canUndo and canRedo whether the Edit menu offers them. requests is
+		// filled with anything the panels ask the editor to do.
+		PanelRect Draw(PlayState& playState, Entity& selectedActor, AssetID openLevel, bool levelDirty, bool canUndo, bool canRedo, EditorRequests& requests);
 
 		// Exits the editor, first asking whether to save if the level has unsaved changes.
 		void RequestExit(bool levelDirty, EditorRequests& requests) { m_FileMenu.Exit(levelDirty, requests); }

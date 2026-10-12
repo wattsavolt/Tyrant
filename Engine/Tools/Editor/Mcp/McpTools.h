@@ -111,6 +111,9 @@ namespace tyr
 		ToolResult NewLevel(const simdjson::dom::object& args);
 		ToolResult Play(const simdjson::dom::object& args);
 		ToolResult Stop(const simdjson::dom::object& args);
+		ToolResult Undo(const simdjson::dom::object& args);
+		ToolResult Redo(const simdjson::dom::object& args);
+		ToolResult UndoSteps(const simdjson::dom::object& args, bool redo);
 		ToolResult CaptureScreenshot(const simdjson::dom::object& args);
 		ToolResult ReadLog(const simdjson::dom::object& args);
 		ToolResult SetCamera(const simdjson::dom::object& args);

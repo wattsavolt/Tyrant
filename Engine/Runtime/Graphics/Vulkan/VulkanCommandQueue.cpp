@@ -107,7 +107,7 @@ namespace tyr
 		}
 
 		VkFence vkFence = fence ? commandQueue.m_Device.GetFence(fence).fence : VK_NULL_HANDLE;
-		TYR_GASSERT(vkQueueSubmit(commandQueue.m_Queue, executeDescCount, submitInfos, vkFence));
+		commandQueue.m_Device.CheckResult(vkQueueSubmit(commandQueue.m_Queue, executeDescCount, submitInfos, vkFence));
 
 		return timelineValue;
 	}

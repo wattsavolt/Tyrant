@@ -93,6 +93,17 @@ namespace tyr
 		static constexpr uint c_MaxUnreferencedAssets = 256;
 		static constexpr uint c_MaxSkeletons = 64;
 		static constexpr uint c_MaxAnimations = 1024;
+		// Each finished-load queue holds every load of its kind that can be in flight at once.
+		static constexpr uint c_TextureLoadQueueSize = 4096;
+		static constexpr uint c_MaterialLoadQueueSize = 1024;
+		static constexpr uint c_MeshHeaderLoadQueueSize = 1024;
+		static constexpr uint c_MeshLodLoadQueueSize = 8192;
+		static constexpr uint c_CpuAssetLoadQueueSize = 2048;
+		TYR_STATIC_ASSERT(c_TextureLoadQueueSize >= RenderConstants::c_MaxTextures, "Texture loads could overflow their queue.");
+		TYR_STATIC_ASSERT(c_MaterialLoadQueueSize >= RenderConstants::c_MaxMaterials, "Material loads could overflow their queue.");
+		TYR_STATIC_ASSERT(c_MeshHeaderLoadQueueSize >= RenderConstants::c_MaxMeshes, "Mesh loads could overflow their queue.");
+		TYR_STATIC_ASSERT(c_MeshLodLoadQueueSize >= RenderConstants::c_MaxMeshLODs, "Mesh LOD loads could overflow their queue.");
+		TYR_STATIC_ASSERT(c_CpuAssetLoadQueueSize >= c_MaxSkeletons + c_MaxAnimations, "Skeleton and animation loads could overflow their queue.");
 
 		// Called once per frame from the main thread - also the only place allowed to
 		// create/delete renderer resources, since doing so isn't safe against a worker
@@ -162,13 +173,13 @@ namespace tyr
 		MPSCRingBuffer<AssetLoadBatch*, 32> m_BatchesLoadedQueue;
 		// Headers/files loaded and ready for their main-thread follow-up (GPU/upload
 		// allocation requests, dependency resolution).
-		MPSCRingBuffer<TextureHeaderLoadData*, 32> m_TextureHeadersLoadedQueue;
-		MPSCRingBuffer<MaterialLoadData*, 32> m_MaterialFilesLoadedQueue;
-		MPSCRingBuffer<MeshHeaderLoadData*, 32> m_MeshHeadersLoadedQueue;
+		MPSCRingBuffer<TextureHeaderLoadData*, c_TextureLoadQueueSize> m_TextureHeadersLoadedQueue;
+		MPSCRingBuffer<MaterialLoadData*, c_MaterialLoadQueueSize> m_MaterialFilesLoadedQueue;
+		MPSCRingBuffer<MeshHeaderLoadData*, c_MeshHeaderLoadQueueSize> m_MeshHeadersLoadedQueue;
 		// Textures that have had their header and raw data loaded but yet to be uploaded to the GPU
-		MPSCRingBuffer<TexturePixelLoadData*, 32> m_TexturesLoadedQueue;
-		MPSCRingBuffer<MeshGeometryLoadData*, 32> m_MeshesLoadedQueue;
-		MPSCRingBuffer<CpuAssetLoadData*, 32> m_CpuAssetsLoadedQueue;
+		MPSCRingBuffer<TexturePixelLoadData*, c_TextureLoadQueueSize> m_TexturesLoadedQueue;
+		MPSCRingBuffer<MeshGeometryLoadData*, c_MeshLodLoadQueueSize> m_MeshesLoadedQueue;
+		MPSCRingBuffer<CpuAssetLoadData*, c_CpuAssetLoadQueueSize> m_CpuAssetsLoadedQueue;
 		// Materials that have had the file loaded but waiting on their textures to load
 		Array<MaterialLoadData*> m_MaterialsAwaitingTextures;
 		// Mesh instances requested but not yet created - waiting on their mesh's header and

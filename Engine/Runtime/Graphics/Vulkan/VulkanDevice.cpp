@@ -4,6 +4,7 @@
 #include "VulkanCommandAllocator.h"
 #include "VulkanCommandList.h"
 #include "VulkanCommandQueue.h"
+#include "VulkanExtensions.h"
 #include "Memory/StackAllocation.h"
 
 #define VMA_IMPLEMENTATION
@@ -141,6 +142,12 @@ namespace tyr
 					{
 						extensions[numExtensions++] = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME;
 						memoryBudgetExt = true;
+					}
+					// Lets a lost device report what faulted, such as the address a shader read.
+					else if (strcmp(entry.extensionName, VK_EXT_DEVICE_FAULT_EXTENSION_NAME) == 0)
+					{
+						extensions[numExtensions++] = VK_EXT_DEVICE_FAULT_EXTENSION_NAME;
+						m_DeviceFaultSupported = true;
 					}
 				}
 			}
@@ -342,7 +349,20 @@ namespace tyr
 
 		deviceInfo.pNext = &enabledRayQueryFeatures;
 
+		VkPhysicalDeviceFaultFeaturesEXT enabledFaultFeatures{};
+		enabledFaultFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
+		enabledFaultFeatures.pNext = &enabledRayQueryFeatures;
+		enabledFaultFeatures.deviceFault = VK_TRUE;
+		if (m_DeviceFaultSupported)
+		{
+			deviceInfo.pNext = &enabledFaultFeatures;
+		}
+
 		TYR_GASSERT(vkCreateDevice(device, &deviceInfo, g_VulkanAllocationCallbacks, &m_LogicalDevice));
+		if (m_DeviceFaultSupported)
+		{
+			TYR_VK_GET_INSTANCE_PROC_ADDR(vkGetDeviceFaultInfoEXT);
+		}
 
 		// Retrieve queues
 		for (uint i = 0; i < c_QueueGroupCount; i++)
@@ -378,6 +398,72 @@ namespace tyr
 		}
 
 		TYR_GASSERT(vmaCreateAllocator(&allocatorCI, &m_Allocator));
+	}
+
+	void DeviceInternal::CheckResult(VkResult result) const
+	{
+		if (result == VK_ERROR_DEVICE_LOST)
+		{
+			ReportDeviceLost();
+		}
+		TYR_GASSERT(result);
+	}
+
+	void DeviceInternal::ReportDeviceLost() const
+	{
+		// Every thread that touches the device sees the loss, but the fault only needs logging once.
+		if (m_DeviceLostReported.exchange(true))
+		{
+			return;
+		}
+		if (!m_DeviceFaultSupported)
+		{
+			TYR_LOG_ERROR("The GPU device was lost. This GPU can't report what faulted.");
+			return;
+		}
+
+		VkDeviceFaultCountsEXT counts{};
+		counts.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT;
+		if (vkGetDeviceFaultInfoEXT(m_LogicalDevice, &counts, nullptr) != VK_SUCCESS)
+		{
+			TYR_LOG_ERROR("The GPU device was lost, and the driver gave no fault details.");
+			return;
+		}
+
+		StackAllocManager stack;
+		VkDeviceFaultInfoEXT info{};
+		info.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT;
+		info.pAddressInfos = counts.addressInfoCount > 0 ? stack.Alloc<VkDeviceFaultAddressInfoEXT>(counts.addressInfoCount) : nullptr;
+		info.pVendorInfos = counts.vendorInfoCount > 0 ? stack.Alloc<VkDeviceFaultVendorInfoEXT>(counts.vendorInfoCount) : nullptr;
+		// The vendor's binary crash dump is left out; it's only readable with the vendor's own tools.
+		counts.vendorBinarySize = 0;
+		const VkResult result = vkGetDeviceFaultInfoEXT(m_LogicalDevice, &counts, &info);
+		if (result != VK_SUCCESS && result != VK_INCOMPLETE)
+		{
+			TYR_LOG_ERROR("The GPU device was lost, and the driver gave no fault details.");
+			return;
+		}
+
+		TYR_LOG_ERROR("The GPU device was lost: %s", info.description);
+		static const char* const c_AddressTypeNames[] =
+		{
+			"none", "invalid read", "invalid write", "invalid execute",
+			"unknown instruction pointer", "invalid instruction pointer", "instruction pointer fault"
+		};
+		for (uint i = 0; i < counts.addressInfoCount; ++i)
+		{
+			const VkDeviceFaultAddressInfoEXT& address = info.pAddressInfos[i];
+			const uint typeIndex = (uint)address.addressType;
+			const char* typeName = typeIndex < sizeof(c_AddressTypeNames) / sizeof(c_AddressTypeNames[0]) ? c_AddressTypeNames[typeIndex] : "unknown";
+			TYR_LOG_ERROR("GPU fault: %s at address 0x%llx (to within 0x%llx bytes)", typeName,
+				(unsigned long long)address.reportedAddress, (unsigned long long)address.addressPrecision);
+		}
+		for (uint i = 0; i < counts.vendorInfoCount; ++i)
+		{
+			const VkDeviceFaultVendorInfoEXT& vendor = info.pVendorInfos[i];
+			TYR_LOG_ERROR("GPU fault, vendor details: %s (code 0x%llx, data 0x%llx)", vendor.description,
+				(unsigned long long)vendor.vendorFaultCode, (unsigned long long)vendor.vendorFaultData);
+		}
 	}
 
 	DeviceInternal::~DeviceInternal()

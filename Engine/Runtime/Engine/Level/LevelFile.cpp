@@ -33,21 +33,37 @@ namespace tyr
 		constexpr uint c_ActorsSection = MakeFourCC('A', 'C', 'T', 'R');
 		constexpr uint16 c_RootFolder = 0xFFFF;
 
-		// Writes into a reused buffer, so the whole file can be written in one go.
+		// Writes into a reused buffer that grows to fit, or a fixed one that's marked full once
+		// something doesn't fit.
 		class ByteWriter final
 		{
 		public:
 			explicit ByteWriter(Array<uint8>& buffer)
-				: m_Buffer(buffer)
+				: m_Buffer(&buffer)
 			{
-				m_Buffer.Clear();
+				m_Buffer->Clear();
+			}
+
+			ByteWriter(uint8* data, uint capacity)
+				: m_Data(data)
+				, m_Capacity(capacity)
+			{
 			}
 
 			void WriteBytes(const void* data, size_t size)
 			{
-				const uint offset = m_Buffer.Size();
-				m_Buffer.Resize(Array<uint8>::UninitializedTag{}, offset + static_cast<uint>(size));
-				memcpy(m_Buffer.Data() + offset, data, size);
+				if (m_Buffer)
+				{
+					m_Buffer->Resize(Array<uint8>::UninitializedTag{}, m_Size + static_cast<uint>(size));
+					m_Data = m_Buffer->Data();
+				}
+				else if (m_Full || size > m_Capacity - m_Size)
+				{
+					m_Full = true;
+					return;
+				}
+				memcpy(m_Data + m_Size, data, size);
+				m_Size += static_cast<uint>(size);
 			}
 
 			template<typename T>
@@ -66,20 +82,28 @@ namespace tyr
 			// Writes a placeholder to fill in with Patch once the value is known.
 			uint WritePlaceholder()
 			{
-				const uint offset = m_Buffer.Size();
+				const uint offset = m_Size;
 				Write<uint>(0);
 				return offset;
 			}
 
 			void Patch(uint offset, uint value)
 			{
-				memcpy(m_Buffer.Data() + offset, &value, sizeof(value));
+				if (!m_Full)
+				{
+					memcpy(m_Data + offset, &value, sizeof(value));
+				}
 			}
 
-			uint GetOffset() const { return m_Buffer.Size(); }
+			uint GetOffset() const { return m_Size; }
+			bool IsFull() const { return m_Full; }
 
 		private:
-			Array<uint8>& m_Buffer;
+			Array<uint8>* m_Buffer = nullptr;
+			uint8* m_Data = nullptr;
+			uint m_Capacity = 0;
+			uint m_Size = 0;
+			bool m_Full = false;
 		};
 
 		// Reads from a buffer, failing rather than reading past its end.
@@ -219,12 +243,62 @@ namespace tyr
 			return ApplyTaggedValue(OverridableFields::Get(componentType), key, value, size, component);
 		}
 
+		// Reads the rest of an actor after its ID, type, name and folder, and adds it to the world.
+		// Returns its root entity, or c_InvalidEntity if it couldn't be made.
+		Entity ReadActor(ByteReader& reader, WorldManager& worldManager, Handle worldHandle, const Id64& id, const Id64& typeID, const ActorName& name, const char* folder)
+		{
+			World& world = worldManager.GetWorld(worldHandle);
+			Transform transform;
+			ReadTransform(reader, transform);
+			const uint overrideCount = reader.Read<uint>();
+
+			const ActorTypeDesc* actorType = ActorRegistry::Instance().FindActorType(typeID);
+			LocalArray<Entity, c_MaxActorTypeEntities> entities;
+			if (actorType)
+			{
+				entities = ActorRegistry::Instance().InstantiateActor(typeID, world.entities);
+			}
+			else
+			{
+				TYR_LOG_ERROR("%s was skipped, as its actor type no longer exists.", name.CStr());
+			}
+
+			uint skipped = 0;
+			for (uint j = 0; j < overrideCount && !reader.Failed(); ++j)
+			{
+				const Id64 entityName = reader.Read<uint64>();
+				const Id64 componentType = reader.Read<uint64>();
+				const Id64 key = reader.Read<uint64>();
+				const uint size = reader.Read<uint>();
+				const uint8* value = reader.ReadSpan(size);
+				if (actorType && !ApplyOverride(world.entities, *actorType, entities, entityName, componentType, key, value, size))
+				{
+					++skipped;
+				}
+			}
+			if (skipped > 0)
+			{
+				TYR_LOG_WARNING("%s had %u saved values that no longer match its actor type, so they were skipped.", name.CStr(), skipped);
+			}
+
+			if (!actorType || entities.IsEmpty())
+			{
+				return c_InvalidEntity;
+			}
+
+			worldManager.AddActorInstance(worldHandle, id, typeID, name.CStr(), folder, entities);
+			if (world.entities.HasComponent<ComponentTransform>(entities[0]))
+			{
+				worldManager.SetActorTransform(worldHandle, entities[0], transform);
+			}
+			return entities[0];
+		}
+
 		void ReadActors(ByteReader& reader, WorldManager& worldManager, Handle worldHandle, const Array<RelativePath>& folders)
 		{
 			static HashMap<Id64, uint8> s_LoadedIDs;
 			s_LoadedIDs.Clear();
 
-			World& world = worldManager.GetWorld(worldHandle);
 			const uint count = reader.Read<uint>();
 			for (uint i = 0; i < count && !reader.Failed(); ++i)
 			{
@@ -233,9 +307,6 @@ namespace tyr
 				ActorName name;
 				reader.ReadString(name);
 				const uint16 folderIndex = reader.Read<uint16>();
-				Transform transform;
-				ReadTransform(reader, transform);
-				const uint overrideCount = reader.Read<uint>();
 
 				if (s_LoadedIDs.Contains(id))
 				{
@@ -243,46 +314,8 @@ namespace tyr
 				}
 				s_LoadedIDs[id] = 1;
 
-				const ActorTypeDesc* actorType = ActorRegistry::Instance().FindActorType(typeID);
-				LocalArray<Entity, c_MaxActorTypeEntities> entities;
-				if (actorType)
-				{
-					entities = ActorRegistry::Instance().InstantiateActor(typeID, world.entities);
-				}
-				else
-				{
-					TYR_LOG_ERROR("%s was skipped, as its actor type no longer exists.", name.CStr());
-				}
-
-				uint skipped = 0;
-				for (uint j = 0; j < overrideCount && !reader.Failed(); ++j)
-				{
-					const Id64 entityName = reader.Read<uint64>();
-					const Id64 componentType = reader.Read<uint64>();
-					const Id64 key = reader.Read<uint64>();
-					const uint size = reader.Read<uint>();
-					const uint8* value = reader.ReadSpan(size);
-					if (actorType && !ApplyOverride(world.entities, *actorType, entities, entityName, componentType, key, value, size))
-					{
-						++skipped;
-					}
-				}
-				if (skipped > 0)
-				{
-					TYR_LOG_WARNING("%s had %u saved values that no longer match its actor type, so they were skipped.", name.CStr(), skipped);
-				}
-
-				if (!actorType || entities.IsEmpty())
-				{
-					continue;
-				}
-
 				const char* folder = folderIndex < folders.Size() ? folders[folderIndex].CStr() : "";
-				worldManager.AddActorInstance(worldHandle, id, typeID, name.CStr(), folder, entities);
-				if (world.entities.HasComponent<ComponentTransform>(entities[0]))
-				{
-					worldManager.SetActorTransform(worldHandle, entities[0], transform);
-				}
+				ReadActor(reader, worldManager, worldHandle, id, typeID, name, folder);
 			}
 		}
 
@@ -460,6 +493,20 @@ namespace tyr
 			return count;
 		}
 
+		// Writes the rest of an actor after its ID, type, name and folder.
+		void WriteActor(ByteWriter& writer, const World& world, const ActorInstance& actor)
+		{
+			const Entity root = actor.RootEntity();
+			const ComponentTypeID transformTypeID = ComponentRegistry::GetComponentTypeID<ComponentTransform>();
+			WriteTransform(writer, world.entities.HasComponent(root, transformTypeID)
+				? static_cast<const ComponentTransform*>(world.entities.GetComponentData(root, transformTypeID))->local
+				: CreateIdentityTransform());
+
+			const uint countOffset = writer.WritePlaceholder();
+			const ActorTypeDesc* actorType = ActorRegistry::Instance().FindActorType(actor.typeID);
+			writer.Patch(countOffset, actorType ? WriteOverrides(writer, world, actor, *actorType) : 0);
+		}
+
 		void WriteActors(ByteWriter& writer, const World& world, const Array<RelativePath>& folders)
 		{
 			writer.Write(world.actorInstances.Size());
@@ -469,16 +516,7 @@ namespace tyr
 				writer.Write(actor.typeID.GetHash());
 				writer.WriteString(actor.name.CStr());
 				writer.Write(actor.folderPath.Size() > 0 ? FindFolderIndex(folders, actor.folderPath) : c_RootFolder);
-
-				const Entity root = actor.RootEntity();
-				const ComponentTypeID transformTypeID = ComponentRegistry::GetComponentTypeID<ComponentTransform>();
-				WriteTransform(writer, world.entities.HasComponent(root, transformTypeID)
-					? static_cast<const ComponentTransform*>(world.entities.GetComponentData(root, transformTypeID))->local
-					: CreateIdentityTransform());
-
-				const uint countOffset = writer.WritePlaceholder();
-				const ActorTypeDesc* actorType = ActorRegistry::Instance().FindActorType(actor.typeID);
-				writer.Patch(countOffset, actorType ? WriteOverrides(writer, world, actor, *actorType) : 0);
+				WriteActor(writer, world, actor);
 			}
 		}
 #endif
@@ -612,6 +650,62 @@ namespace tyr
 		}
 
 		return AssetRegistry::Instance().AddOrUpdateAsset(levelPath, s_Dependencies.Data(), s_Dependencies.Size());
+	}
+
+	uint LevelFile::WriteActorState(const World& world, const ActorInstance& actor, uint8* buffer, uint capacity)
+	{
+		ByteWriter writer(buffer, capacity);
+		writer.Write(actor.id.GetHash());
+		writer.Write(actor.typeID.GetHash());
+		writer.WriteString(actor.name.CStr());
+		writer.WriteString(actor.folderPath.CStr());
+		WriteActor(writer, world, actor);
+		return writer.IsFull() ? 0 : writer.GetOffset();
+	}
+
+	bool LevelFile::ReadActorStateHeader(const uint8* state, uint size, ActorStateHeader& header)
+	{
+		ByteReader reader(state, size);
+		header.id = reader.Read<uint64>();
+		header.typeID = reader.Read<uint64>();
+		reader.ReadString(header.name);
+		reader.ReadString(header.folder);
+		ReadTransform(reader, header.transform);
+		header.overridesOffset = static_cast<uint>(size - reader.GetRemaining());
+		return !reader.Failed();
+	}
+
+	Entity LevelFile::AddActorFromState(const uint8* state, uint size, WorldManager& worldManager, Handle worldHandle)
+	{
+		ByteReader reader(state, size);
+		const Id64 id = reader.Read<uint64>();
+		const Id64 typeID = reader.Read<uint64>();
+		ActorName name;
+		reader.ReadString(name);
+		RelativePath folder;
+		reader.ReadString(folder);
+		return reader.Failed() ? c_InvalidEntity : ReadActor(reader, worldManager, worldHandle, id, typeID, name, folder.CStr());
+	}
+
+	uint LevelFile::WriteLevelState(const World& world, uint8* buffer, uint capacity)
+	{
+		ByteWriter writer(buffer, capacity);
+		WriteSettings(writer, world.settings);
+		writer.Write(world.folders.Size());
+		for (const RelativePath& folder : world.folders)
+		{
+			writer.WriteString(folder.CStr());
+		}
+		return writer.IsFull() ? 0 : writer.GetOffset();
+	}
+
+	void LevelFile::ReadLevelState(const uint8* state, uint size, World& world)
+	{
+		ByteReader reader(state, size);
+		world.settings = {};
+		ReadSettings(reader, world.settings);
+		ReadFolders(reader, world.folders);
+		++world.changeCount;
 	}
 #endif
 }

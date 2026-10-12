@@ -66,7 +66,7 @@ namespace tyr
 		{
 			return false;
 		}
-		TYR_ASSERT(false);
+		device.CheckResult(result);
 		return false;
 	}
 
@@ -121,7 +121,7 @@ namespace tyr
 		info.pNext = nullptr;
 		info.semaphore = semaphore.semaphore;
 		info.value = value;
-		TYR_GASSERT(vkSignalSemaphore(device.m_LogicalDevice, &info));
+		device.CheckResult(vkSignalSemaphore(device.m_LogicalDevice, &info));
 	}
 
 	uint64 Device::GetSemaphoreValue(SemaphoreHandle handle) const
@@ -130,7 +130,7 @@ namespace tyr
 		const Semaphore& semaphore = device.GetSemaphore(handle);
 		TYR_ASSERT(semaphore.type == SemaphoreType::Timeline);
 		uint64 value;
-		TYR_GASSERT(vkGetSemaphoreCounterValue(device.m_LogicalDevice, semaphore.semaphore, &value));
+		device.CheckResult(vkGetSemaphoreCounterValue(device.m_LogicalDevice, semaphore.semaphore, &value));
 		return value;
 	}
 
@@ -156,7 +156,7 @@ namespace tyr
 		{
 			return false;
 		}
-		TYR_ASSERT(false);
+		device.CheckResult(result);
 		return false;
 	}
 

@@ -256,7 +256,7 @@ namespace tyr
 		}
 		else
 		{
-			TYR_ASSERT(false);
+			vulkanDevice->CheckResult(result);
 			TYR_LOG_FATAL("Error: Vulkan: Failed to acquire next image from the swap chain %d.");
 		}
 		return index;
@@ -288,7 +288,7 @@ namespace tyr
 			}
 			else
 			{
-				TYR_ASSERT(false);
+				vulkanDevice->CheckResult(result);
 				TYR_LOG_FATAL("Error: Vulkan: Failed to present the swap chain's image.");
 			}
 		}

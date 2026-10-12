@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Rendering/RenderQualitySettings.h"
+#include "EditorRequests.h"
 
 namespace tyr
 {
@@ -12,7 +13,8 @@ namespace tyr
 	public:
 		EditMenu(RendererAPI& rendererAPI);
 
-		void Draw();
+		// Undo and redo are only offered while editing the level.
+		void Draw(bool editing, bool canUndo, bool canRedo, EditorRequests& requests);
 
 		// Sends the level editor's or the game's render settings to the renderer.
 		void ApplyRenderSettings(bool editing);

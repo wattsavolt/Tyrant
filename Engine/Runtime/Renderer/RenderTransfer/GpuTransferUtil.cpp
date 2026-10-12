@@ -13,9 +13,17 @@ namespace tyr
 		LocalArray<BufferCopyInfo, c_MaxUploadRegionsPerBuffer> copyInfos;
 		for (uint i = 0; i < count; )
 		{
+			const BufferHandle srcBuffer = registry.GetBuffer(requests[i].srcBuffer).buffer;
+			const BufferHandle dstBuffer = registry.GetBuffer(requests[i].dstBuffer).buffer;
 			uint j = i;
 			while (j < count && requests[i].SameResources(requests[j]))
 			{
+				// A frame loading many assets can have more regions than one copy holds.
+				if (copyInfos.Size() == c_MaxUploadRegionsPerBuffer)
+				{
+					commandList.CopyBuffer(srcBuffer, dstBuffer, copyInfos.Data(), copyInfos.Size());
+					copyInfos.Clear();
+				}
 				BufferUploadRequest& request = requests[j];
 				BufferCopyInfo& info = copyInfos.ExpandOne();
 				info.srcOffset = request.srcOffset;
@@ -24,7 +32,7 @@ namespace tyr
 				++j;
 			}
 
-			commandList.CopyBuffer(registry.GetBuffer(requests[i].srcBuffer).buffer, registry.GetBuffer(requests[i].dstBuffer).buffer, copyInfos.Data(), copyInfos.Size());
+			commandList.CopyBuffer(srcBuffer, dstBuffer, copyInfos.Data(), copyInfos.Size());
 
 			copyInfos.Clear();
 			// Advance past the whole group just batched, not just by one - otherwise every

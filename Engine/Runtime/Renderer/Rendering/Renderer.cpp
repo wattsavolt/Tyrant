@@ -30,6 +30,9 @@
 #include "RenderGraphAllocation.h"
 namespace tyr
 {
+	TYR_STATIC_ASSERT(RenderConstants::c_MaxMeshes + RenderConstants::c_MaxSkeletalMeshInstances * RenderConstants::c_MaxScenes
+		+ RenderConstants::c_BufferedFrameCount <= Device::c_MaxAccelerationStructures, "The device can't hold every acceleration structure the renderer may create.");
+
 	namespace
 	{
 		// Low-discrepancy base-`base` value for index `index` - standard Halton sequence
@@ -2621,8 +2624,9 @@ namespace tyr
 		// Written by the deferred lighting pass (a storage image), read by the GUI pass to
 		// display it. UNORM, not SRGB - the storage-image format doesn't support SRGB on this
 		// hardware, so the shader writes linear colour and the final sample does the sRGB encode.
+		// Each texture the viewport can display is also a transfer source, for screenshots.
 		targets.colourTexture = CreateViewportTargetTexture(debugName, PixelFormat::PF_R8G8B8A8_UNORM,
-			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT), width, height);
+			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT | IMAGE_USAGE_TRANSFER_SRC_BIT), width, height);
 
 		// Must match the geometry pipeline's declared colour attachment formats - dynamic
 		// rendering requires the two to agree.
@@ -2642,7 +2646,7 @@ namespace tyr
 		// Same usage as colourTexture above - written by a compute pass, sampled by the editor
 		// for display.
 		targets.resolvedColourTexture = CreateViewportTargetTexture("Resolved Colour", PixelFormat::PF_R8G8B8A8_UNORM,
-			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT), width, height);
+			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT | IMAGE_USAGE_TRANSFER_SRC_BIT), width, height);
 
 		targets.width = width;
 		targets.height = height;
@@ -2667,7 +2671,8 @@ namespace tyr
 		{
 			// Written by the grid's compute pass, then drawn into by the debug line pass.
 			targets.overlayColourTexture = CreateViewportTargetTexture("Overlay Colour", PixelFormat::PF_R8G8B8A8_UNORM,
-				static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT | IMAGE_USAGE_COLOUR_ATTACHMENT_BIT), targets.width, targets.height);
+				static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT | IMAGE_USAGE_COLOUR_ATTACHMENT_BIT | IMAGE_USAGE_TRANSFER_SRC_BIT),
+				targets.width, targets.height);
 			targets.overlayIsNew = true;
 		}
 		else

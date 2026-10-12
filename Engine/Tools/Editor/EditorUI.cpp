@@ -23,7 +23,7 @@ namespace tyr
 		ImGui::GetIO().ConfigDragClickToInputText = true;
 	}
 
-	PanelRect EditorUI::Draw(PlayState& playState, Entity& selectedActor, AssetID openLevel, bool levelDirty, EditorRequests& requests)
+	PanelRect EditorUI::Draw(PlayState& playState, Entity& selectedActor, AssetID openLevel, bool levelDirty, bool canUndo, bool canRedo, EditorRequests& requests)
 	{
 		// The editor DLL has its own copy of ImGui, so its context has to be set here too.
 		ImGui::SetCurrentContext(m_GUIModule.GetImGuiContext());
@@ -33,7 +33,7 @@ namespace tyr
 		if (ImGui::BeginMainMenuBar())
 		{
 			m_FileMenu.Draw(editing, openLevel, levelDirty, requests);
-			m_EditMenu.Draw();
+			m_EditMenu.Draw(editing, canUndo, canRedo, requests);
 			m_ViewMenu.Draw(m_ViewSettings);
 
 			// The open level's name on the right, marked when it has unsaved changes.

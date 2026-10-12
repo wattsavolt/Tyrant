@@ -42,6 +42,8 @@ namespace tyr
 	TYR_VK_DECLARE_PROC_NULL(vkCreateRayTracingPipelinesKHR);
 	TYR_VK_DECLARE_PROC_NULL(vkGetRayTracingShaderGroupHandlesKHR);
 	TYR_VK_DECLARE_PROC_NULL(vkCmdTraceRaysKHR);
+
+	TYR_VK_DECLARE_PROC_NULL(vkGetDeviceFaultInfoEXT);
 }
 
 

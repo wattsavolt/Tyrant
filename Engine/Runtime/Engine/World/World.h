@@ -70,6 +70,8 @@ namespace tyr
 		bool visible = true;
 		// Physics and audio only run in simulated worlds.
 		bool simulate = true;
+		// Holds physics and animation still, such as while the editor has the game paused.
+		bool paused = false;
 		EntitySystem entities;
 		// The entities version the renderer-side mesh instances and lights were last synced at.
 		uint syncedEntitiesVersion = 0;
@@ -98,6 +100,7 @@ namespace tyr
 			physicsWorld = {};
 			visible = true;
 			simulate = true;
+			paused = false;
 			entities.Reset();
 			syncedEntitiesVersion = 0;
 			actorInstances.Clear();

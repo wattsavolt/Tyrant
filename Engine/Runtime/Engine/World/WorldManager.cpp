@@ -195,13 +195,16 @@ namespace tyr
 		// TODO: Step physics and audio here once their components exist, only when world.simulate
 		// is set - a world open in the level editor must stay still and silent.
 
-		if (world.physicsWorld)
+		if (world.physicsWorld && !world.paused)
 		{
 			m_PhysicsManager.Update(world.physicsWorld, world, deltaTime);
 			ApplyPhysicsTransforms(world);
 		}
 
-		m_AnimationSystem.Update(world, deltaTime);
+		if (!world.paused)
+		{
+			m_AnimationSystem.Update(world, deltaTime);
+		}
 
 		// The other way a resize can be detected - externally, by the OS/windowing system -
 		// rather than internally by the renderer itself. Always consumed, but only acted on if

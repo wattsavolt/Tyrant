@@ -39,6 +39,7 @@ namespace tyr
 
 		// True while the mouse is over a handle or one is being dragged.
 		bool IsActive() const { return m_HoveredHandle != Handle::None || m_DragHandle != Handle::None; }
+		bool IsDragging() const { return m_DragHandle != Handle::None; }
 
 	private:
 		enum class Handle : uint8

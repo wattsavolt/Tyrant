@@ -41,7 +41,8 @@ namespace tyr
 		static constexpr uint16 c_MaxGraphicsPipelines = 10;
 		static constexpr uint16 c_MaxComputePipelines = 10;
 		static constexpr uint16 c_MaxRayTracingPipelines = 10;
-		static constexpr uint16 c_MaxAccelerationStructures = 20;
+		// One BLAS per mesh and per skinned instance, plus each frame's TLAS.
+		static constexpr uint16 c_MaxAccelerationStructures = 2048;
 		static constexpr uint16 c_MaxDescriptorPools = 5;
 		static constexpr uint16 c_MaxDescriptorSetLayouts = 20;
 		static constexpr uint16 c_MaxDescriptorSets = 20;

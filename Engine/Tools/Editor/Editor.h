@@ -26,6 +26,7 @@ namespace tyr
 	class InputManager;
 	class McpServer;
 	class McpTools;
+	class UndoHistory;
 	class TYR_EDITOR_EXPORT Editor final : public AppBase
 	{
 		// The MCP server's tools edit through the same functions as the UI.
@@ -101,6 +102,11 @@ namespace tyr
 		// The root entity of the level actor the ray hits first, or c_InvalidEntity.
 		Entity PickActor(const ViewportRay& ray);
 
+		// Undoes or redoes a step, keeping the same actor selected. Returns false if there wasn't one.
+		bool ApplyUndo(bool redo);
+		// Records the level's edits as an undo step once nothing is being dragged or typed.
+		void CommitUndoWhenIdle();
+
 		AppBase& m_App;
 		PlayState m_PlayState = PlayState::Editing;
 		WindowHandle m_PrimaryWindow{};
@@ -125,6 +131,7 @@ namespace tyr
 		URef<EditorSettings> m_Settings;
 		URef<EditorUI> m_EditorUI;
 		URef<EditorViewport> m_EditorViewport;
+		URef<UndoHistory> m_UndoHistory;
 		// Lets Claude, or any MCP client on this machine, use the editor. Null when turned off.
 		URef<McpServer> m_McpServer;
 		URef<McpTools> m_McpTools;

@@ -50,6 +50,8 @@ namespace tyr
 	// any conversion a source format needs happens inside the loader, never after this point.
 	struct ModelImportMesh
 	{
+		// The source mesh's name, kept to characters that are safe in a file name. May be empty.
+		LocalString<63> name;
 		Array<Vertex> vertices;
 		Array<uint> indices;
 		Array<ModelImportSubmesh> submeshes;
@@ -69,6 +71,7 @@ namespace tyr
 		// reallocating it.
 		void Reset()
 		{
+			name.Reset();
 			vertices.Clear();
 			indices.Clear();
 			submeshes.Clear();

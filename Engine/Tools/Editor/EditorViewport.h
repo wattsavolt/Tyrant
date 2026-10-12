@@ -62,6 +62,9 @@ namespace tyr
 
 		void Draw(const PanelRect& rect, World& world, InputManager& inputManager, float deltaTime, const EditState& state, Events& events);
 
+		// True while a gizmo is being dragged.
+		bool IsDragging() const { return m_Gizmo.IsDragging(); }
+
 	private:
 		// The same view and projection the renderer builds for the world.
 		static void CalculateViewProjection(const World& world, uint width, uint height, Matrix4& view, Matrix4& projection);

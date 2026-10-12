@@ -32,6 +32,8 @@
 #include "Math/Matrix3.h"
 #include "Mcp/McpServer.h"
 #include "Mcp/McpTools.h"
+#include "UndoHistory.h"
+#include "imgui.h"
 #include <algorithm>
 #include <cfloat>
 #include <cstring>
@@ -246,6 +248,7 @@ namespace tyr
 		m_EditorUI = MakeURef<EditorUI>(*m_GUIModule, *m_RendererAPI, *m_AssetManager, *m_WorldManager, m_LevelEditorWorld, *m_Settings);
 		m_EditorViewport = MakeURef<EditorViewport>(*m_RendererAPI, m_EditorUI->GetIcons());
 		m_EditorUI->ApplyRenderSettings(true);
+		m_UndoHistory = MakeURef<UndoHistory>(*m_WorldManager, m_LevelEditorWorld);
 
 		OpenStartLevel();
 
@@ -315,6 +318,7 @@ namespace tyr
 			AddActor(*lightType, "Sun", "");
 		}
 		SaveLevelAs(name);
+		m_UndoHistory->Reset();
 	}
 
 	void Editor::OpenLevel(AssetID level)
@@ -326,6 +330,7 @@ namespace tyr
 		LevelFile::Load(levelPath, *m_WorldManager, m_LevelEditorWorld);
 		m_Level = level;
 		m_SavedChangeCount = m_WorldManager->GetWorld(m_LevelEditorWorld).changeCount;
+		m_UndoHistory->Reset();
 	}
 
 	void Editor::SaveAll()
@@ -437,7 +442,7 @@ namespace tyr
 
 		PlayState requestedState = m_PlayState;
 		EditorRequests requests;
-		const PanelRect viewportRect = m_EditorUI->Draw(requestedState, m_SelectedActor, m_Level, IsLevelDirty(), requests);
+		const PanelRect viewportRect = m_EditorUI->Draw(requestedState, m_SelectedActor, m_Level, IsLevelDirty(), m_UndoHistory->CanUndo(), m_UndoHistory->CanRedo(), requests);
 		// Closing the window asks about unsaved changes the same way File > Exit does.
 		if (m_WindowModule->ConsumeCloseRequested(m_PrimaryWindow))
 		{
@@ -490,6 +495,49 @@ namespace tyr
 			m_WorldManager->SetActorTransform(m_LevelEditorWorld, m_SelectedActor, events.transform);
 		}
 		ProcessPendingMeshDrops();
+		CommitUndoWhenIdle();
+	}
+
+	void Editor::CommitUndoWhenIdle()
+	{
+		// A drag or a value being typed becomes one step once it's finished.
+		if (m_PlayState == PlayState::Editing && !ImGui::IsAnyItemActive() && !m_EditorViewport->IsDragging())
+		{
+			m_UndoHistory->Commit();
+		}
+	}
+
+	bool Editor::ApplyUndo(bool redo)
+	{
+		// Undo can make actors again, so the selection is found again by its ID.
+		World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
+		Id64 selectedID;
+		bool hasSelection = false;
+		for (const ActorInstance& actor : world.actorInstances)
+		{
+			if (actor.RootEntity() == m_SelectedActor)
+			{
+				selectedID = actor.id;
+				hasSelection = true;
+				break;
+			}
+		}
+
+		if (!(redo ? m_UndoHistory->Redo() : m_UndoHistory->Undo()))
+		{
+			return false;
+		}
+
+		m_SelectedActor = c_InvalidEntity;
+		for (const ActorInstance& actor : world.actorInstances)
+		{
+			if (hasSelection && actor.id == selectedID)
+			{
+				m_SelectedActor = actor.RootEntity();
+				break;
+			}
+		}
+		return true;
 	}
 
 	Entity Editor::PickActor(const ViewportRay& ray)
@@ -635,6 +683,15 @@ namespace tyr
 		if (m_PlayState != PlayState::Editing)
 		{
 			return;
+		}
+
+		if (requests.undo)
+		{
+			ApplyUndo(false);
+		}
+		else if (requests.redo)
+		{
+			ApplyUndo(true);
 		}
 
 		if (requests.placeActor)
@@ -921,6 +978,12 @@ namespace tyr
 			m_EditorUI->ApplyRenderSettings(true);
 		}
 		m_PlayState = state;
+
+		// The game's world is the active one while it runs, and holds still while paused.
+		if (state != PlayState::Editing)
+		{
+			m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld()).paused = state == PlayState::Paused;
+		}
 	}
 
 	void Editor::Shutdown()
@@ -942,6 +1005,7 @@ namespace tyr
 
 		// Destroyed here, while the asset manager the UI releases icons back to still exists. The
 		// viewport goes first since it uses the UI's icons.
+		m_UndoHistory.reset();
 		m_EditorViewport.reset();
 		m_EditorUI.reset();
 

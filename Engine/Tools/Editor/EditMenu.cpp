@@ -14,10 +14,19 @@ namespace tyr
 	{
 	}
 
-	void EditMenu::Draw()
+	void EditMenu::Draw(bool editing, bool canUndo, bool canRedo, EditorRequests& requests)
 	{
 		if (ImGui::BeginMenu("Edit"))
 		{
+			if (ImGui::MenuItem("Undo", "Ctrl+Z", false, editing && canUndo))
+			{
+				requests.undo = true;
+			}
+			if (ImGui::MenuItem("Redo", "Ctrl+Y", false, editing && canRedo))
+			{
+				requests.redo = true;
+			}
+			ImGui::Separator();
 			if (ImGui::BeginMenu("Project Settings"))
 			{
 				if (ImGui::MenuItem("Rendering"))
@@ -27,6 +36,19 @@ namespace tyr
 				ImGui::EndMenu();
 			}
 			ImGui::EndMenu();
+		}
+
+		// Text boxes keep their own undo while typing in them.
+		if (editing && !ImGui::GetIO().WantTextInput)
+		{
+			if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z))
+			{
+				requests.undo = true;
+			}
+			else if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y) || ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z))
+			{
+				requests.redo = true;
+			}
 		}
 
 		if (m_ShowProjectSettings)

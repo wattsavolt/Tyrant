@@ -15,6 +15,8 @@ namespace tyr
 		// A static mesh actor for mesh to place in folder.
 		bool placeMesh = false;
 		AssetID mesh;
+		bool undo = false;
+		bool redo = false;
 		// The hierarchy folder, empty for the root.
 		RelativePath folder;
 

@@ -18,6 +18,22 @@ namespace tyr
 {
 	namespace
 	{
+		// Copies a source name, keeping only characters that are safe in a file name.
+		template<typename NameType>
+		void CopyFileSafeName(const NameType& source, char* outName, uint capacity)
+		{
+			uint length = 0;
+			for (char c : source)
+			{
+				if (length + 1 >= capacity)
+				{
+					break;
+				}
+				outName[length++] = (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') ? c : '_';
+			}
+			outName[length] = '\0';
+		}
+
 		// Locates this file's JSON content within its own already-loaded bytes - the whole
 		// buffer for a plain .gltf (it's just JSON text), or the JSON chunk specifically for a
 		// .glb (walking its chunk headers; a GLB's separate binary chunk, if present, is
@@ -557,6 +573,10 @@ namespace tyr
 
 		mesh.aabbMin = aabbMin;
 		mesh.aabbMax = aabbMax;
+
+		char name[64];
+		CopyFileSafeName(m_Asset.meshes[meshIndex].name, name, sizeof(name));
+		mesh.name = name;
 
 		// A simple, not-tightest-possible bounding sphere - centered on the AABB, radius
 		// reaching its farthest corner. Good enough for now.
@@ -1099,17 +1119,7 @@ namespace tyr
 			}
 			else
 			{
-				// Kept to characters that are safe in a file name.
-				uint length = 0;
-				for (char c : animation.name)
-				{
-					if (length + 1 >= sizeof(name))
-					{
-						break;
-					}
-					name[length++] = (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') ? c : '_';
-				}
-				name[length] = '\0';
+				CopyFileSafeName(animation.name, name, sizeof(name));
 			}
 			imported.name = name;
 		}

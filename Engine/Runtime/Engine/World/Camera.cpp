@@ -65,9 +65,17 @@ namespace tyr
 			return;
 		}
 
-		Vector3 newForward = Vector3::SafeNormalize(target - m_Position);
+		const Vector3 newForward = Vector3::SafeNormalize(target - m_Position);
 
-		SetForward(newForward);
+		// Up is taken from the world's up so the camera isn't left rolled, unless looking straight up or down.
+		const Vector3 right = newForward.Cross(Vector3::c_Up);
+		if (right.Length() < 1e-3f)
+		{
+			SetForward(newForward);
+			return;
+		}
+		m_Forward = newForward;
+		m_Up = Vector3::SafeNormalize(right.Cross(newForward));
 	}
 
 	void Camera::SetForward(Vector3 forward)

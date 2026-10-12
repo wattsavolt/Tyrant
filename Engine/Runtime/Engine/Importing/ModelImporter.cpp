@@ -46,6 +46,18 @@ namespace tyr
 			}
 			return _stricmp(filePath + (pathLength - extLength), extension) == 0;
 		}
+
+		bool HasEarlierMeshNamed(const ModelImportResult& result, uint meshIndex)
+		{
+			for (uint i = 0; i < meshIndex; ++i)
+			{
+				if (strcmp(result.meshes[i].name.CStr(), result.meshes[meshIndex].name.CStr()) == 0)
+				{
+					return true;
+				}
+			}
+			return false;
+		}
 	}
 
 	bool ModelImporter::ImportModel(const char* filePath, const char* outputFolderPath, const char* modelName, const ModelImportOptions& options) const
@@ -92,17 +104,22 @@ namespace tyr
 
 		for (uint i = 0; i < m_Result.meshCount; ++i)
 		{
+			// A model holding several meshes, such as a kit of building pieces, names each after its source mesh.
+			const ModelImportMesh& mesh = m_Result.meshes[i];
 			char meshName[PathConstants::c_MaxAssetNameTotalSize];
 			if (m_Result.meshCount == 1)
 			{
 				snprintf(meshName, sizeof(meshName), "%s", modelName);
+			}
+			else if (mesh.name.CStr()[0] != '\0' && !HasEarlierMeshNamed(m_Result, i))
+			{
+				snprintf(meshName, sizeof(meshName), "%s", mesh.name.CStr());
 			}
 			else
 			{
 				snprintf(meshName, sizeof(meshName), "%s_Mesh%u", modelName, i);
 			}
 
-			const ModelImportMesh& mesh = m_Result.meshes[i];
 			const bool imported = mesh.skinWeights.IsEmpty()
 				? ImportMesh(mesh, outputFolderPath, meshName, m_MaterialIDs, options)
 				: ImportSkinnedMesh(mesh, m_Result.skeleton, skeletonID, outputFolderPath, meshName, m_MaterialIDs);
@@ -474,10 +491,13 @@ namespace tyr
 				outSubmesh.materialSlot = materialSlots ? materialSlots[submesh.materialIndex] : submesh.materialIndex;
 			}
 
-			// Worst-case bounds for everything this LOD accumulates across all its submeshes -
-			// meshlet_vertices/meshlet_triangles can never exceed this LOD's own total index
-			// count each (per meshoptimizer's own docs), so that safely bounds every array below.
-			const size_t maxMeshlets = meshopt_buildMeshletsBound(lodIndexCount, c_MaxMeshletVertices, c_MaxMeshletTriangles);
+			// Worst-case bounds for everything this LOD accumulates across all its submeshes.
+			// Meshlets are built per submesh, so each submesh rounds up to whole meshlets on its own.
+			size_t maxMeshlets = 0;
+			for (const ModelImportSubmesh& submesh : lodSubmeshes)
+			{
+				maxMeshlets += meshopt_buildMeshletsBound(submesh.indexCount, c_MaxMeshletVertices, c_MaxMeshletTriangles);
+			}
 
 			SmartStack<MeshChunkMeshlet> meshletsStack = SmartStackAlloc<MeshChunkMeshlet>((uint)maxMeshlets);
 			SmartStack<ShaderVertex> verticesStack = SmartStackAlloc<ShaderVertex>(lodIndexCount);

@@ -75,7 +75,7 @@ namespace tyr
 		// Places a StaticMeshActor, or a SkeletalMeshActor for a skinned mesh.
 		Entity SpawnMeshActor(const PendingMeshDrop& pending, const MeshHeader& header);
 		// Static colliders are grey, kinematic ones cyan and dynamic ones orange.
-		static void DrawColliders(World& world);
+		void DrawColliders(World& world) const;
 		// Places an actor of a registered type in front of the camera, and selects it.
 		void PlaceActor(const Id64& actorType, const char* folderPath);
 		// Adds an actor of the type to the level, named after it, and returns its root entity.

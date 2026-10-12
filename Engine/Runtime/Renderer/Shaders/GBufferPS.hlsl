@@ -3,6 +3,12 @@
 
 #include "Common.hlsli"
 
+// The masked pass (TYR_MASKED_PASS 1) cuts out pixels below the alpha cutoff and is drawn from
+// both sides. It's a separate pipeline so the opaque pass keeps early depth testing.
+#ifndef TYR_MASKED_PASS
+#define TYR_MASKED_PASS 0
+#endif
+
 // camPos (parallax view direction) and PrevViewProj (motion vectors, below) are the only
 // fields actually used here - everything in between exists purely so PrevViewProj lands
 // at its real cbuffer offset.
@@ -37,9 +43,18 @@ struct GBufferOutput
 	float2 motion : SV_TARGET2;
 };
 
+#if TYR_MASKED_PASS
+GBufferOutput main(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace)
+#else
 GBufferOutput main(VS_OUTPUT input)
+#endif
 {
+#if TYR_MASKED_PASS
+	// A back face is lit as the side facing the camera.
+	const float3 normal = normalize(input.normal) * (isFrontFace ? 1.0f : -1.0f);
+#else
 	const float3 normal = normalize(input.normal);
+#endif
 	const float3 tangent = normalize(input.tangent.xyz);
 	const float3 bitangent = cross(normal, tangent) * input.tangent.w;
 	const float3x3 TBN = float3x3(tangent, bitangent, normal);
@@ -65,7 +80,11 @@ GBufferOutput main(VS_OUTPUT input)
 	const float3 tangentSpaceNormal = (normalSample * 2.0f - 1.0f) * float3(material.normalStrength, material.normalStrength, 1.0f);
 	const float3 perturbedNormal = normalize(mul(tangentSpaceNormal, TBN));
 
-	const float3 albedo = textures[material.texture0].Sample(samplers[0], uv).rgb * material.albedoTint.rgb;
+	const float4 albedoSample = textures[material.texture0].Sample(samplers[0], uv);
+#if TYR_MASKED_PASS
+	clip(albedoSample.a * material.albedoTint.a - material.alphaCutoff);
+#endif
+	const float3 albedo = albedoSample.rgb * material.albedoTint.rgb;
 	const float3 aoRoughMetalSample = textures[material.texture2].Sample(samplers[0], uv).rgb;
 	const float ao = lerp(1.0f, aoRoughMetalSample.r, material.occlusionStrength);
 	const float roughness = lerp(material.roughnessRange.x, material.roughnessRange.y, aoRoughMetalSample.g);

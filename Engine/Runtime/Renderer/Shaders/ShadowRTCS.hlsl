@@ -15,7 +15,15 @@ cbuffer SceneInfoCBuffer : register(b0)
 	uint spotLightCount;
 };
 
+TYR_VK_BINDING(TYR_BINDING_MESH, 0) StructuredBuffer<Mesh> meshes : register(t1);
+TYR_VK_BINDING(TYR_BINDING_MESH_LOD, 0) StructuredBuffer<MeshLOD> meshLODs : register(t2);
+TYR_VK_BINDING(TYR_BINDING_MESHLET, 0) StructuredBuffer<Meshlet> meshlets : register(t3);
+TYR_VK_BINDING(TYR_BINDING_VERTEX, 0) StructuredBuffer<Vertex> vertices : register(t4);
+TYR_VK_BINDING(TYR_BINDING_INDEX, 0) StructuredBuffer<uint> indices : register(t5);
+TYR_VK_BINDING(TYR_BINDING_MESH_INSTANCE, 0) StructuredBuffer<MeshInstance> meshInstances : register(t6);
+TYR_VK_BINDING(TYR_BINDING_MATERIAL, 0) StructuredBuffer<Material> materials : register(t7);
 TYR_VK_BINDING(TYR_BINDING_TEXTURES, 0) Texture2D textures[] : register(t11);
+TYR_VK_BINDING(TYR_BINDING_SAMPLERS, 0) SamplerState samplers[] : register(s12);
 // textures[] above is unbounded, so it implicitly claims the rest of space0's t-registers -
 // tlas needs a distinct space to avoid a bogus register-overlap error. The real Vulkan binding
 // slot comes entirely from [[vk::binding]]; this register() annotation just needs to be unique.
@@ -82,6 +90,40 @@ float3 SurfaceStep(int2 pixel, int2 step, float deviceDepth, float3 worldPos)
 	const float3 forwardStep = ReconstructWorldPos(forwardPixel, forwardDepth) - worldPos;
 	const float3 backStep = worldPos - ReconstructWorldPos(backPixel, backDepth);
 	return forwardDifference <= backDifference ? forwardStep : backStep;
+}
+
+// Whether a candidate hit on a non-opaque instance blocks light. Only instances with a masked
+// material are non-opaque. The hit triangle's material comes from the meshlet holding it - the
+// acceleration structures hold LOD0, whose meshlets are in index order.
+bool BlocksLight(uint meshInstanceIndex, uint primitiveIndex, float2 barycentrics)
+{
+	const MeshInstance instance = meshInstances[meshInstanceIndex];
+	const MeshLOD lod = meshLODs[meshes[instance.meshIndex].lodOffset];
+	const uint firstIndex = primitiveIndex * 3;
+
+	uint low = 0;
+	uint high = lod.meshletCount - 1;
+	while (low < high)
+	{
+		const uint middle = (low + high + 1) / 2;
+		const bool atOrBefore = meshlets[lod.meshletOffset + middle].indexOffset <= firstIndex;
+		low = atOrBefore ? middle : low;
+		high = atOrBefore ? high : middle - 1;
+	}
+	const Material material = materials[instance.materialIndices[meshlets[lod.meshletOffset + low].materialSlot]];
+
+	// A skinned instance's acceleration structure is built from its skinned vertices.
+	const bool skinned = instance.skinnedVertexOffset != TYR_INVALID_INDEX;
+	const uint vertexBase = skinned ? instance.skinnedVertexOffset : lod.vertexOffset;
+	const uint indexBase = lod.indexOffset + firstIndex;
+	const float2 uv0 = (float2)vertices[vertexBase + indices[indexBase]].uv;
+	const float2 uv1 = (float2)vertices[vertexBase + indices[indexBase + 1]].uv;
+	const float2 uv2 = (float2)vertices[vertexBase + indices[indexBase + 2]].uv;
+	const float2 uv = (uv0 * (1.0f - barycentrics.x - barycentrics.y) + uv1 * barycentrics.x + uv2 * barycentrics.y) * material.uvScale + material.uvOffset;
+
+	const float alpha = textures[material.texture0].SampleLevel(samplers[0], uv, 0.0f).a * material.albedoTint.a;
+	const bool masked = (material.flags & TYR_MATERIAL_BLEND_MODE_MASK) == TYR_MATERIAL_BLEND_MODE_MASKED;
+	return or(!masked, alpha >= material.alphaCutoff);
 }
 
 [numthreads(8, 8, 1)]
@@ -156,14 +198,27 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 	RayDesc farRay = ray;
 	farRay.TMin = cullDistance;
 
-	// Shadow rays only need a yes/no hit test, so the first opaque hit found is the answer.
-	RayQuery<RAY_FLAG_CULL_NON_OPAQUE | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> nearQuery;
+	// Shadow rays only need a yes/no hit test, so the first hit found is the answer. Opaque
+	// instances are resolved in hardware, and only masked instances' hits come back here.
+	RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> nearQuery;
 	nearQuery.TraceRayInline(tlas[g_PushConstants.renderFrameIndex], RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, nearRay);
-	nearQuery.Proceed();
+	while (nearQuery.Proceed())
+	{
+		if (BlocksLight(nearQuery.CandidateInstanceID(), nearQuery.CandidatePrimitiveIndex(), nearQuery.CandidateTriangleBarycentrics()))
+		{
+			nearQuery.CommitNonOpaqueTriangleHit();
+		}
+	}
 
-	RayQuery<RAY_FLAG_CULL_NON_OPAQUE | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> farQuery;
+	RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> farQuery;
 	farQuery.TraceRayInline(tlas[g_PushConstants.renderFrameIndex], RAY_FLAG_NONE, 0xFF, farRay);
-	farQuery.Proceed();
+	while (farQuery.Proceed())
+	{
+		if (BlocksLight(farQuery.CandidateInstanceID(), farQuery.CandidatePrimitiveIndex(), farQuery.CandidateTriangleBarycentrics()))
+		{
+			farQuery.CommitNonOpaqueTriangleHit();
+		}
+	}
 
 	const bool blocked = or(nearQuery.CommittedStatus() == COMMITTED_TRIANGLE_HIT, farQuery.CommittedStatus() == COMMITTED_TRIANGLE_HIT);
 	const float visibility = blocked ? 0.0f : 1.0f;

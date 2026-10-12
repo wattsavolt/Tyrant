@@ -56,6 +56,13 @@ namespace tyr
 		bool update = false;
 	};
 
+	// AccelerationStructureInstance::flags. The same values in Vulkan and D3D12.
+	struct AccelerationStructureInstanceFlags
+	{
+		// Every hit is accepted in hardware, without asking the shader.
+		static constexpr uint8 c_ForceOpaque = 0x4;
+	};
+
 	// One entry in a top-level acceleration structure's instance buffer. Matches
 	// VkAccelerationStructureInstanceKHR's layout (also identical in shape to D3D12's
 	// D3D12_RAYTRACING_INSTANCE_DESC) so it can be written straight into a GPU buffer and read

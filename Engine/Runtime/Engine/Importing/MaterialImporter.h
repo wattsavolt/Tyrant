@@ -48,7 +48,8 @@ namespace tyr
 
 		// outputFolderPath must be relative to assets director and source path must be absolute
 		// Loads a texture as is without modifying or swizzling any channels
-		bool ImportTexture(const TextureSource& source, const char* outputFolderPath, const char* textureName, bool isSRGB, AssetID& textureID);
+		// Above zero, alphaTestCutoff keeps the texture's alpha-test coverage the same in every mip.
+		bool ImportTexture(const TextureSource& source, const char* outputFolderPath, const char* textureName, bool isSRGB, AssetID& textureID, float alphaTestCutoff = 0.0f);
 		bool ImportPbrMaterial(const PbrMaterialImportDesc& desc, AssetID& materialID);
 
 		// The default material and its textures. A material imported without one of its

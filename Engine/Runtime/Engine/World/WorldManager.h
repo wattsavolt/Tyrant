@@ -106,6 +106,10 @@ namespace tyr
 		void FitBoundsToMesh(World& world, Entity entity, AssetID meshID);
 		// Clears the bounds and box collider sized from a mesh, so they're fitted to a new one.
 		void ResetMeshBounds(World& world, Entity entity);
+		// Holds the collision mesh of the entity's mesh while its collider is a mesh or convex hull,
+		// once the mesh has loaded. Anything else lets go of it.
+		void SyncColliderMesh(World& world, Entity entity);
+		void ReleaseColliderMesh(World& world, ColliderComponent& collider);
 		// Moves entities with dynamic bodies to where physics put them, blended between steps.
 		void ApplyPhysicsTransforms(World& world);
 		// Moves an entity in world space, carrying the actor's entities under it along.

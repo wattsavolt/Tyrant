@@ -238,6 +238,7 @@ namespace tyr
 	void RendererAPI::UploadMaterial(MaterialHandle handle, const MaterialDesc& desc)
 	{
 		TYR_STATIC_ASSERT(sizeof(ShaderMaterial) == 80, "ShaderMaterial must match the shaders' 16 byte rows.");
+		TYR_STATIC_ASSERT(static_cast<uint>(MaterialBlendMode::Masked) == TYR_MATERIAL_BLEND_MODE_MASKED, "Keep in sync with ShaderTypes.h.");
 		TYR_ASSERT(desc.type == MaterialType::PBR);
 		const MaterialParams& params = desc.params;
 
@@ -257,6 +258,7 @@ namespace tyr
 		shaderMaterial.alphaCutoff = params.alphaCutoff;
 
 		m_Renderer.GetRecords().materials.Set(handle.h.index, shaderMaterial);
+		m_Renderer.GetRenderFrame().materialBlendModeUpdates.Add({ handle.h.index, params.blendMode });
 	}
 
 	void RendererAPI::DeleteMaterial(MaterialHandle handle)

@@ -8,6 +8,7 @@
 #include "Level/Level.h"
 #include "RenderBase/RenderHandles.h"
 #include "AssetConstants.h"
+#include "CollisionMeshAsset.h"
 #include "Rendering/RenderConstants.h"
 
 namespace tyr
@@ -78,6 +79,12 @@ namespace tyr
 		// Null until loaded.
 		const AnimationClip* GetAnimation(AssetID assetID) const;
 
+		// A mesh's collision, also CPU only, held while a collider uses it.
+		void LoadCollisionMesh(AssetID assetID);
+		void DeleteCollisionMesh(AssetID assetID);
+		// Null until loaded.
+		const CollisionMesh* GetCollisionMesh(AssetID assetID) const;
+
 		void LoadLocation(AssetID assetID);
 
 #if TYR_EDITOR
@@ -98,17 +105,18 @@ namespace tyr
 		static constexpr uint c_MaxUnreferencedAssets = 256;
 		static constexpr uint c_MaxSkeletons = 64;
 		static constexpr uint c_MaxAnimations = 1024;
+		static constexpr uint c_MaxCollisionMeshes = RenderConstants::c_MaxMeshes;
 		// Each finished-load queue holds every load of its kind that can be in flight at once.
 		static constexpr uint c_TextureLoadQueueSize = 4096;
 		static constexpr uint c_MaterialLoadQueueSize = 1024;
 		static constexpr uint c_MeshHeaderLoadQueueSize = 1024;
 		static constexpr uint c_MeshLodLoadQueueSize = 8192;
-		static constexpr uint c_CpuAssetLoadQueueSize = 2048;
+		static constexpr uint c_CpuAssetLoadQueueSize = 4096;
 		TYR_STATIC_ASSERT(c_TextureLoadQueueSize >= RenderConstants::c_MaxTextures, "Texture loads could overflow their queue.");
 		TYR_STATIC_ASSERT(c_MaterialLoadQueueSize >= RenderConstants::c_MaxMaterials, "Material loads could overflow their queue.");
 		TYR_STATIC_ASSERT(c_MeshHeaderLoadQueueSize >= RenderConstants::c_MaxMeshes, "Mesh loads could overflow their queue.");
 		TYR_STATIC_ASSERT(c_MeshLodLoadQueueSize >= RenderConstants::c_MaxMeshLODs, "Mesh LOD loads could overflow their queue.");
-		TYR_STATIC_ASSERT(c_CpuAssetLoadQueueSize >= c_MaxSkeletons + c_MaxAnimations, "Skeleton and animation loads could overflow their queue.");
+		TYR_STATIC_ASSERT(c_CpuAssetLoadQueueSize >= c_MaxSkeletons + c_MaxAnimations + c_MaxCollisionMeshes, "CPU asset loads could overflow their queue.");
 
 		// Called once per frame from the main thread - also the only place allowed to
 		// create/delete renderer resources, since doing so isn't safe against a worker
@@ -174,6 +182,7 @@ namespace tyr
 		LocalObjectPool<MeshHeader, RenderConstants::c_MaxMeshes, ResetObjectPolicy> m_MeshHeaderPool;
 		LocalObjectPool<Skeleton, c_MaxSkeletons, ResetObjectPolicy> m_SkeletonPool;
 		LocalObjectPool<AnimationClip, c_MaxAnimations, ResetObjectPolicy> m_AnimationPool;
+		LocalObjectPool<CollisionMesh, c_MaxCollisionMeshes, ResetObjectPolicy> m_CollisionMeshPool;
 		// Loaded batches ready to be processed
 		MPSCRingBuffer<AssetLoadBatch*, 32> m_BatchesLoadedQueue;
 		// Headers/files loaded and ready for their main-thread follow-up (GPU/upload

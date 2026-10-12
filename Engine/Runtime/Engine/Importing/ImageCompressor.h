@@ -34,6 +34,9 @@ namespace tyr
 		uint8 mipCount = 1;
 		// Is the input and output in sSRGB colour space
 		bool isSRGB = false;
+		// Above zero, every mip keeps the share of texels whose alpha reaches this, so an
+		// alpha-tested surface such as a fence doesn't thin out with distance.
+		float alphaTestCutoff = 0.0f;
 	};
 
 	struct CubemapCompressionDesc

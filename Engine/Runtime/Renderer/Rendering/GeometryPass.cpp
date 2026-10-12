@@ -31,6 +31,8 @@ namespace tyr
 		m_Scene = args.scene;
 		m_EarlyPipeline = args.earlyPipeline;
 		m_LatePipeline = args.latePipeline;
+		m_EarlyMaskedPipeline = args.earlyMaskedPipeline;
+		m_LateMaskedPipeline = args.lateMaskedPipeline;
 		m_DescriptorSet = args.descriptorSet;
 	}
 
@@ -74,26 +76,35 @@ namespace tyr
 
 	void GeometryPass::Execute(CommandList& cmdList, bool late, const ShaderCullPushConstants& pushConstants)
 	{
-		const GraphicsPipelineHandle pipeline = late ? m_LatePipeline : m_EarlyPipeline;
-		cmdList.BindGraphicsPipeline(pipeline);
-		cmdList.BindDescriptorSet(m_DescriptorSet, pipeline);
+		const GraphicsPipelineHandle opaquePipeline = late ? m_LatePipeline : m_EarlyPipeline;
+		cmdList.BindGraphicsPipeline(opaquePipeline);
+		cmdList.BindDescriptorSet(m_DescriptorSet, opaquePipeline);
 
 		if (!m_Scene)
 		{
 			return;
 		}
 
+		// Opaque first, so masked pixels behind it are rejected before they're shaded.
+		DrawList(cmdList, opaquePipeline, late ? TYR_DRAW_LIST_LATE_OPAQUE : TYR_DRAW_LIST_EARLY_OPAQUE, pushConstants);
+
+		const GraphicsPipelineHandle maskedPipeline = late ? m_LateMaskedPipeline : m_EarlyMaskedPipeline;
+		cmdList.BindGraphicsPipeline(maskedPipeline);
+		DrawList(cmdList, maskedPipeline, late ? TYR_DRAW_LIST_LATE_MASKED : TYR_DRAW_LIST_EARLY_MASKED, pushConstants);
+	}
+
+	void GeometryPass::DrawList(CommandList& cmdList, GraphicsPipelineHandle pipeline, uint drawList, const ShaderCullPushConstants& pushConstants)
+	{
 		cmdList.PushConstants(pipeline, SHADER_STAGE_TASK_BIT, 0, sizeof(pushConstants), &pushConstants);
 
-		// GPU-driven culling has already compacted this pass's draws into its own half of
+		// GPU-driven culling has already compacted this list's draws into its own part of
 		// indirectDrawCommandBuffer/meshDrawBuffer and written how many into its own entry of
 		// drawCountBuffer, so one indirect multi-draw call covers every instance.
 		const BufferHandle indirectBuffer = m_Registry->GetBuffer(m_Resources->indirectDrawCommandBuffer).buffer;
 		const BufferHandle countBuffer = m_Registry->GetBuffer(m_Resources->drawCountBuffer).buffer;
 		// Matches VkDrawMeshTasksIndirectCommandEXT (3x uint32).
 		constexpr uint stride = sizeof(uint) * 3;
-		const uint passIndex = late ? 1 : 0;
-		cmdList.DrawMeshTasksIndirectCount(indirectBuffer, (size_t)passIndex * stride * RenderConstants::c_MaxMeshInstances,
-			countBuffer, passIndex * sizeof(uint), RenderConstants::c_MaxMeshInstances, stride);
+		cmdList.DrawMeshTasksIndirectCount(indirectBuffer, (size_t)drawList * stride * RenderConstants::c_MaxMeshInstances,
+			countBuffer, drawList * sizeof(uint), RenderConstants::c_MaxMeshInstances, stride);
 	}
 }

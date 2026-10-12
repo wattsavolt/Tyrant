@@ -11,8 +11,10 @@
 #include "Utility/PathUtil.h"
 #include "RenderResource/MeshUtil.h"
 #include "Shaders/ShaderTypes.h"
-#include "AssetSystem/AssetConstants.h"
+#include "AssetSystem/CollisionMeshAsset.h"
+#include "Platform/Platform.h"
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <meshoptimizer.h>
 #include <zstd.h>
@@ -45,6 +47,80 @@ namespace tyr
 				return false;
 			}
 			return _stricmp(filePath + (pathLength - extLength), extension) == 0;
+		}
+
+		constexpr const char* c_CollisionMeshPrefix = "UCX_";
+		constexpr size_t c_CollisionMeshPrefixLength = 4;
+
+		bool HasCollisionPrefix(const char* name)
+		{
+			return strncmp(name, c_CollisionMeshPrefix, c_CollisionMeshPrefixLength) == 0;
+		}
+
+		bool IsCollisionMesh(const ModelImportMesh& mesh)
+		{
+			return HasCollisionPrefix(mesh.name.CStr()) || HasCollisionPrefix(mesh.nodeName.CStr());
+		}
+
+		// The name after a UCX_ mesh's prefix, such as Wall_400 or Wall_400_01.
+		const char* GetCollisionTarget(const ModelImportMesh& collisionMesh)
+		{
+			const char* name = HasCollisionPrefix(collisionMesh.name.CStr()) ? collisionMesh.name.CStr() : collisionMesh.nodeName.CStr();
+			return name + c_CollisionMeshPrefixLength;
+		}
+
+		// Exactly the name, or unless exact is set, the name followed by _ and a number.
+		bool MatchesCollisionTarget(const char* target, const char* name, bool exact)
+		{
+			const size_t length = strlen(name);
+			if (length == 0 || strncmp(target, name, length) != 0)
+			{
+				return false;
+			}
+			const char* rest = target + length;
+			if (exact || *rest == '\0')
+			{
+				return *rest == '\0';
+			}
+			if (rest[0] != '_' || rest[1] == '\0')
+			{
+				return false;
+			}
+			for (++rest; *rest != '\0'; ++rest)
+			{
+				if (!std::isdigit(static_cast<unsigned char>(*rest)))
+				{
+					return false;
+				}
+			}
+			return true;
+		}
+
+		bool MatchesCollisionTarget(const char* target, const ModelImportMesh& mesh, bool exact)
+		{
+			return MatchesCollisionTarget(target, mesh.name.CStr(), exact) || MatchesCollisionTarget(target, mesh.nodeName.CStr(), exact);
+		}
+
+		// A numbered UCX_ mesh only belongs to a mesh when no other mesh has its whole name.
+		bool IsCollisionFor(const ModelImportResult& result, const ModelImportMesh& collisionMesh, const ModelImportMesh& mesh)
+		{
+			const char* target = GetCollisionTarget(collisionMesh);
+			if (MatchesCollisionTarget(target, mesh, true))
+			{
+				return true;
+			}
+			if (!MatchesCollisionTarget(target, mesh, false))
+			{
+				return false;
+			}
+			for (uint i = 0; i < result.meshCount; ++i)
+			{
+				if (!IsCollisionMesh(result.meshes[i]) && MatchesCollisionTarget(target, result.meshes[i], true))
+				{
+					return false;
+				}
+			}
+			return true;
 		}
 
 		bool HasEarlierMeshNamed(const ModelImportResult& result, uint meshIndex)
@@ -102,12 +178,22 @@ namespace tyr
 			return false;
 		}
 
+		uint renderMeshCount = 0;
+		for (uint i = 0; i < m_Result.meshCount; ++i)
+		{
+			renderMeshCount += IsCollisionMesh(m_Result.meshes[i]) ? 0 : 1;
+		}
+
 		for (uint i = 0; i < m_Result.meshCount; ++i)
 		{
 			// A model holding several meshes, such as a kit of building pieces, names each after its source mesh.
 			const ModelImportMesh& mesh = m_Result.meshes[i];
+			if (IsCollisionMesh(mesh))
+			{
+				continue;
+			}
 			char meshName[PathConstants::c_MaxAssetNameTotalSize];
-			if (m_Result.meshCount == 1)
+			if (renderMeshCount == 1)
 			{
 				snprintf(meshName, sizeof(meshName), "%s", modelName);
 			}
@@ -197,14 +283,90 @@ namespace tyr
 		char absMeshFilePath[TYR_MAX_PATH_TOTAL_SIZE];
 		AssetUtil::CreateFullPath(absMeshFilePath, meshPath);
 
+		// The header points at the collision mesh, so it's written first.
+		ImportCollisionMesh(mesh, outputFolderPath, meshName, m_Header.collision);
+
 		if (!ImportMeshGeometry(mesh, m_Header, options, absMeshFilePath))
 		{
 			TYR_LOG_ERROR("Failed to export geometry for mesh %s.", meshName);
 			return false;
 		}
 
-		AssetRegistry::Instance().AddOrUpdateAsset(meshPath, materialIDs.Data(), materialIDs.Size());
+		m_Dependencies.Clear();
+		m_Dependencies.Reserve(materialIDs.Size() + 1);
+		for (const AssetID& materialID : materialIDs)
+		{
+			m_Dependencies.Add(materialID);
+		}
+		if (AssetUtil::IsValidAssetID(m_Header.collision))
+		{
+			m_Dependencies.Add(m_Header.collision);
+		}
+		AssetRegistry::Instance().AddOrUpdateAsset(meshPath, m_Dependencies.Data(), m_Dependencies.Size());
 		return true;
+	}
+
+	void ModelImporter::ImportCollisionMesh(const ModelImportMesh& mesh, const char* outputFolderPath, const char* meshName, AssetID& outCollisionID) const
+	{
+		outCollisionID = AssetConstants::c_InvalidAssetID;
+
+		// Each UCX_ mesh is one convex piece. Without any, the mesh's own triangles are used.
+		bool authored = false;
+		for (uint i = 0; i < m_Result.meshCount && !authored; ++i)
+		{
+			authored = IsCollisionMesh(m_Result.meshes[i]) && IsCollisionFor(m_Result, m_Result.meshes[i], mesh);
+		}
+
+		// Positions are gathered into one array first, so the pieces can point into it once it stops growing.
+		m_CollisionPieces.Clear();
+		m_CollisionPositions.Clear();
+		for (uint i = 0; i < m_Result.meshCount; ++i)
+		{
+			const ModelImportMesh& source = m_Result.meshes[i];
+			const bool used = authored ? IsCollisionMesh(source) && IsCollisionFor(m_Result, source, mesh) : &source == &mesh;
+			if (!used)
+			{
+				continue;
+			}
+			CollisionMeshPiece& piece = m_CollisionPieces.ExpandOne();
+			piece.vertexCount = source.vertices.Size();
+			piece.indices = source.indices.Data();
+			piece.indexCount = source.indices.Size();
+			for (const Vertex& vertex : source.vertices)
+			{
+				m_CollisionPositions.Add(vertex.position);
+			}
+		}
+		uint positionOffset = 0;
+		for (CollisionMeshPiece& piece : m_CollisionPieces)
+		{
+			piece.positions = m_CollisionPositions.Data() + positionOffset;
+			positionOffset += piece.vertexCount;
+		}
+
+		char collisionPath[PathConstants::c_MaxAssetPathTotalSize];
+		snprintf(collisionPath, sizeof(collisionPath), "%s/%s%s", outputFolderPath, meshName, AssetConstants::c_CollisionMeshFileExtension);
+		char absCollisionPath[TYR_MAX_PATH_TOTAL_SIZE];
+		AssetUtil::CreateFullPath(absCollisionPath, collisionPath);
+
+		bool written = false;
+		{
+			constexpr size_t c_CollisionStreamBufferSize = 65536;
+			SmartStack<uint8> streamBufferStack = SmartStackAlloc<uint8>((uint)c_CollisionStreamBufferSize);
+			BufferedFileStream stream(streamBufferStack, c_CollisionStreamBufferSize, absCollisionPath, BinaryStream::Operation::Write, true);
+			Serialize<uint>(stream, CollisionMesh::c_FileVersion);
+			written = CollisionShapes::Write(stream, m_CollisionPieces.Data(), m_CollisionPieces.Size(), meshName);
+		}
+
+		if (!written)
+		{
+			TYR_LOG_WARNING("Mesh %s has no collision, so Mesh and Convex Hull colliders won't work with it.", meshName);
+			Platform::RemoveFile(absCollisionPath);
+			AssetRegistry::Instance().RemoveAssetIfExists(collisionPath);
+			return;
+		}
+
+		outCollisionID = AssetRegistry::Instance().AddOrUpdateAsset(collisionPath);
 	}
 
 	namespace
@@ -408,14 +570,15 @@ namespace tyr
 			return packed;
 		}
 
-		// Rounds down to a whole number of triangles, never below c_MinLodTriangleCount.
+		// Rounds down to a whole number of triangles, never below c_MinLodTriangleCount
+		// unless the submesh has fewer than that to begin with.
 		uint ComputeLodTargetIndexCount(uint originalIndexCount, uint lodIndex)
 		{
 			const float scale = Math::Pow(c_LodIndexCountFactor, (float)lodIndex);
 			uint target = (uint)(originalIndexCount * scale);
 			target -= target % 3;
 
-			const uint minIndexCount = c_MinLodTriangleCount * 3;
+			const uint minIndexCount = std::min(c_MinLodTriangleCount * 3, originalIndexCount);
 			return target > minIndexCount ? target : minIndexCount;
 		}
 	}

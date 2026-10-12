@@ -27,7 +27,8 @@ namespace tyr
 		Material,
 		Mesh,
 		Skeleton,
-		Animation
+		Animation,
+		CollisionMesh
 	};
 
 	struct AssetData
@@ -113,7 +114,7 @@ namespace tyr
 		size_t headerByteSize;
 	};
 
-	// A skeleton or animation clip, which only lives on the CPU.
+	// A skeleton, animation clip or collision mesh, which only lives on the CPU.
 	struct CpuAssetLoadData
 	{
 		AssetID assetID;

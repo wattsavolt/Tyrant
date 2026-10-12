@@ -90,6 +90,18 @@
 // Enough for a depth buffer up to 65536 pixels across.
 #define TYR_MAX_HIZ_LEVELS 16
 
+// The culling passes' draw lists, each TYR_MAX_MESH_INSTANCES draws long with its own draw count.
+// Each geometry pass draws its masked list after its opaque one, which masked pixels depth test against.
+#define TYR_DRAW_LIST_EARLY_OPAQUE 0
+#define TYR_DRAW_LIST_LATE_OPAQUE 1
+#define TYR_DRAW_LIST_EARLY_MASKED 2
+#define TYR_DRAW_LIST_LATE_MASKED 3
+#define TYR_DRAW_LIST_COUNT 4
+
+// Material::flags bits 0 and 1 hold its MaterialBlendMode.
+#define TYR_MATERIAL_BLEND_MODE_MASK 0x3
+#define TYR_MATERIAL_BLEND_MODE_MASKED 1
+
 #ifdef __cplusplus
 
 #include "RendererMacros.h"

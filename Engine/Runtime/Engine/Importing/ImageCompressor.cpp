@@ -239,6 +239,9 @@ namespace tyr
         GpuReadyMemoryOutputHandler outputHandler;
         outputOptions.setOutputHandler(&outputHandler);
 
+        const bool keepAlphaCoverage = desc.alphaTestCutoff > 0.0f;
+        const float alphaCoverage = keepAlphaCoverage ? surface.alphaTestCoverage(desc.alphaTestCutoff) : 0.0f;
+
         for (uint8 mip = 0; mip < desc.mipCount; ++mip)
         {
             const bool success = context.compress(surface, 0, mip, compressionOptions, outputOptions);
@@ -252,6 +255,10 @@ namespace tyr
                 if (!surface.buildNextMipmap(nvtt::MipmapFilter_Box))
                 {
                     break;
+                }
+                if (keepAlphaCoverage)
+                {
+                    surface.scaleAlphaToCoverage(alphaCoverage, desc.alphaTestCutoff);
                 }
             }
         }

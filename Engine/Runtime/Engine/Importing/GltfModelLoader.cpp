@@ -403,6 +403,9 @@ namespace tyr
 				continue;
 			}
 			anyMeshLoaded = true;
+			char nodeName[64];
+			CopyFileSafeName(node.name, nodeName, sizeof(nodeName));
+			mesh->nodeName = nodeName;
 
 			// Skinned meshes only use LOD0, since simplifying needs to respect their weights.
 			if (skinned)

@@ -25,6 +25,8 @@ namespace tyr
 		Scene* scene;
 		GraphicsPipelineHandle earlyPipeline;
 		GraphicsPipelineHandle latePipeline;
+		GraphicsPipelineHandle earlyMaskedPipeline;
+		GraphicsPipelineHandle lateMaskedPipeline;
 		DescriptorSetHandle descriptorSet;
 	};
 
@@ -45,12 +47,16 @@ namespace tyr
 		void Execute(CommandList& cmdList, bool late, const ShaderCullPushConstants& pushConstants);
 
 	private:
+		void DrawList(CommandList& cmdList, GraphicsPipelineHandle pipeline, uint drawList, const ShaderCullPushConstants& pushConstants);
+
 		Device* m_Device;
 		RenderRegistry* m_Registry;
 		RenderResources* m_Resources;
 		Scene* m_Scene;
 		GraphicsPipelineHandle m_EarlyPipeline;
 		GraphicsPipelineHandle m_LatePipeline;
+		GraphicsPipelineHandle m_EarlyMaskedPipeline;
+		GraphicsPipelineHandle m_LateMaskedPipeline;
 		DescriptorSetHandle m_DescriptorSet;
 	};
 

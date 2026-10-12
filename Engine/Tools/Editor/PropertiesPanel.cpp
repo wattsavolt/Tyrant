@@ -26,9 +26,9 @@ namespace tyr
 			return AssetRegistry::Instance().GetAssetID(path);
 		}
 
-		const char* const c_ColliderShapeNames[] = { "Box", "Sphere", "Capsule" };
+		const char* const c_ColliderShapeNames[] = { "Box", "Sphere", "Capsule", "Mesh", "Convex Hull" };
 		const char* const c_MotionTypeNames[] = { "Static", "Kinematic", "Dynamic" };
-		const PropertiesReflector::EnumNames c_ColliderShapes = { c_ColliderShapeNames, 3 };
+		const PropertiesReflector::EnumNames c_ColliderShapes = { c_ColliderShapeNames, 5 };
 		const PropertiesReflector::EnumNames c_MotionTypes = { c_MotionTypeNames, 3 };
 
 		// An invalid material makes the slot use the mesh's own. Trailing ones are dropped, so a

@@ -52,6 +52,8 @@ namespace tyr
 	{
 		// The source mesh's name, kept to characters that are safe in a file name. May be empty.
 		LocalString<63> name;
+		// The name of the node it was found on, kept the same way. Blender exports objects as nodes.
+		LocalString<63> nodeName;
 		Array<Vertex> vertices;
 		Array<uint> indices;
 		Array<ModelImportSubmesh> submeshes;
@@ -72,6 +74,7 @@ namespace tyr
 		void Reset()
 		{
 			name.Reset();
+			nodeName.Reset();
 			vertices.Clear();
 			indices.Clear();
 			submeshes.Clear();

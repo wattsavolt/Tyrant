@@ -19,6 +19,9 @@ namespace tyr
 
 		size_t GetOffset() const override;
 
+		// Only once everything buffered has been read too.
+		bool IsEOF() const override;
+
 		Type GetStreamType() const override;
 	
 	private:

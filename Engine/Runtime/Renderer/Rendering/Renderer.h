@@ -60,9 +60,10 @@ namespace tyr
 	{
 		RenderRecordTable<ShaderMeshInstance, RenderConstants::c_MaxMeshInstances> meshInstances;
 		RenderRecordTable<ShaderMaterial, RenderConstants::c_MaxMaterials> materials;
-		RenderRecordTable<ShaderDirectionalLight, RenderConstants::c_MaxDirLights> dirLights;
-		RenderRecordTable<ShaderPointLight, RenderConstants::c_MaxPointLights> pointLights;
-		RenderRecordTable<ShaderSpotLight, RenderConstants::c_MaxSpotLights> spotLights;
+		// Sized like their pools, which hold the edited level's lights and the played game's.
+		RenderRecordTable<ShaderDirectionalLight, RenderConstants::c_DirLightPoolSize> dirLights;
+		RenderRecordTable<ShaderPointLight, RenderConstants::c_PointLightPoolSize> pointLights;
+		RenderRecordTable<ShaderSpotLight, RenderConstants::c_SpotLightPoolSize> spotLights;
 		RenderRecordTable<BonePalette, RenderConstants::c_MaxSkeletalMeshInstances> bonePalettes;
 	};
 
@@ -115,10 +116,6 @@ namespace tyr
 			return m_RenderFrames[m_RenderFrameIndex];
 		}
 
-		// Copies data to dstBuffer at the start of the next frame drawn. Each place may be written
-		// once a frame, so per-slot records go through GetRecords instead. Main thread only.
-		void QueueFrameUpload(RenderBufferHandle dstBuffer, size_t dstOffset, const void* data, size_t size);
-
 		RenderRecords& GetRecords() { return m_Records; }
 
 		// Which buffered RenderFrame slot (and so which RenderViewportTextureData entry) this
@@ -157,8 +154,13 @@ namespace tyr
 		void QueueAccelerationStructureBindingUpdate(uint bindingIndex, uint descriptorArrayIndex, const AccelerationStructureBindingInfo& info);
 
 	private:
+		// Copies data to dstBuffer at the start of the next frame drawn. Each place may be written
+		// once a frame, so per-slot records go through GetRecords instead. Main thread only.
+		void QueueFrameUpload(RenderBufferHandle dstBuffer, size_t dstOffset, const void* data, size_t size);
 		// Uploads every record changed since the last frame, then clears their dirty bits.
 		void FlushRecords();
+		// Forces an instance opaque in the TLAS unless one of its materials is masked. Render worker only.
+		uint8 GetTLASInstanceFlags(const LocalArray<MaterialHandle, MeshConstants::c_MaxSubmeshes>& materials) const;
 		template<typename T, uint N>
 		void FlushRecordTable(RenderRecordTable<T, N>& table, RenderBufferHandle buffer);
 
@@ -369,6 +371,8 @@ namespace tyr
 		Array<MeshHandle> m_PendingBLASBuilds;
 		Array<SkeletalMeshInstanceHandle> m_SkinnedInstances;
 		RenderRecords m_Records;
+		// Each material's MaterialBlendMode, for which instances the TLAS forces opaque. Render worker only.
+		uint8 m_MaterialBlendModes[RenderConstants::c_MaxMaterials] = {};
 		// Current per-slot capacity of m_Resources.blasScratchBuffer.
 		size_t m_BLASScratchCapacity = 0;
 		// How many floats each slot's Hi-Z buffer holds.

@@ -5,6 +5,7 @@
 #include "AssetSystem/AssetID.h"
 #include "AssetSystem/MeshAsset.h"
 #include "IModelLoader.h"
+#include "Physics/CollisionShapes.h"
 
 namespace tyr
 {
@@ -31,6 +32,8 @@ namespace tyr
 
 	// Imports a 3D model file (glTF/GLB today) into mesh and material assets, plus a skeleton,
 	// skinned meshes and animations when the model has a skin. Called by the editor.
+	// Each rigid mesh gets a collision mesh from the meshes named UCX_<its name>, which aren't
+	// imported themselves, or from its own triangles when it has none.
 	class TYR_ENGINE_API ModelImporter final : public INonCopyable
 	{
 	public:
@@ -48,6 +51,8 @@ namespace tyr
 		bool ImportMaterials(const ModelImportResult& result, const char* outputFolderPath, const char* modelName, Array<AssetID>& outMaterialIDs) const;
 		bool ImportMesh(const ModelImportMesh& mesh, const char* outputFolderPath, const char* meshName,
 			const Array<AssetID>& materialIDs, const ModelImportOptions& options) const;
+		// Writes the mesh's .coll file next to it. outCollisionID stays invalid if no shape could be made.
+		void ImportCollisionMesh(const ModelImportMesh& mesh, const char* outputFolderPath, const char* meshName, AssetID& outCollisionID) const;
 		// Writes the skeleton and every animation. Returns the skeleton's ID.
 		bool ImportSkeletonAndAnimations(ModelImportResult& result, const char* outputFolderPath, const char* modelName, AssetID& outSkeletonID) const;
 		// Only the materials the mesh uses become its slots, unlike a rigid mesh.
@@ -87,5 +92,9 @@ namespace tyr
 		mutable LocalArray<Array<uint8>, MeshConstants::c_MaxLods> m_LodCompressedBlobs;
 		// A skinned mesh's model material index -> slot map, reused like the members above.
 		mutable Array<uint> m_MaterialSlots;
+		// A mesh's dependencies, and its collision pieces' positions, reused like the members above.
+		mutable Array<AssetID> m_Dependencies;
+		mutable Array<Vector3> m_CollisionPositions;
+		mutable Array<CollisionMeshPiece> m_CollisionPieces;
 	};
 }

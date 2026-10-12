@@ -76,13 +76,14 @@ namespace tyr
 		stream.Write(&header.sphere, sizeof(header.sphere));
 		stream.Write(&header.aabbMin, sizeof(header.aabbMin));
 		stream.Write(&header.aabbMax, sizeof(header.aabbMax));
+		stream.Write(&header.collision, sizeof(header.collision));
 	}
 
 	template<>
 	void Deserialize(BufferedFileStream& stream, MeshHeader& header)
 	{
 		Deserialize<uint>(stream, header.fileVersion);
-		if (!header.IsCurrentVersion())
+		if (!header.IsReadableVersion())
 		{
 			return;
 		}
@@ -93,6 +94,10 @@ namespace tyr
 		stream.Read(&header.sphere, sizeof(header.sphere));
 		stream.Read(&header.aabbMin, sizeof(header.aabbMin));
 		stream.Read(&header.aabbMax, sizeof(header.aabbMax));
+		if (header.fileVersion == MeshHeader::c_FileVersion)
+		{
+			stream.Read(&header.collision, sizeof(header.collision));
+		}
 	}
 
 	void SerializeSkinnedMesh(BufferedFileStream& stream, const MeshHeader& header)
@@ -106,7 +111,7 @@ namespace tyr
 	void DeserializeSkinnedMesh(BufferedFileStream& stream, MeshHeader& header)
 	{
 		Deserialize<MeshHeader>(stream, header);
-		if (!header.IsCurrentVersion())
+		if (!header.IsReadableVersion())
 		{
 			return;
 		}

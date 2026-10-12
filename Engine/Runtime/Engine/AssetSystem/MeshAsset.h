@@ -71,7 +71,9 @@ namespace tyr
 	{
 		// Written first and bumped whenever the layout changes, so an older file is rejected
 		// instead of misread. The high half is a tag no older file starts with.
-		static constexpr uint c_FileVersion = 0x544D0002;
+		static constexpr uint c_FileVersion = 0x544D0003;
+		// Older than c_FileVersion but still read, without a collision mesh.
+		static constexpr uint c_NoCollisionFileVersion = 0x544D0002;
 		uint fileVersion = c_FileVersion;
 
 		LocalArray<MeshLODHeader, MeshConstants::c_MaxLods> lods;
@@ -88,6 +90,8 @@ namespace tyr
 		BoundingSphere sphere;
 		Vector3 aabbMin;
 		Vector3 aabbMax;
+		// The CollisionMesh made from it at import. Invalid for skinned meshes and older files.
+		AssetID collision;
 
 		// Skinned meshes only, which are saved with SerializeSkinnedMesh. One entry per chunk.
 		Array<MeshChunkSkin> chunkSkins;
@@ -96,7 +100,7 @@ namespace tyr
 		float boneBoundsMargin = 0.0f;
 
 		bool IsSkinned() const { return !chunkSkins.IsEmpty(); }
-		bool IsCurrentVersion() const { return fileVersion == c_FileVersion; }
+		bool IsReadableVersion() const { return fileVersion == c_FileVersion || fileVersion == c_NoCollisionFileVersion; }
 
 		void Reset()
 		{
@@ -108,6 +112,7 @@ namespace tyr
 			sphere = {};
 			aabbMin = {};
 			aabbMax = {};
+			collision = {};
 			chunkSkins.Clear();
 			skeleton = {};
 			boneBoundsMargin = 0.0f;

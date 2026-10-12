@@ -16,22 +16,28 @@ namespace tyr
 		}
 	}
 
-	// Starts with no mesh, which is set from the editor's properties.
+	// Starts with no mesh, which is set from the editor's properties. Collides with the mesh's triangles.
 	TYR_ACTOR_START(StaticMeshActor)
+		ColliderComponent collider{};
+		collider.shape = static_cast<uint8>(ColliderShape::Mesh);
+
 		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
 		root.AddComponent(CreateIdentityTransform());
 		root.AddComponent(MeshComponent{});
 		root.AddComponent(BoxComponent{});
-		root.AddComponent(ColliderComponent{});
+		root.AddComponent(collider);
 	TYR_ACTOR_END()
 
 	// A mesh moved by physics, such as something that can be knocked over or thrown.
 	TYR_ACTOR_START(DynamicMeshActor)
+		ColliderComponent collider{};
+		collider.shape = static_cast<uint8>(ColliderShape::ConvexHull);
+
 		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
 		root.AddComponent(CreateIdentityTransform());
 		root.AddComponent(MeshComponent{});
 		root.AddComponent(BoxComponent{});
-		root.AddComponent(ColliderComponent{});
+		root.AddComponent(collider);
 		root.AddComponent(RigidBodyComponent{});
 	TYR_ACTOR_END()
 

@@ -577,9 +577,9 @@ namespace tyr
 		m_RendererAPI->SetRenderViewportGrid(levelWorld.renderViewportHandle, m_Grid);
 	}
 
-	void Editor::DrawColliders(World& world)
+	void Editor::DrawColliders(World& world) const
 	{
-		world.entities.ForEach<ColliderComponent>([&world](Entity entity, ColliderComponent& collider)
+		world.entities.ForEach<ColliderComponent>([&world, this](Entity entity, ColliderComponent& collider)
 		{
 			if (!world.entities.HasComponent<ComponentTransform>(entity))
 			{
@@ -605,6 +605,24 @@ namespace tyr
 			case ColliderShape::Capsule:
 				DebugDraw::Capsule(center, collider.radius * std::max(scale.x, scale.z), collider.halfHeight * scale.y, transform.rotation, colour);
 				break;
+			case ColliderShape::Mesh:
+			case ColliderShape::ConvexHull:
+			{
+				const CollisionMesh* collisionMesh = m_AssetManager->GetCollisionMesh(collider.collisionMesh);
+				if (!collisionMesh)
+				{
+					break;
+				}
+				// Matches the shape PhysicsManager gives a dynamic body.
+				const bool dynamic = colour == DebugColour::c_Orange;
+				const Array<Vector3>& lines = static_cast<ColliderShape>(collider.shape) == ColliderShape::Mesh && !dynamic ? collisionMesh->triangleLines : collisionMesh->convexLines;
+				const Matrix4 localToWorld = Matrix4::CreateTRS(transform.position, transform.rotation, transform.scale);
+				for (uint i = 0; i + 1 < lines.Size(); i += 2)
+				{
+					DebugDraw::Line(localToWorld.MultiplyAffine(lines[i]), localToWorld.MultiplyAffine(lines[i + 1]), colour);
+				}
+				break;
+			}
 			default:
 				DebugDraw::Box(center, collider.halfExtents * scale, transform.rotation, colour);
 				break;

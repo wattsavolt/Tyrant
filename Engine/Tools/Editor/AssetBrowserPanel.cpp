@@ -35,6 +35,7 @@ namespace tyr
 			SkeletalMesh,
 			Skeleton,
 			Animation,
+			CollisionMesh,
 			Level,
 			Other
 		};
@@ -54,6 +55,7 @@ namespace tyr
 			{ "SkMsh", IM_COL32(60, 150, 160, 255) },
 			{ "Skel", IM_COL32(150, 150, 170, 255) },
 			{ "Anim", IM_COL32(70, 120, 210, 255) },
+			{ "Coll", IM_COL32(120, 160, 60, 255) },
 			{ "Lvl", IM_COL32(200, 150, 50, 255) },
 			{ "?", IM_COL32(110, 110, 110, 255) }
 		};
@@ -88,6 +90,10 @@ namespace tyr
 			if (strcmp(extension, AssetConstants::c_AnimationFileExtension) == 0)
 			{
 				return AssetKind::Animation;
+			}
+			if (strcmp(extension, AssetConstants::c_CollisionMeshFileExtension) == 0)
+			{
+				return AssetKind::CollisionMesh;
 			}
 			if (strcmp(extension, AssetConstants::c_LevelFileExtension) == 0)
 			{

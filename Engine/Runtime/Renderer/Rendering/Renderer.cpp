@@ -70,8 +70,8 @@ namespace tyr
 		// Fixed, worst-case-sized byte regions within the ray-tracing culling staging buffer,
 		// one contiguous block per buffered render frame slot, indexed directly by renderFrameIndex.
 		constexpr size_t c_ActiveInstanceIndicesBytes = sizeof(uint) * RenderConstants::c_MaxMeshInstances;
-		// The early and late culling passes' draw counts.
-		constexpr size_t c_DrawCountResetBytes = sizeof(uint) * 2;
+		// Every draw list's draw count.
+		constexpr size_t c_DrawCountResetBytes = sizeof(uint) * TYR_DRAW_LIST_COUNT;
 		constexpr size_t c_TlasInstancesBytes = RenderConstants::c_TLASInstanceBufferSize;
 		// Also built and uploaded from the worker thread (once ShadowRTPass's selection is known),
 		// so it shares this same staging buffer rather than needing one of its own.
@@ -107,7 +107,8 @@ namespace tyr
 		// VkAccelerationStructureInstanceKHR's transform is row-major 3x4 for a column-vector
 		// transform, the transpose of this engine's row-vector Matrix4 - GetColumn4D(r) of the
 		// engine matrix gives exactly VK row r's 4 components.
-		void WriteTLASInstance(const Matrix4& transform, AccelerationStructureHandle blas, AccelerationStructureInstance& out)
+		// customIndex is the mesh instance's index, which shaders read back from a hit.
+		void WriteTLASInstance(const Matrix4& transform, AccelerationStructureHandle blas, uint customIndex, uint8 flags, AccelerationStructureInstance& out)
 		{
 			for (uint r = 0; r < 3; ++r)
 			{
@@ -117,10 +118,10 @@ namespace tyr
 				out.transform[r][2] = row.z;
 				out.transform[r][3] = row.w;
 			}
-			out.instanceCustomIndex = 0;
+			out.instanceCustomIndex = customIndex;
 			out.mask = 0xFF;
 			out.shaderBindingTableRecordOffset = 0;
-			out.flags = 0;
+			out.flags = flags;
 			out.accelerationStructureReference = RenderRegistry::Instance()->GetDevice().GetAccelerationStructureDeviceAddress(blas);
 		}
 	}
@@ -288,6 +289,8 @@ namespace tyr
 				geomDesc.indexBuffer = m_Registry.GetBuffer(m_Resources.indexBuffer).buffer;
 				geomDesc.indexOffset = lodAlloc.indexBufferAllocation.offset;
 				geomDesc.maxPrimitiveCount = (uint)(lodAlloc.indexBufferAllocation.size / sizeof(uint) / 3);
+				// Instances without a masked material are forced opaque in the TLAS instead.
+				geomDesc.isOpaque = false;
 
 				AccelerationStructureDesc blasDesc;
 				blasDesc.debugName = "Mesh BLAS";
@@ -345,6 +348,8 @@ namespace tyr
 				geomDesc.indexBuffer = m_Registry.GetBuffer(m_Resources.indexBuffer).buffer;
 				geomDesc.indexOffset = lodAlloc.indexBufferAllocation.offset;
 				geomDesc.maxPrimitiveCount = (uint)(lodAlloc.indexBufferAllocation.size / sizeof(uint) / 3);
+				// Instances without a masked material are forced opaque in the TLAS instead.
+				geomDesc.isOpaque = false;
 
 				AccelerationStructureDesc blasDesc;
 				blasDesc.debugName = "Skinned Mesh BLAS";
@@ -798,6 +803,10 @@ namespace tyr
 
 		// Done whether or not a scene is active, since a removed scene's instances still leave it.
 		MergeSceneContent(renderFrame.sceneFrame);
+		for (const MaterialBlendModeUpdate& update : renderFrame.materialBlendModeUpdates)
+		{
+			m_MaterialBlendModes[update.materialIndex] = update.blendMode;
+		}
 
 		m_Data.activeScene = renderFrame.activeScene;
 
@@ -904,7 +913,7 @@ namespace tyr
 			// The culling passes atomically increment these from 0 - without resetting them every
 			// frame, fewer visible instances than last frame would still redraw stale entries via
 			// the indirect draws.
-			uint zeros[2] = {};
+			uint zeros[TYR_DRAW_LIST_COUNT] = {};
 			RenderResourceUtil::WriteUploadBuffer(stagingBuffer, *m_Ctx.device, drawCountOffset, zeros, c_DrawCountResetBytes);
 
 			BufferUploadRequest& countRequest = m_Data.workerUploadRequests.ExpandOne();
@@ -941,7 +950,7 @@ namespace tyr
 						continue;
 					}
 
-					WriteTLASInstance(instance.info.transform, mesh.blas.accelerationStructure, instances[tlasInstanceCount++]);
+					WriteTLASInstance(instance.info.transform, mesh.blas.accelerationStructure, handle.h.index, GetTLASInstanceFlags(instance.info.materials), instances[tlasInstanceCount++]);
 				}
 
 				// Skinned instances are only traced in frames that rebuild their BLAS.
@@ -952,8 +961,8 @@ namespace tyr
 						continue;
 					}
 					const SkeletalMeshInstance& skinned = registry.GetSkeletalMeshInstance(record.skinnedInstance);
-					const Matrix4& transform = registry.GetMeshInstance(skinned.meshInstance).info.transform;
-					WriteTLASInstance(transform, record.blas, instances[tlasInstanceCount++]);
+					const MeshInstanceInfo& info = registry.GetMeshInstance(skinned.meshInstance).info;
+					WriteTLASInstance(info.transform, record.blas, skinned.meshInstance.h.index, GetTLASInstanceFlags(info.materials), instances[tlasInstanceCount++]);
 				}
 
 				if (tlasInstanceCount > 0)
@@ -1658,6 +1667,8 @@ namespace tyr
 			geometryArgs.scene = &scene;
 			geometryArgs.earlyPipeline = m_Resources.geometryEarlyPipeline;
 			geometryArgs.latePipeline = m_Resources.geometryLatePipeline;
+			geometryArgs.earlyMaskedPipeline = m_Resources.geometryEarlyMaskedPipeline;
+			geometryArgs.lateMaskedPipeline = m_Resources.geometryLateMaskedPipeline;
 			geometryArgs.descriptorSet = m_Resources.descriptorSet;
 			m_GeometryPass->Recreate(geometryArgs);
 
@@ -1928,9 +1939,9 @@ namespace tyr
 
 				const SceneLights& shadowLights = renderFrame.activeLights;
 				graph.AddPass("ShadowRT",
-					[this, &shadowLights, cameraPosition, shadowDepthBuffer, shadowGBufferNormalRoughMetal, shadowMasksRawHandle, renderFrameIndex](RenderGraphBuilder& builder)
+					[this, &renderFrame, &shadowLights, cameraPosition, shadowDepthBuffer, shadowGBufferNormalRoughMetal, shadowMasksRawHandle, renderFrameIndex](RenderGraphBuilder& builder)
 					{
-						m_ShadowRTPass->Setup(builder, shadowLights, cameraPosition, m_QualitySettings, renderFrameIndex,
+						m_ShadowRTPass->Setup(builder, renderFrame, shadowLights, cameraPosition, m_QualitySettings, renderFrameIndex,
 							shadowDepthBuffer, shadowGBufferNormalRoughMetal, shadowMasksRawHandle);
 					},
 					[this, renderFrameIndex, shadowViewportWidth, shadowViewportHeight](CommandList& cl)
@@ -2817,6 +2828,22 @@ namespace tyr
 		{
 			ShaderDesc desc;
 			desc.entryPoint = "main";
+			desc.fileName = "MeshEarlyMaskedAS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_TASK_BIT;
+			m_Resources.geometryEarlyMaskedTaskShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "MeshLateMaskedAS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_TASK_BIT;
+			m_Resources.geometryLateMaskedTaskShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
 			desc.fileName = "MeshMS";
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_MESH_BIT;
@@ -2829,6 +2856,14 @@ namespace tyr
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_FRAGMENT_BIT;
 			m_Resources.geometryPixelShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "GBufferMaskedPS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_FRAGMENT_BIT;
+			m_Resources.geometryMaskedPixelShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
 		}
 		{
 			ShaderDesc desc;
@@ -2948,8 +2983,11 @@ namespace tyr
 	{
 		m_Ctx.device->DeleteShaderModule(m_Resources.geometryEarlyTaskShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.geometryLateTaskShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.geometryEarlyMaskedTaskShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.geometryLateMaskedTaskShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.geometryMeshShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.geometryPixelShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.geometryMaskedPixelShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.lightingComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.cullingEarlyComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.cullingLateComputeShader);
@@ -3122,19 +3160,19 @@ namespace tyr
 			};
 
 			// Scene-info/lights/textures/samplers also need to be readable from the deferred
-			// lighting compute pass, and mesh/meshLOD/mesh-instance from the instance culling
-			// compute pass too - meshlet/vertex/index/material stay geometry-only.
+			// lighting compute pass, mesh/meshLOD/mesh-instance/material from the instance culling
+			// compute pass, and the geometry from the shadow pass, to alpha test masked hits.
 			const ShaderStage meshAndComputeStages = static_cast<ShaderStage>(meshPipelineStages | SHADER_STAGE_COMPUTE_BIT);
 
 			AddBinding(TYR_BINDING_SCENE_INFO, DescriptorType::UniformBuffer, 1, meshAndComputeStages);
 			AddBinding(TYR_BINDING_MESH, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
 			AddBinding(TYR_BINDING_MESH_LOD, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
-			AddBinding(TYR_BINDING_MESHLET, DescriptorType::StorageBuffer, 1, meshPipelineStages);
+			AddBinding(TYR_BINDING_MESHLET, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
 			// Compute too, since skinning writes skinned vertices into it.
 			AddBinding(TYR_BINDING_VERTEX, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
-			AddBinding(TYR_BINDING_INDEX, DescriptorType::StorageBuffer, 1, meshPipelineStages);
+			AddBinding(TYR_BINDING_INDEX, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
 			AddBinding(TYR_BINDING_MESH_INSTANCE, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
-			AddBinding(TYR_BINDING_MATERIAL, DescriptorType::StorageBuffer, 1, meshPipelineStages);
+			AddBinding(TYR_BINDING_MATERIAL, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
 			AddBinding(TYR_BINDING_DIR_LIGHT, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
 			AddBinding(TYR_BINDING_POINT_LIGHT, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
 			AddBinding(TYR_BINDING_SPOT_LIGHT, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
@@ -3271,6 +3309,14 @@ namespace tyr
 
 		desc.shaders[0] = m_Resources.geometryLateTaskShader;
 		m_Resources.geometryLatePipeline = m_Ctx.device->CreateGraphicsPipeline(desc);
+
+		// Masked surfaces, such as a fence, are drawn from both sides.
+		desc.rasterizerStateDesc.cullMode = CullMode::None;
+		desc.shaders[0] = m_Resources.geometryEarlyMaskedTaskShader;
+		desc.shaders[2] = m_Resources.geometryMaskedPixelShader;
+		m_Resources.geometryEarlyMaskedPipeline = m_Ctx.device->CreateGraphicsPipeline(desc);
+		desc.shaders[0] = m_Resources.geometryLateMaskedTaskShader;
+		m_Resources.geometryLateMaskedPipeline = m_Ctx.device->CreateGraphicsPipeline(desc);
 
 		// GUI pipeline - reuses the same bindless descriptor set layout, but is otherwise a
 		// completely separate pipeline: vertex-pulling, alpha blending on, no depth testing,
@@ -3473,6 +3519,8 @@ namespace tyr
 	{
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.geometryEarlyPipeline);
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.geometryLatePipeline);
+		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.geometryEarlyMaskedPipeline);
+		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.geometryLateMaskedPipeline);
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.guiPipeline);
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.debugLineOnTopPipeline);
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.debugLineDepthTestedPipeline);
@@ -3608,25 +3656,25 @@ namespace tyr
 			desc.usage = RenderBufferUsage::Storage;
 			m_Resources.activeMeshInstanceIndexBuffer = m_Registry.CreateBuffer(desc);
 		}
-		// The early and late culling passes each have their own half of the next three.
+		// Each draw list has its own part of the next three.
 		{
 			RenderBufferDesc desc;
 			desc.debugName = "Mesh Draw Buffer";
-			desc.size = sizeof(ShaderMeshDraw) * RenderConstants::c_MaxMeshInstances * 2;
+			desc.size = sizeof(ShaderMeshDraw) * RenderConstants::c_MaxMeshInstances * TYR_DRAW_LIST_COUNT;
 			desc.usage = RenderBufferUsage::Storage;
 			m_Resources.meshDrawBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
 			RenderBufferDesc desc;
 			desc.debugName = "Indirect Draw Command Buffer";
-			desc.size = sizeof(uint) * 3 * RenderConstants::c_MaxMeshInstances * 2; // VkDrawMeshTasksIndirectCommandEXT
+			desc.size = sizeof(uint) * 3 * RenderConstants::c_MaxMeshInstances * TYR_DRAW_LIST_COUNT; // VkDrawMeshTasksIndirectCommandEXT
 			desc.usage = RenderBufferUsage::Indirect;
 			m_Resources.indirectDrawCommandBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
 			RenderBufferDesc desc;
 			desc.debugName = "Draw Count Buffer";
-			desc.size = sizeof(uint) * 2;
+			desc.size = sizeof(uint) * TYR_DRAW_LIST_COUNT;
 			desc.usage = RenderBufferUsage::Indirect;
 			m_Resources.drawCountBuffer = m_Registry.CreateBuffer(desc);
 		}
@@ -3876,6 +3924,17 @@ namespace tyr
 		});
 	}
 
+	uint8 Renderer::GetTLASInstanceFlags(const LocalArray<MaterialHandle, MeshConstants::c_MaxSubmeshes>& materials) const
+	{
+		// An instance with a masked material has its hits alpha tested by the shader.
+		bool masked = false;
+		for (MaterialHandle material : materials)
+		{
+			masked |= m_MaterialBlendModes[material.h.index] == static_cast<uint8>(MaterialBlendMode::Masked);
+		}
+		return masked ? 0 : AccelerationStructureInstanceFlags::c_ForceOpaque;
+	}
+
 	uint Renderer::RequestViewportCapture()
 	{
 		ViewportCapture& capture = m_Captures[m_RenderFrameIndex];
@@ -4001,6 +4060,8 @@ namespace tyr
 		geometryArgs.scene = nullptr;
 		geometryArgs.earlyPipeline = m_Resources.geometryEarlyPipeline;
 		geometryArgs.latePipeline = m_Resources.geometryLatePipeline;
+		geometryArgs.earlyMaskedPipeline = m_Resources.geometryEarlyMaskedPipeline;
+		geometryArgs.lateMaskedPipeline = m_Resources.geometryLateMaskedPipeline;
 		geometryArgs.descriptorSet = m_Resources.descriptorSet;
 		m_GeometryPass = new GeometryPass(geometryArgs);
 

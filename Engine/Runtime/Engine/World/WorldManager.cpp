@@ -197,7 +197,7 @@ namespace tyr
 
 		if (world.physicsWorld && !world.paused)
 		{
-			m_PhysicsManager.Update(world.physicsWorld, world, deltaTime);
+			m_PhysicsManager.Update(world.physicsWorld, world, *m_AssetManager, deltaTime);
 			ApplyPhysicsTransforms(world);
 		}
 
@@ -406,8 +406,12 @@ namespace tyr
 			{
 				m_PhysicsManager.RemoveBody(world.physicsWorld, collider);
 			}
+			// The collision mesh stays held until the new shape is known not to need it.
+			const AssetID collisionMesh = collider.collisionMesh;
 			collider = *static_cast<const ColliderComponent*>(data);
 			collider.bodyID = PhysicsConstants::c_InvalidBodyID;
+			collider.collisionMesh = collisionMesh;
+			SyncColliderMesh(world, entity);
 			return true;
 		}
 
@@ -827,9 +831,9 @@ namespace tyr
 		{
 			ReleaseLight(world, world.entities.GetComponent<SpotLightComponent>(entity));
 		}
-		if (world.physicsWorld && world.entities.HasComponent<ColliderComponent>(entity))
+		if (world.entities.HasComponent<ColliderComponent>(entity))
 		{
-			m_PhysicsManager.RemoveBody(world.physicsWorld, world.entities.GetComponent<ColliderComponent>(entity));
+			ReleaseColliderMesh(world, world.entities.GetComponent<ColliderComponent>(entity));
 		}
 	}
 
@@ -863,6 +867,7 @@ namespace tyr
 				collider.halfExtents = halfExtents;
 			}
 		}
+		SyncColliderMesh(world, entity);
 	}
 
 	void WorldManager::ResetMeshBounds(World& world, Entity entity)
@@ -882,6 +887,57 @@ namespace tyr
 					m_PhysicsManager.RemoveBody(world.physicsWorld, collider);
 				}
 			}
+			// The new mesh's collision mesh is taken once it loads.
+			ReleaseColliderMesh(world, collider);
+		}
+	}
+
+	void WorldManager::SyncColliderMesh(World& world, Entity entity)
+	{
+		if (!world.entities.HasComponent<ColliderComponent>(entity))
+		{
+			return;
+		}
+
+		ColliderComponent& collider = world.entities.GetComponent<ColliderComponent>(entity);
+		const ColliderShape shape = static_cast<ColliderShape>(collider.shape);
+		AssetID wanted = AssetConstants::c_InvalidAssetID;
+		if ((shape == ColliderShape::Mesh || shape == ColliderShape::ConvexHull) && world.entities.HasComponent<MeshComponent>(entity))
+		{
+			const AssetID meshID = world.entities.GetComponent<MeshComponent>(entity).mesh;
+			const MeshHeader* header = AssetUtil::IsValidAssetID(meshID) ? m_AssetManager->GetMeshHeader(meshID) : nullptr;
+			if (header)
+			{
+				wanted = header->collision;
+				if (!AssetUtil::IsValidAssetID(wanted))
+				{
+					TYR_LOG_WARNING("%s has no collision mesh, so its mesh collider does nothing. Reimport it to make one.", AssetRegistry::Instance().GetAssetData(meshID).filePath.CStr());
+				}
+			}
+		}
+
+		if (wanted == collider.collisionMesh)
+		{
+			return;
+		}
+		ReleaseColliderMesh(world, collider);
+		collider.collisionMesh = wanted;
+		if (AssetUtil::IsValidAssetID(wanted))
+		{
+			m_AssetManager->LoadCollisionMesh(wanted);
+		}
+	}
+
+	void WorldManager::ReleaseColliderMesh(World& world, ColliderComponent& collider)
+	{
+		if (world.physicsWorld)
+		{
+			m_PhysicsManager.RemoveBody(world.physicsWorld, collider);
+		}
+		if (AssetUtil::IsValidAssetID(collider.collisionMesh))
+		{
+			m_AssetManager->DeleteCollisionMesh(collider.collisionMesh);
+			collider.collisionMesh = AssetConstants::c_InvalidAssetID;
 		}
 	}
 
@@ -1039,6 +1095,10 @@ namespace tyr
 		world.entities.ForEach<AnimatorComponent>([this](Entity /*entity*/, AnimatorComponent& animator)
 		{
 			m_AnimationSystem.Release(animator);
+		});
+		world.entities.ForEach<ColliderComponent>([this, &world](Entity /*entity*/, ColliderComponent& collider)
+		{
+			ReleaseColliderMesh(world, collider);
 		});
 
 		world.entities.ForEach<DirLightComponent>([this, &world](Entity /*entity*/, DirLightComponent& light)

@@ -13,6 +13,7 @@ namespace tyr
 	class CommandList;
 	class RenderRegistry;
 	class RenderGraphBuilder;
+	struct RenderFrame;
 	struct SceneLights;
 	struct RenderResources;
 
@@ -87,7 +88,7 @@ namespace tyr
 		// Builds this tick's local-light selection and declares every resource this tick's
 		// dispatches will touch. Also caches depthBuffer/gbufferNormalRoughMetal for Execute,
 		// the same way RenderGraph's own Setup-then-Execute ordering lets other passes do.
-		void Setup(RenderGraphBuilder& builder, const SceneLights& lights, Vector3 cameraPosition,
+		void Setup(RenderGraphBuilder& builder, const RenderFrame& renderFrame, const SceneLights& lights, Vector3 cameraPosition,
 			const RenderQualitySettings& qualitySettings, uint renderFrameIndex,
 			TextureHandle depthBuffer, TextureHandle gbufferNormalRoughMetal, TextureHandle shadowMasksRaw);
 

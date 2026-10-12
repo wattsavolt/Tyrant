@@ -2,6 +2,8 @@
 #include "PhysicsJobSystem.h"
 #include "ECS/Components.h"
 #include "World/World.h"
+#include "AssetSystem/AssetManager.h"
+#include "AssetSystem/AssetUtil.h"
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -18,6 +20,7 @@
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/Shape/ScaledShape.h>
 
 namespace tyr
 {
@@ -154,6 +157,31 @@ namespace tyr
 			return Quaternion(q.GetW(), q.GetX(), q.GetY(), q.GetZ());
 		}
 
+		// Null until the collision mesh has loaded, or when it has no shape this body can use.
+		JPH::ShapeRefC CreateMeshShape(const ColliderComponent& collider, const Vector3& scale, MotionType motionType, const AssetManager& assetManager)
+		{
+			const CollisionMesh* collisionMesh = assetManager.GetCollisionMesh(collider.collisionMesh);
+			if (!collisionMesh)
+			{
+				return nullptr;
+			}
+			const bool triangles = static_cast<ColliderShape>(collider.shape) == ColliderShape::Mesh && motionType != MotionType::Dynamic;
+			const JPH::Shape* shape = triangles ? collisionMesh->triangleShape : collisionMesh->convexShape;
+			if (!shape || scale == Vector3::c_One)
+			{
+				return shape;
+			}
+
+			// The shape is shared by every entity with this mesh, so each body scales its own copy.
+			JPH::ShapeSettings::ShapeResult result = JPH::ScaledShapeSettings(shape, shape->MakeScaleValid(ToJolt(scale))).Create();
+			if (result.HasError())
+			{
+				TYR_LOG_ERROR("Couldn't scale a mesh collider: %s", result.GetError().c_str());
+				return nullptr;
+			}
+			return result.Get();
+		}
+
 		// Sizes are scaled by the entity. Spheres and capsules stay round, using the largest scale.
 		JPH::ShapeRefC CreateShape(const ColliderComponent& collider, const Vector3& scale)
 		{
@@ -200,6 +228,9 @@ namespace tyr
 				return collider.radius > 0.0f;
 			case ColliderShape::Capsule:
 				return collider.radius > 0.0f && collider.halfHeight > 0.0f;
+			case ColliderShape::Mesh:
+			case ColliderShape::ConvexHull:
+				return AssetUtil::IsValidAssetID(collider.collisionMesh);
 			default:
 				return collider.halfExtents.x > 0.0f && collider.halfExtents.y > 0.0f && collider.halfExtents.z > 0.0f;
 			}
@@ -273,12 +304,12 @@ namespace tyr
 		m_Worlds.Delete(physicsWorld);
 	}
 
-	void PhysicsManager::Update(Handle physicsWorld, World& world, float deltaTime)
+	void PhysicsManager::Update(Handle physicsWorld, World& world, const AssetManager& assetManager, float deltaTime)
 	{
 		PhysicsWorldEntry& entry = m_Worlds[physicsWorld];
 		PhysicsWorldData& data = *entry.data;
 
-		CreateBodies(data, world);
+		CreateBodies(data, world, assetManager);
 
 		entry.accumulator += deltaTime;
 		uint steps = 0;
@@ -340,7 +371,7 @@ namespace tyr
 		return true;
 	}
 
-	void PhysicsManager::CreateBodies(PhysicsWorldData& data, World& world)
+	void PhysicsManager::CreateBodies(PhysicsWorldData& data, World& world, const AssetManager& assetManager)
 	{
 		JPH::BodyInterface& bodies = data.system.GetBodyInterfaceNoLock();
 		bool addedAny = false;
@@ -353,19 +384,21 @@ namespace tyr
 				return;
 			}
 
-			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
-			const JPH::ShapeRefC shape = CreateShape(collider, transform.scale);
-			if (!shape)
-			{
-				return;
-			}
-
 			MotionType motionType = MotionType::Static;
 			RigidBodyComponent* rigidBody = nullptr;
 			if (world.entities.HasComponent<RigidBodyComponent>(entity))
 			{
 				rigidBody = &world.entities.GetComponent<RigidBodyComponent>(entity);
 				motionType = static_cast<MotionType>(rigidBody->motionType);
+			}
+
+			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+			const ColliderShape colliderShape = static_cast<ColliderShape>(collider.shape);
+			const bool fromMesh = colliderShape == ColliderShape::Mesh || colliderShape == ColliderShape::ConvexHull;
+			const JPH::ShapeRefC shape = fromMesh ? CreateMeshShape(collider, transform.scale, motionType, assetManager) : CreateShape(collider, transform.scale);
+			if (!shape)
+			{
+				return;
 			}
 
 			const bool moves = motionType != MotionType::Static;
@@ -384,6 +417,13 @@ namespace tyr
 				{
 					settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
 					settings.mMassPropertiesOverride.mMass = rigidBody->mass;
+				}
+				// A triangle mesh has no volume to work its mass out from. Only a kinematic one gets here.
+				if (moves && colliderShape == ColliderShape::Mesh && motionType != MotionType::Dynamic)
+				{
+					const JPH::Vec3 size = JPH::Vec3::sMax(shape->GetLocalBounds().GetSize(), JPH::Vec3::sReplicate(0.1f));
+					settings.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
+					settings.mMassPropertiesOverride.SetMassAndInertiaOfSolidBox(size, 1000.0f);
 				}
 
 				rigidBody->previousPosition = transform.position;

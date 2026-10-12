@@ -52,14 +52,20 @@ namespace tyr
 		DescriptorPoolHandle descriptorPool;
 		DescriptorSetLayoutHandle descriptorSetLayout;
 		DescriptorSetHandle descriptorSet;
-		// The early pipeline draws what was visible last frame, the late one what the early pass
-		// missed - they differ only in their task shader, the late one also testing the Hi-Z.
+		// The early pipelines draw what was visible last frame, the late ones what the early pass
+		// missed - they differ only in their task shader, the late one also testing the Hi-Z. The
+		// masked ones draw masked materials, from both sides and cut out by their alpha.
 		GraphicsPipelineHandle geometryEarlyPipeline;
 		GraphicsPipelineHandle geometryLatePipeline;
+		GraphicsPipelineHandle geometryEarlyMaskedPipeline;
+		GraphicsPipelineHandle geometryLateMaskedPipeline;
 		ShaderModuleHandle geometryEarlyTaskShader;
 		ShaderModuleHandle geometryLateTaskShader;
+		ShaderModuleHandle geometryEarlyMaskedTaskShader;
+		ShaderModuleHandle geometryLateMaskedTaskShader;
 		ShaderModuleHandle geometryMeshShader;
 		ShaderModuleHandle geometryPixelShader;
+		ShaderModuleHandle geometryMaskedPixelShader;
 
 		// Shared vertex/index buffers every GUI draw submission (editor chrome, in-game HUD/menu)
 		// is uploaded into for the frame.

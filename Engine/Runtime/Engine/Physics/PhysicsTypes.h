@@ -23,7 +23,12 @@ namespace tyr
 		Box = 0,
 		Sphere,
 		// Upright along the entity's Y axis.
-		Capsule
+		Capsule,
+		// The triangles of the entity's mesh. A dynamic body uses ConvexHull instead,
+		// since triangle meshes can't be simulated.
+		Mesh,
+		// The convex hull of the entity's mesh, or of each of its UCX_ pieces.
+		ConvexHull
 	};
 
 	struct PhysicsConstants

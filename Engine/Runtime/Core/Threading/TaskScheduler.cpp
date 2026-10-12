@@ -17,6 +17,7 @@ namespace tyr
     TaskScheduler::TaskScheduler()
         : m_TaskPool(new TaskPool())
     {
+        TYR_STATIC_ASSERT(c_InjectorCapacity >= TaskPool::c_Capacity, "The injector must hold every task that can exist.");
         ThreadPoolConfig config;
         config.threadCount = c_MaxWorkers;
         m_ThreadPool = new ThreadPool(config, this);

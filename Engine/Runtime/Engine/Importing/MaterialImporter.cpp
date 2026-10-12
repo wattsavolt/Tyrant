@@ -144,7 +144,7 @@ namespace tyr
 		return false;
 	}
 
-	bool MaterialImporter::ImportTexture(const TextureSource& source, const char* outputFolderPath, const char* textureName, bool isSRGB, AssetID& textureID)
+	bool MaterialImporter::ImportTexture(const TextureSource& source, const char* outputFolderPath, const char* textureName, bool isSRGB, AssetID& textureID, float alphaTestCutoff)
 	{
 		if (!CreateAssetFolder(outputFolderPath))
 		{
@@ -196,6 +196,7 @@ namespace tyr
 		compDesc.mipCount = TextureUtil::CalculateMaxMips(compDesc.width, compDesc.height);
 		compDesc.outputFilePath = outputPath;
 		compDesc.isSRGB = isSRGB;
+		compDesc.alphaTestCutoff = alphaTestCutoff;
 
 		const bool compressResult = ImageCompressor::CompressImage2D(compDesc);
 
@@ -229,7 +230,9 @@ namespace tyr
 
 		AssetID textureID;
 
-		if (!ImportTexture(desc.albedoSource, desc.outputFolderPath, textureName, desc.isSRGB, textureID))
+		// A masked material's cutout keeps its shape in every mip.
+		const bool masked = desc.params.blendMode == static_cast<uint8>(MaterialBlendMode::Masked);
+		if (!ImportTexture(desc.albedoSource, desc.outputFolderPath, textureName, desc.isSRGB, textureID, masked ? desc.params.alphaCutoff : 0.0f))
 		{
 			return false;
 		}

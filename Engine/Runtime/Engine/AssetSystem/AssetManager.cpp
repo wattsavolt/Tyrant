@@ -39,7 +39,7 @@ namespace tyr
 			}
 
 			// Left with no LODs, so the mesh loads but is never drawn.
-			if (!header.IsCurrentVersion())
+			if (!header.IsReadableVersion())
 			{
 				TYR_LOG_ERROR("%s was saved in an older mesh format. Reimport it to draw it.", filePath);
 				header.Reset();
@@ -1182,6 +1182,22 @@ namespace tyr
 		return assetData && assetData->loadState == AssetLoadState::Loaded ? &m_AnimationPool[assetData->resourceHandle] : nullptr;
 	}
 
+	void AssetManager::LoadCollisionMesh(AssetID assetID)
+	{
+		LoadCpuAsset(assetID, AssetLoadType::CollisionMesh);
+	}
+
+	void AssetManager::DeleteCollisionMesh(AssetID assetID)
+	{
+		DeleteCpuAsset(assetID, AssetLoadType::CollisionMesh);
+	}
+
+	const CollisionMesh* AssetManager::GetCollisionMesh(AssetID assetID) const
+	{
+		const AssetData* assetData = m_AssetMap.Find(assetID);
+		return assetData && assetData->loadState == AssetLoadState::Loaded ? &m_CollisionMeshPool[assetData->resourceHandle] : nullptr;
+	}
+
 	void AssetManager::LoadCpuAsset(AssetID assetID, AssetLoadType type)
 	{
 		if (AssetData* assetData = m_AssetMap.Find(assetID))
@@ -1199,18 +1215,33 @@ namespace tyr
 		ld->filePath = AssetRegistry::Instance().GetAssetData(assetID).filePath;
 		ld->type = type;
 		// Pool slots are only made and freed on the main thread.
-		ld->handle = type == AssetLoadType::Skeleton ? m_SkeletonPool.Create() : m_AnimationPool.Create();
+		switch (type)
+		{
+		case AssetLoadType::Skeleton:
+			ld->handle = m_SkeletonPool.Create();
+			break;
+		case AssetLoadType::Animation:
+			ld->handle = m_AnimationPool.Create();
+			break;
+		default:
+			ld->handle = m_CollisionMeshPool.Create();
+			break;
+		}
 		asset.resourceHandle = ld->handle;
 
 		TaskScheduler::Instance().CreateAndEnqueueTask([this, ld]()
 		{
-			if (ld->type == AssetLoadType::Skeleton)
+			switch (ld->type)
 			{
+			case AssetLoadType::Skeleton:
 				LoadAssetFile(ld->filePath.CStr(), m_SkeletonPool[ld->handle]);
-			}
-			else
-			{
+				break;
+			case AssetLoadType::Animation:
 				LoadAssetFile(ld->filePath.CStr(), m_AnimationPool[ld->handle]);
+				break;
+			default:
+				LoadAssetFile(ld->filePath.CStr(), m_CollisionMeshPool[ld->handle]);
+				break;
 			}
 			m_CpuAssetsLoadedQueue.Enqueue(ld);
 		});
@@ -1236,13 +1267,17 @@ namespace tyr
 
 	void AssetManager::FreeCpuAsset(AssetID assetID, const AssetData& assetData, AssetLoadType type)
 	{
-		if (type == AssetLoadType::Skeleton)
+		switch (type)
 		{
+		case AssetLoadType::Skeleton:
 			m_SkeletonPool.Delete(assetData.resourceHandle);
-		}
-		else
-		{
+			break;
+		case AssetLoadType::Animation:
 			m_AnimationPool.Delete(assetData.resourceHandle);
+			break;
+		default:
+			m_CollisionMeshPool.Delete(assetData.resourceHandle);
+			break;
 		}
 		m_AssetMap.Erase(assetID);
 	}

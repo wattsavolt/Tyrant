@@ -6,6 +6,7 @@
 #include "Rendering/RenderResources.h"
 #include "RenderResource/RenderAccelerationStructure.h"
 #include "RenderResource/Texture.h"
+#include "Rendering/RenderFrame.h"
 
 namespace tyr
 {
@@ -25,7 +26,7 @@ namespace tyr
 		m_Pipeline = args.pipeline;
 	}
 
-	void ShadowRTPass::Setup(RenderGraphBuilder& builder, const SceneLights& lights, Vector3 cameraPosition,
+	void ShadowRTPass::Setup(RenderGraphBuilder& builder, const RenderFrame& renderFrame, const SceneLights& lights, Vector3 cameraPosition,
 		const RenderQualitySettings& qualitySettings, uint renderFrameIndex,
 		TextureHandle depthBuffer, TextureHandle gbufferNormalRoughMetal, TextureHandle shadowMasksRaw)
 	{
@@ -129,6 +130,23 @@ namespace tyr
 		builder.ReadTexture(m_Registry->GetTexture(depthBuffer), computeStage, BARRIER_ACCESS_SHADER_READ_BIT);
 		builder.ReadTexture(m_Registry->GetTexture(gbufferNormalRoughMetal), computeStage, BARRIER_ACCESS_SHADER_READ_BIT);
 		builder.WriteTexture(m_Registry->GetTexture(shadowMasksRaw), computeStage, BARRIER_ACCESS_SHADER_WRITE_BIT);
+
+		// A ray hitting a masked surface reads its triangle's UVs and material's alpha.
+		const RenderBufferHandle buffers[] = {
+			m_Resources->meshBuffer, m_Resources->meshLODBuffer, m_Resources->meshletBuffer, m_Resources->vertexBuffer,
+			m_Resources->indexBuffer, m_Resources->meshInstanceBuffer, m_Resources->materialBuffer
+		};
+		for (RenderBufferHandle buffer : buffers)
+		{
+			builder.ReadBuffer(m_Registry->GetBuffer(buffer), computeStage, BARRIER_ACCESS_SHADER_READ_BIT);
+		}
+		for (const TextureUploadRequest& request : renderFrame.textureUploadRequests)
+		{
+			if (request.type == TextureUploadRequestType::Material)
+			{
+				builder.ReadTexture(m_Registry->GetTexture(request.dstTexture), computeStage, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+			}
+		}
 	}
 
 	void ShadowRTPass::Execute(CommandList& cmdList, uint renderFrameIndex, uint width, uint height, float lodErrorPerDistance)

@@ -67,13 +67,14 @@ namespace tyr
                 return item;
             }
 
-            if (!m_Top.compare_exchange_strong(top, top + 1, std::memory_order_seq_cst))
+            // Racing thieves for the last item. A failed exchange overwrites top with the
+            // thief's value, so the deque is emptied from bottom, which still holds the old top.
+            const bool won = m_Top.compare_exchange_strong(top, top + 1, std::memory_order_seq_cst);
+            m_Bottom.store(bottom + 1, std::memory_order_relaxed);
+            if (!won)
             {
-                m_Bottom.store(top + 1, std::memory_order_relaxed);
                 return std::nullopt;
             }
-
-            m_Bottom.store(top + 1, std::memory_order_relaxed);
 
             return item;
         }

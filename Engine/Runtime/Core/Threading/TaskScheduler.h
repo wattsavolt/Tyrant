@@ -82,9 +82,9 @@ namespace tyr
         TaskPool* m_TaskPool;
 
         // Where a non-worker thread's task submissions land, since it has no worker queue of
-        // its own. Lock-free and fixed-depth - external submission is expected to be
-        // occasional, not a firehose.
-        static constexpr uint c_InjectorCapacity = 256;
+        // its own. Lock-free and fixed-depth. Holds every task the pool can, so bursts such
+        // as physics jobs released while the main thread waits on a step can't overflow it.
+        static constexpr uint c_InjectorCapacity = 4096;
         MPMCRingBuffer<TaskID, c_InjectorCapacity> m_InjectorQueue;
     };
 }

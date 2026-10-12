@@ -10,6 +10,7 @@
 TYR_VK_BINDING(TYR_BINDING_MESH, 0) StructuredBuffer<Mesh> meshes : register(t1);
 TYR_VK_BINDING(TYR_BINDING_MESH_LOD, 0) StructuredBuffer<MeshLOD> meshLODs : register(t2);
 TYR_VK_BINDING(TYR_BINDING_MESH_INSTANCE, 0) StructuredBuffer<MeshInstance> meshInstances : register(t6);
+TYR_VK_BINDING(TYR_BINDING_MATERIAL, 0) StructuredBuffer<Material> materials : register(t7);
 
 TYR_VK_BINDING(TYR_BINDING_ACTIVE_INSTANCE_INDICES, 0) StructuredBuffer<uint> activeInstanceIndices : register(t15);
 TYR_VK_BINDING(TYR_BINDING_MESH_DRAWS, 0) RWStructuredBuffer<MeshDraw> meshDraws : register(u16);
@@ -22,7 +23,7 @@ struct DrawMeshTasksIndirectCommand
 	uint groupCountZ;
 };
 TYR_VK_BINDING(TYR_BINDING_INDIRECT_DRAW_COMMANDS, 0) RWStructuredBuffer<DrawMeshTasksIndirectCommand> indirectDrawCommands : register(u17);
-// The early pass's draw count, then the late pass's.
+// One draw count per draw list.
 TYR_VK_BINDING(TYR_BINDING_DRAW_COUNT, 0) RWStructuredBuffer<uint> drawCount : register(u18);
 TYR_VK_BINDING(TYR_BINDING_INSTANCE_VISIBILITY, 0) RWStructuredBuffer<uint> instanceVisibility : register(u1, space2);
 
@@ -40,6 +41,24 @@ uint SelectLod(uint lodBase, uint lodCount, float distance, float scale)
 		lodIndex = fits ? i : lodIndex;
 	}
 	return lodIndex;
+}
+
+void AppendDraw(uint drawList, uint meshInstanceIndex, uint lodIndex, uint meshletCount)
+{
+	uint drawSlot;
+	InterlockedAdd(drawCount[drawList], 1, drawSlot);
+	const uint drawIndex = drawList * TYR_MAX_MESH_INSTANCES + drawSlot;
+
+	MeshDraw meshDraw;
+	meshDraw.meshInstanceIndex = meshInstanceIndex;
+	meshDraw.lodIndex = lodIndex;
+	meshDraws[drawIndex] = meshDraw;
+
+	DrawMeshTasksIndirectCommand cmd;
+	cmd.groupCountX = (meshletCount + TYR_MESHLETS_PER_TASK_GROUP - 1) / TYR_MESHLETS_PER_TASK_GROUP;
+	cmd.groupCountY = 1;
+	cmd.groupCountZ = 1;
+	indirectDrawCommands[drawIndex] = cmd;
 }
 
 [numthreads(64, 1, 1)]
@@ -93,32 +112,36 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 	const bool visible = and(and(hasGeometry, inFrustum), IsBoxVisibleInHiZ(boxCentre, boxHalfExtents));
 	instanceVisibility[meshInstanceIndex] = (uint)visible;
 	const bool draw = and(visible, !drawnEarly);
-	const uint countIndex = 1;
-	const uint drawBase = TYR_MAX_MESH_INSTANCES;
+	const uint opaqueList = TYR_DRAW_LIST_LATE_OPAQUE;
+	const uint maskedList = TYR_DRAW_LIST_LATE_MASKED;
 #else
 	const bool draw = drawnEarly;
-	const uint countIndex = 0;
-	const uint drawBase = 0;
+	const uint opaqueList = TYR_DRAW_LIST_EARLY_OPAQUE;
+	const uint maskedList = TYR_DRAW_LIST_EARLY_MASKED;
 #endif
 
-	if (!draw)
+	// An instance is drawn in the opaque list if any of its submeshes isn't masked, and in the
+	// masked list if any is. Unused slots hold TYR_INVALID_INDEX.
+	bool hasOpaque = false;
+	bool hasMasked = false;
+	[unroll]
+	for (uint slot = 0; slot < 16; ++slot)
 	{
-		return;
+		const uint materialIndex = instance.materialIndices[slot];
+		const bool used = materialIndex != TYR_INVALID_INDEX;
+		const bool masked = (materials[used ? materialIndex : 0].flags & TYR_MATERIAL_BLEND_MODE_MASK) == TYR_MATERIAL_BLEND_MODE_MASKED;
+		hasOpaque = or(hasOpaque, and(used, !masked));
+		hasMasked = or(hasMasked, and(used, masked));
 	}
 
-	uint drawSlot;
-	InterlockedAdd(drawCount[countIndex], 1, drawSlot);
-
-	MeshDraw meshDraw;
-	meshDraw.meshInstanceIndex = meshInstanceIndex;
-	meshDraw.lodIndex = lodIndex;
-	meshDraws[drawBase + drawSlot] = meshDraw;
-
-	DrawMeshTasksIndirectCommand cmd;
-	cmd.groupCountX = (lod.meshletCount + TYR_MESHLETS_PER_TASK_GROUP - 1) / TYR_MESHLETS_PER_TASK_GROUP;
-	cmd.groupCountY = 1;
-	cmd.groupCountZ = 1;
-	indirectDrawCommands[drawBase + drawSlot] = cmd;
+	if (and(draw, hasOpaque))
+	{
+		AppendDraw(opaqueList, meshInstanceIndex, lodIndex, lod.meshletCount);
+	}
+	if (and(draw, hasMasked))
+	{
+		AppendDraw(maskedList, meshInstanceIndex, lodIndex, lod.meshletCount);
+	}
 }
 
 #endif

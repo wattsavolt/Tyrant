@@ -101,6 +101,12 @@ namespace tyr
 		SkeletalMeshInstanceHandle skinnedInstance{};
 	};
 
+	struct MaterialBlendModeUpdate
+	{
+		uint materialIndex;
+		uint8 blendMode;
+	};
+
 	struct RenderFrame
 	{
 		// A handful of adds/deletes per frame is typical - reserving each list below to its
@@ -120,6 +126,8 @@ namespace tyr
 		// Render targets going back to the pool once the frame has finished rendering.
 		Array<TextureHandle> renderTargetsToRelease;
 		Array<MaterialHandle> materialsToDelete;
+		// Each material's MaterialBlendMode when it's created or changed, for the render worker.
+		Array<MaterialBlendModeUpdate> materialBlendModeUpdates;
 		Array<MeshHandle> meshesToDelete;
 		// Meshes whose LOD0 geometry upload was just queued - drained into Renderer's own
 		// persistent build queue in RenderAsync, then cleared here like every other per-frame
@@ -196,6 +204,7 @@ namespace tyr
 			texturesToDelete.Reserve(c_DefaultPendingListReserve);
 			renderTargetsToRelease.Reserve(c_DefaultPendingListReserve);
 			materialsToDelete.Reserve(c_DefaultPendingListReserve);
+			materialBlendModeUpdates.Reserve(c_DefaultPendingListReserve);
 			meshesToDelete.Reserve(c_DefaultPendingListReserve);
 			meshesToBuildBLAS.Reserve(c_DefaultPendingListReserve);
 			blasBuildsToRecord.Reserve(c_DefaultPendingListReserve);
@@ -217,6 +226,7 @@ namespace tyr
 			texturesToDelete.Clear();
 			renderTargetsToRelease.Clear();
 			materialsToDelete.Clear();
+			materialBlendModeUpdates.Clear();
 			meshesToDelete.Clear();
 			meshesToBuildBLAS.Clear();
 			blasBuildsToRecord.Clear();

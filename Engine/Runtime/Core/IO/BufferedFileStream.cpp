@@ -97,6 +97,11 @@ namespace tyr
 		return count;
 	}
 
+	bool BufferedFileStream::IsEOF() const
+	{
+		return m_BufferOffset >= m_MemoryRead && FileStream::IsEOF();
+	}
+
 	void BufferedFileStream::Skip(size_t count)
 	{
 		if (m_Operation == Operation::Write)

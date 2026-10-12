@@ -86,9 +86,10 @@ namespace tyr
 
 	// A collision shape in the entity's local space, scaled with the entity. Without a
 	// RigidBodyComponent on the same entity it never moves. Only simulated worlds have bodies.
+	// Mesh and convex hull shapes come from the collision mesh made when the entity's mesh was imported.
 	struct ColliderComponent
 	{
-		// A ColliderShape: 0 box, 1 sphere, 2 capsule.
+		// A ColliderShape: 0 box, 1 sphere, 2 capsule, 3 mesh, 4 convex hull.
 		uint8 shape = static_cast<uint8>(ColliderShape::Box);
 		Vector3 center;
 		// Box only. Left at zero, it takes the size of the entity's mesh once that loads.
@@ -102,6 +103,8 @@ namespace tyr
 		float restitution = 0.0f;
 		// The physics body made from it. Not saved.
 		uint bodyID = PhysicsConstants::c_InvalidBodyID;
+		// The mesh's collision mesh, held loaded while the shape is mesh or convex hull. Not saved.
+		AssetID collisionMesh;
 	};
 
 	// Makes the ColliderComponent on the same entity move.

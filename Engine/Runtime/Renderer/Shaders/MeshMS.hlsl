@@ -2,15 +2,7 @@
 #define MESH_MS_HLSli
 
 #include "Common.hlsli"
-
-struct MeshTaskPayload
-{
-	uint meshInstanceIndex;
-	uint globalMeshletIndex;
-	uint globalVertexBase;
-	uint prevGlobalVertexBase;
-	uint globalIndexBase;
-};
+#include "MeshTaskPayload.hlsli"
 
 TYR_VK_BINDING(TYR_BINDING_SCENE_INFO, 0)
 cbuffer SceneInfoCBuffer : register(b0)
@@ -31,12 +23,13 @@ TYR_VK_BINDING(TYR_BINDING_MESH_INSTANCE, 0) StructuredBuffer<MeshInstance> mesh
 [outputtopology("triangle")]
 [numthreads(TYR_MAX_MESHLET_TRIANGLES, 1, 1)]
 void main(
+	uint3 groupId : SV_GroupID,
 	uint3 groupThreadId : SV_GroupThreadID,
 	in payload MeshTaskPayload payload,
 	out indices uint3 tris[TYR_MAX_MESHLET_TRIANGLES],
 	out vertices VS_OUTPUT verts[TYR_MAX_MESHLET_VERTICES])
 {
-	const Meshlet meshlet = meshlets[payload.globalMeshletIndex];
+	const Meshlet meshlet = meshlets[payload.meshletIndices[groupId.x]];
 	const uint triangleCount = meshlet.indexCount / 3;
 
 	SetMeshOutputCounts(meshlet.vertexCount, triangleCount);

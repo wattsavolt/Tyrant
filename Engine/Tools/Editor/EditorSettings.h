@@ -20,6 +20,9 @@ namespace tyr
 		bool GetImportDefaultAssets() const;
 		void SetImportDefaultAssets(bool import);
 
+		// The port the MCP server listens on, on this machine only. 0 turns it off.
+		uint16 GetMcpPort() const;
+
 	private:
 		Config m_Config;
 	};

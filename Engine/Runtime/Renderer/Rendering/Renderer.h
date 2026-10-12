@@ -83,6 +83,13 @@ namespace tyr
 
 		ShaderCreator& GetShaderCreator() { return m_ShaderCreator; }
 
+		// Copies what the active viewport shows this frame, as it's drawn before the editor's UI.
+		// Returns an ID to collect it with once the GPU has finished. Main thread only.
+		uint RequestViewportCapture();
+		// The capture's pixels once ready: RGBA8 rows packed top to bottom, in linear colour like
+		// the viewport's own texture. Collecting it frees it. Main thread only.
+		ViewportCaptureStatus TakeViewportCapture(uint id, Array<uint8>& outPixels, uint& outWidth, uint& outHeight);
+
 		RenderFrame& GetRenderFrame()
 		{
 			return m_RenderFrames[m_RenderFrameIndex];
@@ -149,9 +156,18 @@ namespace tyr
 		void RecordTransferPass(CommandList& cmdList, uint renderFrameIndex);
 		void SetupSkinningPass(RenderGraphBuilder& builder);
 		void RecordSkinningPass(CommandList& cmdList);
-		void SetupCullingPass(RenderGraphBuilder& builder);
-		void RecordCullingPass(CommandList& cmdList, uint renderFrameIndex);
-		void RecordGeometryPass(CommandList& cmdList, uint renderFrameIndex);
+		// The early pass culls what was visible last frame, the late pass everything, against the
+		// Hi-Z built in between - see CullInstances.hlsli.
+		void SetupCullingPass(RenderGraphBuilder& builder, bool late, uint renderFrameIndex);
+		void RecordCullingPass(CommandList& cmdList, uint renderFrameIndex, bool late);
+		void RecordGeometryPass(CommandList& cmdList, uint renderFrameIndex, bool late);
+		// Builds one level of this slot's Hi-Z pyramid, level 0 from the depth buffer.
+		void RecordHiZPass(CommandList& cmdList, uint renderFrameIndex, uint level);
+		void RecordViewportCapture(CommandList& cmdList, uint renderFrameIndex, const Texture& source);
+		// What the culling passes and task shaders need this frame.
+		ShaderCullPushConstants MakeCullPushConstants(uint renderFrameIndex);
+		// The most a drawn LOD can stray from LOD0 per unit of distance from the camera.
+		float GetLodErrorPerDistance(uint renderFrameIndex);
 		void RecordLightingPass(CommandList& cmdList, uint renderFrameIndex);
 		// No separate Setup - the render graph usage declarations this needs are simple enough to
 		// stay inline in BuildAndExecuteRenderGraph's own "TAAResolve" lambda, the same way
@@ -180,6 +196,11 @@ namespace tyr
 		// Grows m_Resources.blasScratchBuffer in place if requiredPerSlotSize exceeds its current
 		// (also per-slot) capacity. Main thread only, called from Render()'s BLAS batch.
 		void EnsureBLASScratchCapacity(size_t requiredPerSlotSize);
+		// Grows the slot's Hi-Z buffer to fit a viewport this size and rebinds it. Main thread only,
+		// called when the slot's viewport textures are resized.
+		void EnsureHiZCapacity(uint slot, uint width, uint height);
+		// Grows the slot's capture readback buffer to hold this many bytes. Main thread only.
+		void EnsureCaptureCapacity(uint slot, size_t size);
 		void CreateAccelerationStructures();
 		void DeleteAccelerationStructures();
 
@@ -318,6 +339,31 @@ namespace tyr
 		Array<SkeletalMeshInstanceHandle> m_SkinnedInstances;
 		// Current per-slot capacity of m_Resources.blasScratchBuffer.
 		size_t m_BLASScratchCapacity = 0;
+		// How many floats each slot's Hi-Z buffer holds.
+		uint m_HiZCapacities[RenderConstants::c_BufferedFrameCount] = {};
+
+		// A viewport capture requested in a slot's frame. The main thread owns id and status, and
+		// RenderAsync fills in the rest, read once the slot's frame has finished.
+		struct ViewportCapture
+		{
+			enum class State : uint8
+			{
+				None,
+				Requested,
+				Ready,
+				Failed
+			};
+
+			RenderBufferHandle buffer;
+			size_t capacity = 0;
+			uint id = 0;
+			State state = State::None;
+			bool copied = false;
+			uint width = 0;
+			uint height = 0;
+		};
+		ViewportCapture m_Captures[RenderConstants::c_BufferedFrameCount];
+		uint m_NextCaptureID = 1;
 		// Per-slot size of m_Resources.tlasScratchBuffer, set once in CreateAccelerationStructures -
 		// every slot's TLAS is identically sized, so this never changes afterward.
 		size_t m_TLASScratchPerSlotSize = 0;

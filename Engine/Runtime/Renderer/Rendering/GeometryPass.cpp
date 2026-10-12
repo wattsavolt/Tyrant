@@ -29,11 +29,12 @@ namespace tyr
 		m_Registry = args.registry;
 		m_Resources = args.resources;
 		m_Scene = args.scene;
-		m_Pipeline = args.pipeline;
+		m_EarlyPipeline = args.earlyPipeline;
+		m_LatePipeline = args.latePipeline;
 		m_DescriptorSet = args.descriptorSet;
 	}
 
-	void GeometryPass::Setup(RenderGraphBuilder& builder, const RenderFrame& renderFrame)
+	void GeometryPass::Setup(RenderGraphBuilder& builder, const RenderFrame& renderFrame, bool late, RenderBufferHandle hizBuffer)
 	{
 		const PipelineStage meshPipelineStages = static_cast<PipelineStage>(PIPELINE_STAGE_TASK_SHADER_BIT | PIPELINE_STAGE_MESH_SHADER_BIT | PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
 
@@ -51,11 +52,16 @@ namespace tyr
 			builder.ReadBuffer(m_Registry->GetBuffer(buffer), meshPipelineStages, BARRIER_ACCESS_SHADER_READ_BIT);
 		}
 
-		// GPU-driven instance culling (run just before this pass in the same render graph
-		// phase) writes these three.
-		builder.ReadBuffer(m_Registry->GetBuffer(m_Resources->visibleInstanceIndexBuffer), meshPipelineStages, BARRIER_ACCESS_SHADER_READ_BIT);
+		// GPU-driven culling (run just before this pass in the same render graph phase) writes
+		// these three.
+		builder.ReadBuffer(m_Registry->GetBuffer(m_Resources->meshDrawBuffer), meshPipelineStages, BARRIER_ACCESS_SHADER_READ_BIT);
 		builder.ReadBuffer(m_Registry->GetBuffer(m_Resources->indirectDrawCommandBuffer), PIPELINE_STAGE_DRAW_INDIRECT_BIT, BARRIER_ACCESS_INDIRECT_COMBAND_READ_BIT);
 		builder.ReadBuffer(m_Registry->GetBuffer(m_Resources->drawCountBuffer), PIPELINE_STAGE_DRAW_INDIRECT_BIT, BARRIER_ACCESS_INDIRECT_COMBAND_READ_BIT);
+
+		if (late)
+		{
+			builder.ReadBuffer(m_Registry->GetBuffer(hizBuffer), PIPELINE_STAGE_TASK_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT);
+		}
 
 		for (const TextureUploadRequest& request : renderFrame.textureUploadRequests)
 		{
@@ -66,23 +72,28 @@ namespace tyr
 		}
 	}
 
-	void GeometryPass::Execute(CommandList& cmdList)
+	void GeometryPass::Execute(CommandList& cmdList, bool late, const ShaderCullPushConstants& pushConstants)
 	{
-		cmdList.BindGraphicsPipeline(m_Pipeline);
-		cmdList.BindDescriptorSet(m_DescriptorSet, m_Pipeline);
+		const GraphicsPipelineHandle pipeline = late ? m_LatePipeline : m_EarlyPipeline;
+		cmdList.BindGraphicsPipeline(pipeline);
+		cmdList.BindDescriptorSet(m_DescriptorSet, pipeline);
 
 		if (!m_Scene)
 		{
 			return;
 		}
 
-		// GPU-driven instance culling has already compacted every visible instance into
-		// indirectDrawCommandBuffer/visibleInstanceIndexBuffer and written how many into
+		cmdList.PushConstants(pipeline, SHADER_STAGE_TASK_BIT, 0, sizeof(pushConstants), &pushConstants);
+
+		// GPU-driven culling has already compacted this pass's draws into its own half of
+		// indirectDrawCommandBuffer/meshDrawBuffer and written how many into its own entry of
 		// drawCountBuffer, so one indirect multi-draw call covers every instance.
 		const BufferHandle indirectBuffer = m_Registry->GetBuffer(m_Resources->indirectDrawCommandBuffer).buffer;
 		const BufferHandle countBuffer = m_Registry->GetBuffer(m_Resources->drawCountBuffer).buffer;
 		// Matches VkDrawMeshTasksIndirectCommandEXT (3x uint32).
 		constexpr uint stride = sizeof(uint) * 3;
-		cmdList.DrawMeshTasksIndirectCount(indirectBuffer, 0, countBuffer, 0, RenderConstants::c_MaxMeshInstances, stride);
+		const uint passIndex = late ? 1 : 0;
+		cmdList.DrawMeshTasksIndirectCount(indirectBuffer, (size_t)passIndex * stride * RenderConstants::c_MaxMeshInstances,
+			countBuffer, passIndex * sizeof(uint), RenderConstants::c_MaxMeshInstances, stride);
 	}
 }

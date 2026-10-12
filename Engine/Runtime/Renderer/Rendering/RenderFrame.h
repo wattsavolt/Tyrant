@@ -159,11 +159,16 @@ namespace tyr
 		// own on/off switch isn't tied to any quality preset), same one-shot-request pattern.
 		bool hasTaaEnabledOverride = false;
 		bool taaEnabledOverride = true;
+		// Copies what the active viewport shows this frame back to the CPU - see Renderer::RequestViewportCapture.
+		bool captureRequested = false;
 		// The active viewport's overlay, drawn after TAA: the grid and debug lines, with the
 		// camera's viewProj without TAA jitter.
 		bool hasOverlay = false;
 		ViewportGridDesc viewportGrid;
 		Matrix4 overlayViewProj;
+		// Pixels one unit of mesh error covers one unit from the camera - the projection's y scale
+		// times half the viewport's height. LOD selection divides it by the allowed pixel error.
+		float lodProjectionScale = 0.0f;
 		// This frame's debug line vertices, depth-tested ones first, then ones drawn on top.
 		uint debugLineDepthTestedCount = 0;
 		uint debugLineOnTopCount = 0;
@@ -228,8 +233,10 @@ namespace tyr
 			activeScene = {};
 			hasQualityLevelOverride = false;
 			hasTaaEnabledOverride = false;
+			captureRequested = false;
 			hasOverlay = false;
 			viewportGrid = {};
+			lodProjectionScale = 0.0f;
 			debugLineDepthTestedCount = 0;
 			debugLineOnTopCount = 0;
 			activeLights.Clear();

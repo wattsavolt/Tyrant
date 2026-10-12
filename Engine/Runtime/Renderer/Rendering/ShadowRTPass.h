@@ -54,6 +54,8 @@ namespace tyr
 		float spotDirY;
 		float spotDirZ;
 		float spotCone;
+		// The most a drawn LOD can stray from LOD0 per unit of distance from the camera.
+		float lodErrorPerDistance;
 	};
 
 	// One ray-traced visibility dispatch per shadow-casting light this tick: every active
@@ -89,7 +91,7 @@ namespace tyr
 			const RenderQualitySettings& qualitySettings, uint renderFrameIndex,
 			TextureHandle depthBuffer, TextureHandle gbufferNormalRoughMetal, TextureHandle shadowMasksRaw);
 
-		void Execute(CommandList& cmdList, uint renderFrameIndex, uint width, uint height);
+		void Execute(CommandList& cmdList, uint renderFrameIndex, uint width, uint height, float lodErrorPerDistance);
 
 		// Valid after Setup - consumed by Renderer to build DeferredLightingCS's per-tick
 		// light-to-slot lookup.

@@ -36,6 +36,7 @@ namespace tyr
 		Serialize<uint>(stream, header.chunkCount);
 		Serialize<uint>(stream, header.submeshOffset);
 		Serialize<uint>(stream, header.submeshCount);
+		Serialize<float>(stream, header.error);
 	}
 
 	template<>
@@ -45,6 +46,7 @@ namespace tyr
 		Deserialize<uint>(stream, header.chunkCount);
 		Deserialize<uint>(stream, header.submeshOffset);
 		Deserialize<uint>(stream, header.submeshCount);
+		Deserialize<float>(stream, header.error);
 	}
 
 	template<>
@@ -66,6 +68,7 @@ namespace tyr
 	template<>
 	void Serialize(BufferedFileStream& stream, const MeshHeader& header)
 	{
+		Serialize<uint>(stream, MeshHeader::c_FileVersion);
 		Serialize(stream, header.lods);
 		Serialize(stream, header.chunks);
 		Serialize(stream, header.submeshes);
@@ -78,6 +81,11 @@ namespace tyr
 	template<>
 	void Deserialize(BufferedFileStream& stream, MeshHeader& header)
 	{
+		Deserialize<uint>(stream, header.fileVersion);
+		if (!header.IsCurrentVersion())
+		{
+			return;
+		}
 		Deserialize(stream, header.lods);
 		Deserialize(stream, header.chunks);
 		Deserialize(stream, header.submeshes);
@@ -98,6 +106,10 @@ namespace tyr
 	void DeserializeSkinnedMesh(BufferedFileStream& stream, MeshHeader& header)
 	{
 		Deserialize<MeshHeader>(stream, header);
+		if (!header.IsCurrentVersion())
+		{
+			return;
+		}
 		AssetSerializationUtil::ReadArray(stream, header.chunkSkins);
 		stream.Read(&header.skeleton, sizeof(header.skeleton));
 		stream.Read(&header.boneBoundsMargin, sizeof(header.boneBoundsMargin));

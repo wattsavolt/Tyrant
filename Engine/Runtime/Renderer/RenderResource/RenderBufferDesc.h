@@ -23,7 +23,9 @@ namespace tyr
 		// Backing storage an acceleration structure object is bound to at creation, never written
 		// via a copy/upload - just ACCELERATION_STRUCTURE_STORAGE + device address (a build
 		// addresses it directly, not through a descriptor).
-		AccelerationStructureStorage
+		AccelerationStructureStorage,
+		// CPU-visible and mapped, for copying GPU results back to the CPU.
+		Readback
 	};
 
 	struct RenderBufferDesc

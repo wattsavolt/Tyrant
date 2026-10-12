@@ -7,6 +7,8 @@ namespace tyr
 	{
 		constexpr const char* c_DefaultLevelKey = "DefaultLevel";
 		constexpr const char* c_ImportDefaultAssetsKey = "ImportDefaultAssets";
+		constexpr const char* c_McpPortKey = "McpPort";
+		constexpr uint16 c_DefaultMcpPort = 7801;
 
 		Path GetConfigPath()
 		{
@@ -46,5 +48,10 @@ namespace tyr
 	{
 		m_Config.SetValueAsBool(c_ImportDefaultAssetsKey, import);
 		m_Config.Save();
+	}
+
+	uint16 EditorSettings::GetMcpPort() const
+	{
+		return m_Config.HasValue(c_McpPortKey) ? static_cast<uint16>(m_Config.GetValueAsUInt(c_McpPortKey)) : c_DefaultMcpPort;
 	}
 }

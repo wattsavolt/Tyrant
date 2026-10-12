@@ -64,11 +64,16 @@ namespace tyr
 		case RenderBufferUsage::AccelerationStructureStorage:
 			bufferDesc.usage = static_cast<BufferUsage>(BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT | BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 			break;
+		case RenderBufferUsage::Readback:
+			bufferDesc.usage = BUFFER_USAGE_TRANSFER_DST_BIT;
+			break;
 		default:
 			TYR_ASSERT(false);
 		}
 
-		if (desc.usage != RenderBufferUsage::Upload && device.IsDiscreteGPU())
+		// Upload and readback buffers are written or read by the CPU.
+		const bool cpuAccessed = desc.usage == RenderBufferUsage::Upload || desc.usage == RenderBufferUsage::Readback;
+		if (!cpuAccessed && device.IsDiscreteGPU())
 		{
 			bufferDesc.memoryProperty = MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 		}
@@ -82,7 +87,7 @@ namespace tyr
 
 		buffer.buffer = device.CreateBuffer(bufferDesc);
 
-		if (desc.usage != RenderBufferUsage::Upload)
+		if (!cpuAccessed)
 		{
 			BufferViewDesc viewDesc;
 #if !TYR_FINAL

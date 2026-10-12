@@ -37,6 +37,13 @@ namespace tyr
 			{
 				Deserialize<MeshHeader>(stream, header);
 			}
+
+			// Left with no LODs, so the mesh loads but is never drawn.
+			if (!header.IsCurrentVersion())
+			{
+				TYR_LOG_ERROR("%s was saved in an older mesh format. Reimport it to draw it.", filePath);
+				header.Reset();
+			}
 			return stream.GetOffset();
 		}
 
@@ -777,6 +784,11 @@ namespace tyr
 		// wait on anything else, but resolving pending mesh instances does wait on this being set.
 		assetData.assetHeader = ld->header;
 		assetData.pendingLodCount = header.lods.Size();
+		// Nothing to wait for, such as a mesh file too old to read.
+		if (header.lods.IsEmpty())
+		{
+			assetData.loadState = AssetLoadState::Loaded;
+		}
 		assetData.gpuSize = 0;
 		for (const MeshChunkHeader& chunkHeader : header.chunks)
 		{
@@ -867,6 +879,7 @@ namespace tyr
 			shaderMeshLOD->indexOffset = (uint)(geoLD->indicesGpuAlloc.offset / sizeof(uint));
 			shaderMeshLOD->meshletOffset = (uint)(geoLD->meshletsGpuAlloc.offset / sizeof(ShaderMeshlet));
 			shaderMeshLOD->meshletCount = meshletCount;
+			shaderMeshLOD->error = header.lods[lodIndex].error;
 
 			m_RendererAPI->FlushBufferUploadAllocation(meshLODUpload);
 

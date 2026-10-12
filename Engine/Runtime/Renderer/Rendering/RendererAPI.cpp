@@ -922,6 +922,16 @@ namespace tyr
 		renderFrame.qualityLevelOverride = level;
 	}
 
+	uint RendererAPI::RequestViewportCapture()
+	{
+		return m_Renderer.RequestViewportCapture();
+	}
+
+	ViewportCaptureStatus RendererAPI::TakeViewportCapture(uint id, Array<uint8>& outPixels, uint& outWidth, uint& outHeight)
+	{
+		return m_Renderer.TakeViewportCapture(id, outPixels, outWidth, outHeight);
+	}
+
 	void RendererAPI::SetTaaEnabled(bool enabled)
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();

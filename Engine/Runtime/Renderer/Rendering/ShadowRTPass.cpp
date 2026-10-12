@@ -131,7 +131,7 @@ namespace tyr
 		builder.WriteTexture(m_Registry->GetTexture(shadowMasksRaw), computeStage, BARRIER_ACCESS_SHADER_WRITE_BIT);
 	}
 
-	void ShadowRTPass::Execute(CommandList& cmdList, uint renderFrameIndex, uint width, uint height)
+	void ShadowRTPass::Execute(CommandList& cmdList, uint renderFrameIndex, uint width, uint height, float lodErrorPerDistance)
 	{
 		cmdList.BindComputePipeline(m_Pipeline);
 		cmdList.BindDescriptorSet(m_Resources->descriptorSet, m_Pipeline);
@@ -145,6 +145,7 @@ namespace tyr
 		pushConstants.width = width;
 		pushConstants.height = height;
 		pushConstants.renderFrameIndex = renderFrameIndex;
+		pushConstants.lodErrorPerDistance = lodErrorPerDistance;
 
 		for (uint i : m_PresentDirLightSlots)
 		{

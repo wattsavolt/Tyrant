@@ -150,8 +150,8 @@ namespace tyr
 		// Where the geometry-load task copies decompressed vertices/indices/meshlets to -
 		// already GPU-visible staging memory, requested on main thread before the task is
 		// created. Meshlets need no further processing before upload - MeshChunkMeshlet is
-		// deliberately byte-identical to ShaderMeshlet (see its own comment) - so the task
-		// copies straight into this allocation the same way it does for vertices/indices.
+		// ShaderMeshlet - so the task copies straight into this allocation the same way it does
+		// for vertices/indices.
 		UploadBufferAllocation verticesUpload;
 		UploadBufferAllocation indicesUpload;
 		UploadBufferAllocation meshletsUpload;

@@ -4,6 +4,7 @@
 #include "Core.h"
 #include "TextureAsset.h"
 #include "RenderResource/MeshDesc.h"
+#include "Shaders/ShaderTypes.h"
 
 namespace tyr
 {
@@ -31,21 +32,9 @@ namespace tyr
 	};
 
 	// One generated meshlet's local ranges into a chunk's decompressed meshlet-local index
-	// buffer / mesh vertex buffer, plus which of the mesh's submeshes it belongs to (see
-	// Meshlet::materialSlot in Shaders/ShaderTypes.h - same meaning; materialSlot is
-	// mesh-intrinsic, not runtime-resolved, so there's no reason not to bake it in here at
-	// import time). Deliberately kept field-for-field identical to Meshlet/ShaderMeshlet so a
-	// chunk's decompressed meshlet bytes are already GPU-upload-ready as-is, with no further
-	// per-meshlet transform needed - see AssetManager::UploadMeshGeometry, which uploads them
-	// the same way it does vertices/indices.
-	struct MeshChunkMeshlet
-	{
-		uint vertexOffset;
-		uint vertexCount;
-		uint indexOffset;
-		uint indexCount;
-		uint materialSlot;
-	};
+	// buffer / mesh vertex buffer, its material slot and its culling bounds. The GPU's own
+	// layout, so a chunk's decompressed meshlet bytes are uploaded as they are.
+	using MeshChunkMeshlet = ShaderMeshlet;
 
 	struct MeshLODHeader
 	{
@@ -54,6 +43,8 @@ namespace tyr
 		// Submeshes for this LOD only - a submesh's meshlet range/count can differ per LOD.
 		uint submeshOffset = 0;
 		uint submeshCount = 0;
+		// How far this LOD's surface can be from LOD0's, in mesh-space units.
+		float error = 0.0f;
 	};
 
 	// Where a skinned mesh chunk's bone weights sit in its decompressed blob - one
@@ -78,6 +69,11 @@ namespace tyr
 	// The default material will be added to the material component of the entity generated when importing the mesh (same for skeletal)
 	struct MeshHeader
 	{
+		// Written first and bumped whenever the layout changes, so an older file is rejected
+		// instead of misread. The high half is a tag no older file starts with.
+		static constexpr uint c_FileVersion = 0x544D0002;
+		uint fileVersion = c_FileVersion;
+
 		LocalArray<MeshLODHeader, MeshConstants::c_MaxLods> lods;
 		// Currently there will be only one chunk per LOD until streamed chunks are supported.
 		// This could be handy later but could be optimized to a local array if chunk streaming not used and becomes a bottleneck
@@ -100,9 +96,11 @@ namespace tyr
 		float boneBoundsMargin = 0.0f;
 
 		bool IsSkinned() const { return !chunkSkins.IsEmpty(); }
+		bool IsCurrentVersion() const { return fileVersion == c_FileVersion; }
 
 		void Reset()
 		{
+			fileVersion = c_FileVersion;
 			lods.Clear();
 			chunks.Clear();
 			submeshes.Clear();

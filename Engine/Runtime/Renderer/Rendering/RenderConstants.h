@@ -32,15 +32,16 @@ namespace tyr
 		// in request order until adding the next would exceed this, with at least one always
 		// processed so an oversized mesh alone can't stall the queue.
 		static constexpr size_t c_MaxBLASBuildBytesPerFrame = 16 * 1024 * 1024; // 16 MB
-		// 17 currently in use (13 original + activeMeshInstanceIndexBuffer/
-		// visibleInstanceIndexBuffer/indirectDrawCommandBuffer/drawCountBuffer for GPU-driven
-		// instance culling) - bumped to 32 for headroom while more buffers are still being added.
-		static constexpr uint c_MaxBuffers = 32;
+		// Around 30 in use, plus the upload allocators' own and a grown buffer's old copy until
+		// it's released.
+		static constexpr uint c_MaxBuffers = 64;
 		static constexpr uint c_MaxTextures = 3000;
 		static constexpr uint c_MaxMaterials = 1000;
 		static constexpr uint c_MaxMeshes = 1000;
 		static constexpr uint c_MaxMeshLODs = c_MaxMeshes * MeshConstants::c_MaxLods;
 		static constexpr uint c_MaxMeshInstances = 10000;
+		static_assert(c_MaxMeshInstances == TYR_MAX_MESH_INSTANCES, "Keep in sync with ShaderTypes.h's TYR_MAX_MESH_INSTANCES.");
+		static_assert(MeshConstants::c_MaxLods == TYR_MAX_LODS, "Keep in sync with ShaderTypes.h's TYR_MAX_LODS.");
 		// Per buffered RenderFrame slot - tlasInstanceBuffer is one physical buffer sized
 		// c_BufferedFrameCount times this, since the TLAS is rebuilt every frame and each slot
 		// needs its own instance data to avoid a cross-frame GPU race.

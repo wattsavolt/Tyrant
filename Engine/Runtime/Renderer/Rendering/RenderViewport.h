@@ -14,6 +14,15 @@ namespace tyr
 		uint majorLineEvery = 10;
 	};
 
+	enum class ViewportCaptureStatus : uint8
+	{
+		// The GPU hasn't finished the frame it was taken in yet.
+		Waiting,
+		Ready,
+		// Nothing was drawn to capture, or the ID is unknown.
+		Failed
+	};
+
 	// One buffered slot's own G-buffer/colour/depth texture set for a single scene's viewport -
 	// one full set per buffered RenderFrame slot, each (re)creating only its own entry, on its
 	// own turn, when the requested size changes.

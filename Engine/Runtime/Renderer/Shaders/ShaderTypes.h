@@ -23,7 +23,8 @@
 // GPU-driven instance culling data, written by a compute pre-pass and read by later
 // draw-time shaders.
 #define TYR_BINDING_ACTIVE_INSTANCE_INDICES 15
-#define TYR_BINDING_VISIBLE_INSTANCE_INDICES 16
+// One MeshDraw per draw the culling passes make, early pass first, then late from TYR_MAX_MESH_INSTANCES.
+#define TYR_BINDING_MESH_DRAWS 16
 #define TYR_BINDING_INDIRECT_DRAW_COMMANDS 17
 #define TYR_BINDING_DRAW_COUNT 18
 // One top-level acceleration structure per buffered RenderFrame slot, indexed the same way
@@ -57,6 +58,10 @@
 #define TYR_BINDING_SKIN_VERTEX 27
 // Each skinned mesh instance's bone matrices, TYR_MAX_BONES apart.
 #define TYR_BINDING_BONE_MATRIX 28
+// One uint per mesh instance, non-zero if it was visible last frame.
+#define TYR_BINDING_INSTANCE_VISIBILITY 29
+// One Hi-Z pyramid per buffered frame slot - see HiZ.hlsli.
+#define TYR_BINDING_HIZ 30
 
 // How many copies of the per-frame render targets TYR_BINDING_LIGHTING_OUTPUT holds, one
 // per buffered frame slot - kept in sync with the matching C++ constant.
@@ -76,6 +81,14 @@
 // Must match ModelImporter's meshlet build limits.
 #define TYR_MAX_MESHLET_VERTICES 64
 #define TYR_MAX_MESHLET_TRIANGLES 124
+
+// How many meshlets one task shader group culls.
+#define TYR_MESHLETS_PER_TASK_GROUP 32
+// Kept in sync with RenderConstants::c_MaxMeshInstances and MeshConstants::c_MaxLods.
+#define TYR_MAX_MESH_INSTANCES 10000
+#define TYR_MAX_LODS 5
+// Enough for a depth buffer up to 65536 pixels across.
+#define TYR_MAX_HIZ_LEVELS 16
 
 #ifdef __cplusplus
 
@@ -239,6 +252,11 @@ namespace tyr
 		// buffer index - the drawn instance's own material list resolves this slot to an
 		// actual material.
 		uint materialSlot;
+		// Bounding sphere in mesh space.
+		TYR_SHADER_FLOAT3 center;
+		float radius;
+		// Normal cone as four signed bytes over 127: axis x, y, z, then the cosine of its half angle.
+		uint cone;
 	};
 
 	TYR_SHADER_STRUCT(MeshLOD)
@@ -248,6 +266,38 @@ namespace tyr
 		uint indexOffset;
 		uint meshletOffset;
 		uint meshletCount;
+		// How far this LOD's surface can be from LOD0's, in mesh-space units.
+		float error;
+	};
+
+	// One draw a culling pass made: the instance and which of its mesh's LODs it draws.
+	TYR_SHADER_STRUCT(MeshDraw)
+	{
+		uint meshInstanceIndex;
+		uint lodIndex;
+	};
+
+	// Shared by the culling compute passes and the geometry passes' task shaders.
+	TYR_SHADER_STRUCT(CullPushConstants)
+	{
+		uint activeInstanceCount;
+		// Pixels covered by one unit of LOD error one unit from the camera, over the allowed pixel error.
+		float lodScale;
+		// Which slot's Hi-Z pyramid to test against.
+		uint renderFrameIndex;
+		uint depthWidth;
+		uint depthHeight;
+	};
+
+	// Builds one level of the Hi-Z pyramid.
+	TYR_SHADER_STRUCT(HiZPushConstants)
+	{
+		// Only read when building level 0 from the depth buffer.
+		uint depthIndex;
+		uint renderFrameIndex;
+		uint depthWidth;
+		uint depthHeight;
+		uint level;
 	};
 
 	TYR_SHADER_STRUCT(Mesh)

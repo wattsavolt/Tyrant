@@ -1,12 +1,15 @@
 #include "Logger.h"
 #include "String/StringUtil.h"
 #include "Threading/ThreadTypes.h"
+#include <cstdio>
 #include <iostream>
 
 namespace tyr
 {
 	void Logger::LogMessage(const String& msg, LogLevel level, LogCategory category)
 	{
+		AddToHistory(msg, level);
+
 		// TODO: Log out to a file here
 		switch (level)
 		{
@@ -85,6 +88,27 @@ namespace tyr
 		std::cout << "[" << catergory << "] " << msg << std::endl;
 	}
 #endif
+
+	void Logger::AddToHistory(const String& msg, LogLevel level)
+	{
+		LockGuard lock(m_HistoryMutex);
+		LogEntry& entry = m_History[m_NextSequence % c_HistorySize];
+		entry.sequence = m_NextSequence++;
+		entry.level = level;
+		snprintf(entry.text, sizeof(entry.text), "%s", msg.c_str());
+	}
+
+	uint Logger::GetRecentEntries(uint64 afterSequence, LogEntry* outEntries, uint maxCount)
+	{
+		LockGuard lock(m_HistoryMutex);
+		const uint64 oldestKept = m_NextSequence > c_HistorySize ? m_NextSequence - c_HistorySize : 1;
+		uint count = 0;
+		for (uint64 sequence = afterSequence + 1 > oldestKept ? afterSequence + 1 : oldestKept; sequence < m_NextSequence && count < maxCount; ++sequence)
+		{
+			outEntries[count++] = m_History[sequence % c_HistorySize];
+		}
+		return count;
+	}
 
 	Logger& Logger::Instance()
 	{

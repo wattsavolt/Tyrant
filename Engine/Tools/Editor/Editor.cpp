@@ -30,6 +30,8 @@
 #include "Utility/PathUtil.h"
 #include "Math/Math.h"
 #include "Math/Matrix3.h"
+#include "Mcp/McpServer.h"
+#include "Mcp/McpTools.h"
 #include <algorithm>
 #include <cfloat>
 #include <cstring>
@@ -246,6 +248,21 @@ namespace tyr
 		m_EditorUI->ApplyRenderSettings(true);
 
 		OpenStartLevel();
+
+		const uint16 mcpPort = m_Settings->GetMcpPort();
+		if (mcpPort != 0)
+		{
+			m_McpServer = MakeURef<McpServer>();
+			if (m_McpServer->Start(mcpPort))
+			{
+				m_McpTools = MakeURef<McpTools>(*this);
+				TYR_LOG_INFO("MCP server listening on http://127.0.0.1:%u/mcp", static_cast<uint>(mcpPort));
+			}
+			else
+			{
+				m_McpServer.reset();
+			}
+		}
 	}
 
 	void Editor::OpenStartLevel()
@@ -412,6 +429,12 @@ namespace tyr
 
 	void Editor::Update(float deltaTime)
 	{
+		// First, so the UI drawn below already shows what the tools changed.
+		if (m_McpTools)
+		{
+			m_McpTools->Update(*m_McpServer);
+		}
+
 		PlayState requestedState = m_PlayState;
 		EditorRequests requests;
 		const PanelRect viewportRect = m_EditorUI->Draw(requestedState, m_SelectedActor, m_Level, IsLevelDirty(), requests);
@@ -902,6 +925,10 @@ namespace tyr
 
 	void Editor::Shutdown()
 	{
+		// Before anything its tools use goes away.
+		m_McpTools.reset();
+		m_McpServer.reset();
+
 		if (m_PlayState != PlayState::Editing)
 		{
 			SetPlayState(PlayState::Editing);

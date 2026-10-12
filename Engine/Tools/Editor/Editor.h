@@ -24,8 +24,13 @@ namespace tyr
 	class RendererAPI;
 	class GUIModule;
 	class InputManager;
+	class McpServer;
+	class McpTools;
 	class TYR_EDITOR_EXPORT Editor final : public AppBase
 	{
+		// The MCP server's tools edit through the same functions as the UI.
+		friend class McpTools;
+
 	public:
 		// app is the game, run inside the editor's viewport while playing.
 		Editor(GUIModule& guiModule, AppBase& app);
@@ -120,6 +125,9 @@ namespace tyr
 		URef<EditorSettings> m_Settings;
 		URef<EditorUI> m_EditorUI;
 		URef<EditorViewport> m_EditorViewport;
+		// Lets Claude, or any MCP client on this machine, use the editor. Null when turned off.
+		URef<McpServer> m_McpServer;
+		URef<McpTools> m_McpTools;
 	};
 
 }

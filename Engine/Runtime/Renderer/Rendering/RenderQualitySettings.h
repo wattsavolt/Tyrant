@@ -27,7 +27,7 @@ namespace tyr
 		uint maxShadowCastingLocalLights = 16;
 		uint denoiserSpatialRadius = 2;
 		float taaHistoryBlendWeight = 0.95f;
-		// Not read anywhere yet - reserved for when distance-based LOD selection exists.
+		// The pixel error a LOD may show is 2^lodBias - negative keeps finer LODs for longer.
 		float lodBias = -1.0f;
 	};
 

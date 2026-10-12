@@ -52,8 +52,12 @@ namespace tyr
 		DescriptorPoolHandle descriptorPool;
 		DescriptorSetLayoutHandle descriptorSetLayout;
 		DescriptorSetHandle descriptorSet;
-		GraphicsPipelineHandle geometryGraphicsPipeline;
-		ShaderModuleHandle geometryTaskShader;
+		// The early pipeline draws what was visible last frame, the late one what the early pass
+		// missed - they differ only in their task shader, the late one also testing the Hi-Z.
+		GraphicsPipelineHandle geometryEarlyPipeline;
+		GraphicsPipelineHandle geometryLatePipeline;
+		ShaderModuleHandle geometryEarlyTaskShader;
+		ShaderModuleHandle geometryLateTaskShader;
 		ShaderModuleHandle geometryMeshShader;
 		ShaderModuleHandle geometryPixelShader;
 
@@ -70,20 +74,33 @@ namespace tyr
 		ComputePipelineHandle lightingPipeline;
 		ShaderModuleHandle lightingComputeShader;
 
-		// GPU-driven instance frustum culling. This frame's active mesh instances, uploaded as
-		// plain pool indices - read-only input to the culling pass.
+		// GPU-driven culling. This frame's active mesh instances, uploaded as plain pool indices -
+		// read-only input to the culling passes.
 		RenderBufferHandle activeMeshInstanceIndexBuffer;
-		// Compacted pool indices of instances that passed culling, one entry per visible
-		// instance, written by the culling pass and read by MeshAS.hlsl via SV_DrawIndex.
-		RenderBufferHandle visibleInstanceIndexBuffer;
-		// One VkDrawMeshTasksIndirectCommandEXT-equivalent entry per visible instance, written
-		// by the culling pass and consumed directly by GeometryPass's indirect draw call.
+		// One ShaderMeshDraw per draw, read by the task shaders via SV_DrawIndex. The early pass's
+		// draws come first, the late pass's from c_MaxMeshInstances, the same for the next two.
+		RenderBufferHandle meshDrawBuffer;
+		// One VkDrawMeshTasksIndirectCommandEXT-equivalent entry per draw, consumed directly by
+		// GeometryPass's indirect draw call.
 		RenderBufferHandle indirectDrawCommandBuffer;
-		// Single atomic counter - how many of the two buffers above are actually populated this
-		// frame. Reset to 0 every frame before the culling pass increments it.
+		// Two atomic counters, the early and late pass's draw counts. Reset to 0 every frame.
 		RenderBufferHandle drawCountBuffer;
-		ComputePipelineHandle cullingPipeline;
-		ShaderModuleHandle cullingComputeShader;
+		// One uint per mesh instance pool slot, whether it was visible last frame. Never reset -
+		// a stale entry only costs one frame drawing something that ends up hidden.
+		RenderBufferHandle instanceVisibilityBuffer;
+		ComputePipelineHandle cullingEarlyPipeline;
+		ComputePipelineHandle cullingLatePipeline;
+		ShaderModuleHandle cullingEarlyComputeShader;
+		ShaderModuleHandle cullingLateComputeShader;
+
+		// The farthest depth over shrinking areas of the screen, built after the early geometry
+		// pass for the late pass to test against. One per buffered RenderFrame slot, grown to fit
+		// the largest viewport that slot has drawn - see HiZ.hlsli.
+		RenderBufferHandle hizBuffers[RenderConstants::c_BufferedFrameCount];
+		ComputePipelineHandle hizDepthPipeline;
+		ComputePipelineHandle hizDownsamplePipeline;
+		ShaderModuleHandle hizDepthComputeShader;
+		ShaderModuleHandle hizDownsampleComputeShader;
 
 		// Ray-traced shadow visibility - one dispatch per shadow-casting light, writing into the
 		// active viewport slot's shadowMasksRaw array (see RenderViewportTextureData).

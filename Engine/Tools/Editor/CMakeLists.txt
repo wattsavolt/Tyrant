@@ -45,6 +45,8 @@ target_link_libraries(TyrantEditor PRIVATE TyrantEngine)
 # Editor code always builds under TYR_EDITOR_MODE, which is mutually exclusive with
 # TYR_FINAL_MODE, so imgui is always available here.
 target_link_libraries(TyrantEditor PRIVATE imgui)
+# The MCP server's JSON parsing, the same simdjson model import already uses.
+target_link_libraries(TyrantEditor PRIVATE simdjson)
 
 # IDE specific
 set_property(TARGET TyrantEditor PROPERTY FOLDER Tools)

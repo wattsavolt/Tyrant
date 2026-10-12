@@ -12,6 +12,7 @@
 #include "RenderResource/MeshUtil.h"
 #include "Shaders/ShaderTypes.h"
 #include "AssetSystem/AssetConstants.h"
+#include <algorithm>
 #include <cstring>
 #include <meshoptimizer.h>
 #include <zstd.h>
@@ -337,9 +338,9 @@ namespace tyr
 		// occupancy on typical mesh-shader hardware.
 		constexpr size_t c_MaxMeshletVertices = 64;
 		constexpr size_t c_MaxMeshletTriangles = 124;
-		// No cone culling yet - GeometryPass doesn't do backface/cone culling yet. Revisit
-		// once it does; meshoptimizer just needs a value between 0 and 1 to weight for it.
-		constexpr float c_MeshletConeWeight = 0.0f;
+		// How much meshlet building favours triangles facing the same way, so more meshlets can be
+		// cone culled as back-facing. 0.25 is meshoptimizer's own recommendation when cone culling.
+		constexpr float c_MeshletConeWeight = 0.25f;
 		// Offline, import-time only, so this favors compression ratio over speed. 19 is
 		// zstd's own "very good compression, still reasonable time" recommendation - its
 		// "ultra" levels (20+) cost a lot more time for comparatively little extra gain.
@@ -357,6 +358,18 @@ namespace tyr
 		constexpr float c_LodSimplifyTargetError = 0.1f;
 		// Never simplify a submesh below this many triangles.
 		constexpr uint c_MinLodTriangleCount = 8;
+		// A source file's own LODs come with no error, so LOD1 is taken to be off by this much of
+		// the mesh's size, doubling each LOD after.
+		constexpr float c_PreAuthoredLodError = 0.01f;
+
+		// Four signed bytes: the cone axis' x, y and z, then the cosine of its half angle.
+		uint PackMeshletCone(const meshopt_Bounds& bounds)
+		{
+			return (uint)(uint8)bounds.cone_axis_s8[0]
+				| ((uint)(uint8)bounds.cone_axis_s8[1] << 8)
+				| ((uint)(uint8)bounds.cone_axis_s8[2] << 16)
+				| ((uint)(uint8)bounds.cone_cutoff_s8 << 24);
+		}
 
 		// Weights are quantized to bytes that add up to exactly 255.
 		ShaderSkinVertex PackSkinWeights(const ModelImportSkinWeights& weights)
@@ -415,6 +428,9 @@ namespace tyr
 
 		m_LodCompressedBlobs.Clear();
 
+		// Turns meshoptimizer's errors, relative to the mesh's size, into mesh-space units.
+		const float meshScale = meshopt_simplifyScale(&mesh.vertices[0].position.x, mesh.vertices.Size(), sizeof(Vertex));
+
 		for (uint lodIndex = 0; lodIndex < lodLevelCount; ++lodIndex)
 		{
 			// Which geometry this LOD actually builds from: LOD0 is always the mesh's own
@@ -440,6 +456,13 @@ namespace tyr
 			MeshLODHeader& lod = header.lods.ExpandOne();
 			lod.submeshOffset = header.submeshes.Size();
 			lod.submeshCount = lodSubmeshes.Size();
+			// Raised to the largest of this LOD's submeshes' errors below. LOD selection relies on
+			// each LOD being at least as far off as the one before.
+			lod.error = lodIndex > 0 ? header.lods[lodIndex - 1].error : 0.0f;
+			if (preAuthored)
+			{
+				lod.error = std::max(lod.error, meshScale * c_PreAuthoredLodError * Math::Pow(2.0f, (float)(lodIndex - 1)));
+			}
 
 			for (const ModelImportSubmesh& submesh : lodSubmeshes)
 			{
@@ -494,12 +517,14 @@ namespace tyr
 					// vertices on a submesh's own open edges - including the seams where it
 					// touches a neighbouring submesh - from moving independently, which would
 					// otherwise open visible cracks between submeshes simplified separately.
+					float relativeError = 0.0f;
 					const size_t newIndexCount = meshopt_simplify(simplifiedIndices, originalSubmeshIndices, submesh.indexCount,
 						&lodVertices[0].position.x, lodVertices.Size(), sizeof(Vertex),
-						targetIndexCount, c_LodSimplifyTargetError, meshopt_SimplifyLockBorder, nullptr);
+						targetIndexCount, c_LodSimplifyTargetError, meshopt_SimplifyLockBorder, &relativeError);
 
 					submeshIndices = simplifiedIndices;
 					submeshIndexCount = (uint)newIndexCount;
+					lod.error = std::max(lod.error, relativeError * meshScale);
 				}
 
 				const size_t submeshMaxMeshlets = meshopt_buildMeshletsBound(submeshIndexCount, c_MaxMeshletVertices, c_MaxMeshletTriangles);
@@ -537,12 +562,18 @@ namespace tyr
 				{
 					const meshopt_Meshlet& raw = rawMeshlets[m];
 
+					const meshopt_Bounds bounds = meshopt_computeMeshletBounds(&meshletVertices[raw.vertex_offset], &meshletTriangles[raw.triangle_offset],
+						raw.triangle_count, &lodVertices[0].position.x, lodVertices.Size(), sizeof(Vertex));
+
 					MeshChunkMeshlet& outMeshlet = meshlets[meshletCount++];
 					outMeshlet.vertexOffset = vertexCount;
 					outMeshlet.vertexCount = raw.vertex_count;
 					outMeshlet.indexOffset = outIndexCount;
 					outMeshlet.indexCount = raw.triangle_count * 3;
 					outMeshlet.materialSlot = outSubmesh.materialSlot;
+					outMeshlet.center = Vector3(bounds.center[0], bounds.center[1], bounds.center[2]);
+					outMeshlet.radius = bounds.radius;
+					outMeshlet.cone = PackMeshletCone(bounds);
 
 					for (uint v = 0; v < raw.vertex_count; ++v)
 					{

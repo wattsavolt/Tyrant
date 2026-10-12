@@ -4,6 +4,7 @@
 #include "RendererMacros.h"
 #include "RenderAPI/Pipeline.h"
 #include "RenderAPI/DescriptorSet.h"
+#include "RenderBase/RenderHandles.h"
 
 namespace tyr
 {
@@ -14,6 +15,7 @@ namespace tyr
 	struct Scene;
 	struct RenderResources;
 	struct RenderFrame;
+	struct ShaderCullPushConstants;
 
 	struct GeometryPassArgs
 	{
@@ -21,7 +23,8 @@ namespace tyr
 		RenderRegistry* registry;
 		RenderResources* resources;
 		Scene* scene;
-		GraphicsPipelineHandle pipeline;
+		GraphicsPipelineHandle earlyPipeline;
+		GraphicsPipelineHandle latePipeline;
 		DescriptorSetHandle descriptorSet;
 	};
 
@@ -37,15 +40,17 @@ namespace tyr
 		// sole intended consumer of material-flagged textures, so this is a real, exact
 		// dependency even though GPU-driven culling means it can't be narrowed any further
 		// than "this whole category". GUI texture uploads are unrelated and not declared here.
-		void Setup(RenderGraphBuilder& builder, const RenderFrame& renderFrame);
-		void Execute(CommandList& cmdList);
+		// The late pass also reads the Hi-Z its task shader tests meshlets against.
+		void Setup(RenderGraphBuilder& builder, const RenderFrame& renderFrame, bool late, RenderBufferHandle hizBuffer);
+		void Execute(CommandList& cmdList, bool late, const ShaderCullPushConstants& pushConstants);
 
 	private:
 		Device* m_Device;
 		RenderRegistry* m_Registry;
 		RenderResources* m_Resources;
 		Scene* m_Scene;
-		GraphicsPipelineHandle m_Pipeline;
+		GraphicsPipelineHandle m_EarlyPipeline;
+		GraphicsPipelineHandle m_LatePipeline;
 		DescriptorSetHandle m_DescriptorSet;
 	};
 

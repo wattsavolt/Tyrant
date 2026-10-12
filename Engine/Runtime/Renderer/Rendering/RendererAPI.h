@@ -3,6 +3,7 @@
 #include "Core.h"
 #include "RendererMacros.h"
 #include "RenderBase/RenderHandles.h"
+#include "Rendering/RenderViewport.h"
 
 namespace tyr
 {
@@ -192,6 +193,12 @@ namespace tyr
 		// owned override queued above), since the editor's own viewport display needs to know
 		// which texture to show without waiting for RenderAsync to catch up.
 		void SetTaaEnabled(bool enabled);
+
+		// Copies what the active viewport shows this frame, before the editor's UI is drawn over it.
+		// Returns an ID to collect the pixels with once the GPU has finished, a few frames later.
+		uint RequestViewportCapture();
+		// RGBA8 rows packed top to bottom, in linear colour. Collecting a capture frees it.
+		ViewportCaptureStatus TakeViewportCapture(uint id, Array<uint8>& outPixels, uint& outWidth, uint& outHeight);
 
 	private:
 		void UploadMeshInstance(const MeshInstanceInfo& info, uint index);

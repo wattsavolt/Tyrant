@@ -1,4 +1,5 @@
 #include "Renderer.h"
+#include <algorithm>
 #include <chrono>
 #include "RenderDebug.h"
 #include "RenderSubmissionThread.h"
@@ -66,12 +67,39 @@ namespace tyr
 		// Fixed, worst-case-sized byte regions within the ray-tracing culling staging buffer,
 		// one contiguous block per buffered render frame slot, indexed directly by renderFrameIndex.
 		constexpr size_t c_ActiveInstanceIndicesBytes = sizeof(uint) * RenderConstants::c_MaxMeshInstances;
-		constexpr size_t c_DrawCountResetBytes = sizeof(uint);
+		// The early and late culling passes' draw counts.
+		constexpr size_t c_DrawCountResetBytes = sizeof(uint) * 2;
 		constexpr size_t c_TlasInstancesBytes = RenderConstants::c_TLASInstanceBufferSize;
 		// Also built and uploaded from the worker thread (once ShadowRTPass's selection is known),
 		// so it shares this same staging buffer rather than needing one of its own.
 		constexpr size_t c_ShadowLightSlotMapBytes = sizeof(uint) * RenderConstants::c_ShadowLightSlotMapEntryCount;
 		constexpr size_t c_RTCullingStagingSlotSize = c_ActiveInstanceIndicesBytes + c_DrawCountResetBytes + c_TlasInstancesBytes + c_ShadowLightSlotMapBytes;
+
+		// Matches HiZ.hlsli's HiZLevelCount - enough levels for the last to be 1x1.
+		uint GetHiZLevelCount(uint width, uint height)
+		{
+			const uint largest = width > height ? width : height;
+			uint levelCount = 1;
+			while ((1u << levelCount) < largest)
+			{
+				++levelCount;
+			}
+			TYR_ASSERT(levelCount <= TYR_MAX_HIZ_LEVELS);
+			return levelCount;
+		}
+
+		// How many floats a Hi-Z pyramid for a depth buffer this size holds - see HiZ.hlsli.
+		uint GetHiZSize(uint width, uint height)
+		{
+			uint size = 0;
+			const uint levelCount = GetHiZLevelCount(width, height);
+			for (uint level = 0; level < levelCount; ++level)
+			{
+				const uint shift = level + 1;
+				size += ((width + (1u << shift) - 1) >> shift) * ((height + (1u << shift) - 1) >> shift);
+			}
+			return size;
+		}
 
 		// VkAccelerationStructureInstanceKHR's transform is row-major 3x4 for a column-vector
 		// transform, the transpose of this engine's row-vector Matrix4 - GetColumn4D(r) of the
@@ -455,6 +483,11 @@ namespace tyr
 					{
 						viewportWidth = targets.width;
 						viewportHeight = targets.height;
+						// Buffers are only made on the main thread, so the readback is sized here.
+						if (renderFrame.captureRequested)
+						{
+							EnsureCaptureCapacity(m_RenderFrameIndex, (size_t)targets.width * targets.height * 4);
+						}
 					}
 				}
 
@@ -471,6 +504,7 @@ namespace tyr
 
 					sceneInfo.viewProj = view * projection;
 					renderFrame.overlayViewProj = sceneInfo.viewProj;
+					renderFrame.lodProjectionScale = Math::Abs(projection[1][1]) * 0.5f * (float)viewportHeight;
 
 					// TAA sub-pixel jitter - read via the main-thread-safe mirror, not
 					// m_TaaEnabled directly, since that's only safe to touch from inside
@@ -590,7 +624,7 @@ namespace tyr
 
 		if (m_FirstRender)
 		{
-			constexpr uint bindingCount = 21;
+			constexpr uint bindingCount = 22;
 			BufferBindingInfo bindingInfos[bindingCount];
 			BufferBindingUpdate bindingUpdates[bindingCount];
 
@@ -615,7 +649,7 @@ namespace tyr
 			SetBinding(10, TYR_BINDING_SPOT_LIGHT, m_Resources.spotLightBuffer);
 			SetBinding(11, TYR_BINDING_GUI_VERTEX, m_Resources.guiVertexBuffer);
 			SetBinding(12, TYR_BINDING_ACTIVE_INSTANCE_INDICES, m_Resources.activeMeshInstanceIndexBuffer);
-			SetBinding(13, TYR_BINDING_VISIBLE_INSTANCE_INDICES, m_Resources.visibleInstanceIndexBuffer);
+			SetBinding(13, TYR_BINDING_MESH_DRAWS, m_Resources.meshDrawBuffer);
 			SetBinding(14, TYR_BINDING_INDIRECT_DRAW_COMMANDS, m_Resources.indirectDrawCommandBuffer);
 			SetBinding(15, TYR_BINDING_DRAW_COUNT, m_Resources.drawCountBuffer);
 			SetBinding(16, TYR_BINDING_SHADOW_LIGHT_SLOT_MAP, m_Resources.shadowLightSlotMapBuffer);
@@ -623,6 +657,7 @@ namespace tyr
 			SetBinding(18, TYR_BINDING_DEBUG_LINE_VERTEX, m_Resources.debugLineVertexBuffer);
 			SetBinding(19, TYR_BINDING_SKIN_VERTEX, m_Resources.skinVertexBuffer);
 			SetBinding(20, TYR_BINDING_BONE_MATRIX, m_Resources.boneMatrixBuffer);
+			SetBinding(21, TYR_BINDING_INSTANCE_VISIBILITY, m_Resources.instanceVisibilityBuffer);
 
 			m_Ctx.device->UpdateDescriptorSet(m_Resources.descriptorSet, bindingUpdates, bindingCount);
 
@@ -887,18 +922,18 @@ namespace tyr
 				request.size = uploadSize;
 			}
 
-			// The culling compute shader atomically increments this from 0 - without resetting it
-			// every frame, fewer visible instances than last frame would still redraw stale
-			// entries via the indirect draw.
-			uint zero = 0;
-			RenderResourceUtil::WriteUploadBuffer(stagingBuffer, *m_Ctx.device, drawCountOffset, &zero, sizeof(uint));
+			// The culling passes atomically increment these from 0 - without resetting them every
+			// frame, fewer visible instances than last frame would still redraw stale entries via
+			// the indirect draws.
+			uint zeros[2] = {};
+			RenderResourceUtil::WriteUploadBuffer(stagingBuffer, *m_Ctx.device, drawCountOffset, zeros, c_DrawCountResetBytes);
 
 			BufferUploadRequest& countRequest = m_Data.workerUploadRequests.ExpandOne();
 			countRequest.srcBuffer = m_Resources.rtCullingStagingBuffer;
 			countRequest.srcOffset = drawCountOffset;
 			countRequest.dstBuffer = m_Resources.drawCountBuffer;
 			countRequest.dstOffset = 0;
-			countRequest.size = sizeof(uint);
+			countRequest.size = c_DrawCountResetBytes;
 		}
 
 		// Rebuild the TLAS's instance buffer from this same active list. An instance whose mesh
@@ -1031,7 +1066,7 @@ namespace tyr
 		m_TransferPass->Execute(cmdList, m_RenderFrames[renderFrameIndex], m_Data);
 	}
 
-	void Renderer::SetupCullingPass(RenderGraphBuilder& builder)
+	void Renderer::SetupCullingPass(RenderGraphBuilder& builder, bool late, uint renderFrameIndex)
 	{
 		const PipelineStage cullingStage = PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 
@@ -1041,24 +1076,85 @@ namespace tyr
 		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.meshInstanceBuffer), cullingStage, BARRIER_ACCESS_SHADER_READ_BIT);
 		builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.activeMeshInstanceIndexBuffer), cullingStage, BARRIER_ACCESS_SHADER_READ_BIT);
 
-		builder.WriteBuffer(m_Registry.GetBuffer(m_Resources.visibleInstanceIndexBuffer), cullingStage, BARRIER_ACCESS_SHADER_WRITE_BIT);
+		builder.WriteBuffer(m_Registry.GetBuffer(m_Resources.meshDrawBuffer), cullingStage, BARRIER_ACCESS_SHADER_WRITE_BIT);
 		builder.WriteBuffer(m_Registry.GetBuffer(m_Resources.indirectDrawCommandBuffer), cullingStage, BARRIER_ACCESS_SHADER_WRITE_BIT);
-		builder.WriteBuffer(m_Registry.GetBuffer(m_Resources.drawCountBuffer), cullingStage, BARRIER_ACCESS_SHADER_WRITE_BIT);
+		builder.WriteBuffer(m_Registry.GetBuffer(m_Resources.drawCountBuffer), cullingStage,
+			static_cast<BarrierAccess>(BARRIER_ACCESS_SHADER_READ_BIT | BARRIER_ACCESS_SHADER_WRITE_BIT));
+
+		// Only the late pass records what's visible, against the Hi-Z built after the early pass.
+		if (late)
+		{
+			builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.hizBuffers[renderFrameIndex]), cullingStage, BARRIER_ACCESS_SHADER_READ_BIT);
+			builder.WriteBuffer(m_Registry.GetBuffer(m_Resources.instanceVisibilityBuffer), cullingStage,
+				static_cast<BarrierAccess>(BARRIER_ACCESS_SHADER_READ_BIT | BARRIER_ACCESS_SHADER_WRITE_BIT));
+		}
+		else
+		{
+			builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.instanceVisibilityBuffer), cullingStage, BARRIER_ACCESS_SHADER_READ_BIT);
+		}
 	}
 
-	void Renderer::RecordCullingPass(CommandList& cmdList, uint renderFrameIndex)
+	ShaderCullPushConstants Renderer::MakeCullPushConstants(uint renderFrameIndex)
 	{
-		Scene& scene = m_Data.scenePool[m_Data.activeScene.h];
-		const uint activeInstanceCount = scene.content.meshInstances.Size();
+		const Scene& scene = m_Data.scenePool[m_Data.activeScene.h];
 
-		cmdList.BindComputePipeline(m_Resources.cullingPipeline);
-		cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.cullingPipeline);
-		cmdList.PushConstants(m_Resources.cullingPipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint), &activeInstanceCount);
+		ShaderCullPushConstants pushConstants{};
+		pushConstants.activeInstanceCount = scene.content.meshInstances.Size();
+		pushConstants.lodScale = 1.0f / GetLodErrorPerDistance(renderFrameIndex);
+		pushConstants.renderFrameIndex = renderFrameIndex;
+		if (scene.renderViewport)
+		{
+			const RenderViewportTextureData& viewportData = m_RenderViewportPool[scene.renderViewport.h].textureData[renderFrameIndex];
+			pushConstants.depthWidth = viewportData.width;
+			pushConstants.depthHeight = viewportData.height;
+		}
+		return pushConstants;
+	}
 
-		// Matches CullInstancesCS.hlsl's [numthreads(64, 1, 1)] - a zero count still dispatches
+	float Renderer::GetLodErrorPerDistance(uint renderFrameIndex)
+	{
+		// A negative bias allows less than a pixel of error, a positive one more. One pixel covers
+		// 1 / lodProjectionScale units per unit of distance.
+		const float allowedPixelError = Math::Pow(2.0f, m_QualitySettings.lodBias);
+		return allowedPixelError / std::max(m_RenderFrames[renderFrameIndex].lodProjectionScale, 1e-6f);
+	}
+
+	void Renderer::RecordCullingPass(CommandList& cmdList, uint renderFrameIndex, bool late)
+	{
+		const ComputePipelineHandle pipeline = late ? m_Resources.cullingLatePipeline : m_Resources.cullingEarlyPipeline;
+		const ShaderCullPushConstants pushConstants = MakeCullPushConstants(renderFrameIndex);
+
+		cmdList.BindComputePipeline(pipeline);
+		cmdList.BindDescriptorSet(m_Resources.descriptorSet, pipeline);
+		cmdList.PushConstants(pipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstants), &pushConstants);
+
+		// Matches CullInstances.hlsli's [numthreads(64, 1, 1)] - a zero count still dispatches
 		// zero groups correctly rather than needing a special case here.
-		const uint groupCount = (activeInstanceCount + 63) / 64;
+		const uint groupCount = (pushConstants.activeInstanceCount + 63) / 64;
 		cmdList.Dispatch(groupCount, 1, 1);
+	}
+
+	void Renderer::RecordHiZPass(CommandList& cmdList, uint renderFrameIndex, uint level)
+	{
+		const RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
+
+		ShaderHiZPushConstants pushConstants{};
+		pushConstants.depthIndex = viewportData->depthBuffer.h.index;
+		pushConstants.renderFrameIndex = renderFrameIndex;
+		pushConstants.depthWidth = viewportData->width;
+		pushConstants.depthHeight = viewportData->height;
+		pushConstants.level = level;
+
+		const ComputePipelineHandle pipeline = level == 0 ? m_Resources.hizDepthPipeline : m_Resources.hizDownsamplePipeline;
+		cmdList.BindComputePipeline(pipeline);
+		cmdList.BindDescriptorSet(m_Resources.descriptorSet, pipeline);
+		cmdList.PushConstants(pipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstants), &pushConstants);
+
+		// Matches HiZDepthCS.hlsl and HiZDownsampleCS.hlsl's [numthreads(8, 8, 1)].
+		const uint shift = level + 1;
+		const uint levelWidth = (viewportData->width + (1u << shift) - 1) >> shift;
+		const uint levelHeight = (viewportData->height + (1u << shift) - 1) >> shift;
+		cmdList.Dispatch((levelWidth + 7) / 8, (levelHeight + 7) / 8, 1);
 	}
 
 	void Renderer::SetupSkinningPass(RenderGraphBuilder& builder)
@@ -1108,7 +1204,7 @@ namespace tyr
 		return &m_RenderViewportPool[scene.renderViewport.h].textureData[renderFrameIndex];
 	}
 
-	void Renderer::RecordGeometryPass(CommandList& cmdList, uint renderFrameIndex)
+	void Renderer::RecordGeometryPass(CommandList& cmdList, uint renderFrameIndex, bool late)
 	{
 		// Read the active scene's own RenderViewport directly, in place, rather than a per-frame
 		// copy - safe from a worker thread since nothing else touches this slot's data
@@ -1158,22 +1254,25 @@ namespace tyr
 		renderingInfo.viewMask = 0;
 		renderingInfo.layerCount = 1;
 
+		// The late pass draws on top of what the early pass drew.
+		const AttachmentLoadOp loadOp = late ? AttachmentLoadOp::Load : AttachmentLoadOp::Clear;
+
 		RenderingAttachmentInfo colourAttachments[3];
-		colourAttachments[0].loadOp = AttachmentLoadOp::Clear;
+		colourAttachments[0].loadOp = loadOp;
 		colourAttachments[0].storeOp = AttachmentStoreOp::Store;
 		colourAttachments[0].resolveMode = RESOLVE_MODE_NONE;
 		colourAttachments[0].imageLayout = gbufferAlbedoAO.imageLayout;
 		colourAttachments[0].clearValue.colour = { 0.0f, 0.0f, 0.0f, 0.0f };
 		colourAttachments[0].imageView = gbufferAlbedoAO.imageView;
 
-		colourAttachments[1].loadOp = AttachmentLoadOp::Clear;
+		colourAttachments[1].loadOp = loadOp;
 		colourAttachments[1].storeOp = AttachmentStoreOp::Store;
 		colourAttachments[1].resolveMode = RESOLVE_MODE_NONE;
 		colourAttachments[1].imageLayout = gbufferNormalRoughMetal.imageLayout;
 		colourAttachments[1].clearValue.colour = { 0.0f, 0.0f, 0.0f, 0.0f };
 		colourAttachments[1].imageView = gbufferNormalRoughMetal.imageView;
 
-		colourAttachments[2].loadOp = AttachmentLoadOp::Clear;
+		colourAttachments[2].loadOp = loadOp;
 		colourAttachments[2].storeOp = AttachmentStoreOp::Store;
 		colourAttachments[2].resolveMode = RESOLVE_MODE_NONE;
 		colourAttachments[2].imageLayout = gbufferMotion.imageLayout;
@@ -1184,7 +1283,7 @@ namespace tyr
 		renderingInfo.colourAttachments = colourAttachments;
 
 		renderingInfo.hasDepthAttachment = true;
-		renderingInfo.depthAttachment.loadOp = AttachmentLoadOp::Clear;
+		renderingInfo.depthAttachment.loadOp = loadOp;
 		renderingInfo.depthAttachment.storeOp = AttachmentStoreOp::Store;
 		renderingInfo.depthAttachment.resolveMode = RESOLVE_MODE_NONE;
 		renderingInfo.depthAttachment.imageLayout = depthBuffer.imageLayout;
@@ -1195,7 +1294,7 @@ namespace tyr
 		cmdList.BeginRendering(renderingInfo);
 		cmdList.SetViewport(&viewport, 1);
 		cmdList.SetScissor(&renderingInfo.renderArea, 1);
-		m_GeometryPass->Execute(cmdList);
+		m_GeometryPass->Execute(cmdList, late, MakeCullPushConstants(renderFrameIndex));
 		cmdList.EndRendering();
 	}
 
@@ -1574,7 +1673,8 @@ namespace tyr
 			geometryArgs.registry = &m_Registry;
 			geometryArgs.resources = &m_Resources;
 			geometryArgs.scene = &scene;
-			geometryArgs.pipeline = m_Resources.geometryGraphicsPipeline;
+			geometryArgs.earlyPipeline = m_Resources.geometryEarlyPipeline;
+			geometryArgs.latePipeline = m_Resources.geometryLatePipeline;
 			geometryArgs.descriptorSet = m_Resources.descriptorSet;
 			m_GeometryPass->Recreate(geometryArgs);
 
@@ -1599,7 +1699,7 @@ namespace tyr
 			m_Resources.vertexBuffer, m_Resources.indexBuffer, m_Resources.meshInstanceBuffer,
 			m_Resources.materialBuffer, m_Resources.directionalLightBuffer, m_Resources.pointLightBuffer,
 			m_Resources.spotLightBuffer, m_Resources.sceneInfoBuffer,
-			m_Resources.activeMeshInstanceIndexBuffer, m_Resources.visibleInstanceIndexBuffer,
+			m_Resources.activeMeshInstanceIndexBuffer, m_Resources.meshDrawBuffer, m_Resources.instanceVisibilityBuffer,
 			m_Resources.indirectDrawCommandBuffer, m_Resources.drawCountBuffer,
 			m_Resources.tlasInstanceBuffer, m_Resources.shadowLightSlotMapBuffer, m_Resources.lightIndexBuffer,
 			m_Resources.skinVertexBuffer, m_Resources.boneMatrixBuffer
@@ -1725,18 +1825,19 @@ namespace tyr
 					RenderGraphPhase::Geometry, CommandQueueType::CQ_GRAPHICS);
 			}
 
-			// Same phase as "Geometry" below and added first, so this always executes (and has
-			// its buffer usages recorded) before GeometryPass's own indirect draw reads what this
-			// pass wrote.
-			graph.AddPass("Culling",
-				[this](RenderGraphBuilder& builder) { SetupCullingPass(builder); },
-				[this, renderFrameIndex](CommandList& cl) { RecordCullingPass(cl, renderFrameIndex); },
+			// Two-pass occlusion culling, all in one phase and added in order so each pass reads what
+			// the one before wrote. The early passes draw what was visible last frame, a Hi-Z is built
+			// from that depth, then the late passes draw whatever the early ones missed.
+			graph.AddPass("CullingEarly",
+				[this, renderFrameIndex](RenderGraphBuilder& builder) { SetupCullingPass(builder, false, renderFrameIndex); },
+				[this, renderFrameIndex](CommandList& cl) { RecordCullingPass(cl, renderFrameIndex, false); },
 				RenderGraphPhase::Geometry, CommandQueueType::CQ_GRAPHICS);
 
-			graph.AddPass("Geometry",
-				[this, gbufferAlbedoAO, gbufferNormalRoughMetal, gbufferMotion, depthBuffer, &renderFrame](RenderGraphBuilder& builder)
+			const RenderBufferHandle hizBuffer = m_Resources.hizBuffers[renderFrameIndex];
+			graph.AddPass("GeometryEarly",
+				[this, gbufferAlbedoAO, gbufferNormalRoughMetal, gbufferMotion, depthBuffer, &renderFrame, hizBuffer](RenderGraphBuilder& builder)
 				{
-					m_GeometryPass->Setup(builder, renderFrame);
+					m_GeometryPass->Setup(builder, renderFrame, false, hizBuffer);
 					if (!gbufferAlbedoAO)
 						return;
 					builder.WriteTexture(*gbufferAlbedoAO, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
@@ -1744,8 +1845,54 @@ namespace tyr
 					builder.WriteTexture(*gbufferMotion, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
 					builder.WriteTexture(*depthBuffer, PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, BARRIER_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
 				},
-				[this, renderFrameIndex](CommandList& cl) { RecordGeometryPass(cl, renderFrameIndex); },
+				[this, renderFrameIndex](CommandList& cl) { RecordGeometryPass(cl, renderFrameIndex, false); },
 				RenderGraphPhase::Geometry, CommandQueueType::CQ_GRAPHICS);
+
+			// Without viewport textures nothing is drawn, so there's no depth to build a Hi-Z from.
+			if (hasViewportTextures)
+			{
+				// Created alongside the slot's viewport textures.
+				TYR_ASSERT(hizBuffer);
+				graph.RegisterBuffer(&m_Registry.GetBuffer(hizBuffer));
+
+				const uint hizLevelCount = GetHiZLevelCount(viewportData->width, viewportData->height);
+				for (uint level = 0; level < hizLevelCount; ++level)
+				{
+					graph.AddPass("HiZ",
+						[this, depthBuffer, hizBuffer, level](RenderGraphBuilder& builder)
+						{
+							if (level == 0)
+							{
+								builder.ReadTexture(*depthBuffer, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+							}
+							// Each level reads the one before it, so every level needs the last one's writes finished.
+							builder.WriteBuffer(m_Registry.GetBuffer(hizBuffer), PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+								static_cast<BarrierAccess>(BARRIER_ACCESS_SHADER_READ_BIT | BARRIER_ACCESS_SHADER_WRITE_BIT));
+						},
+						[this, renderFrameIndex, level](CommandList& cl) { RecordHiZPass(cl, renderFrameIndex, level); },
+						RenderGraphPhase::Geometry, CommandQueueType::CQ_GRAPHICS);
+				}
+
+				graph.AddPass("CullingLate",
+					[this, renderFrameIndex](RenderGraphBuilder& builder) { SetupCullingPass(builder, true, renderFrameIndex); },
+					[this, renderFrameIndex](CommandList& cl) { RecordCullingPass(cl, renderFrameIndex, true); },
+					RenderGraphPhase::Geometry, CommandQueueType::CQ_GRAPHICS);
+
+				// Loads what the early pass drew, so it reads the targets as well as writing them.
+				const BarrierAccess colourAccess = static_cast<BarrierAccess>(BARRIER_ACCESS_COLOR_ATTACHMENT_READ_BIT | BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+				const BarrierAccess depthAccess = static_cast<BarrierAccess>(BARRIER_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | BARRIER_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+				graph.AddPass("GeometryLate",
+					[this, gbufferAlbedoAO, gbufferNormalRoughMetal, gbufferMotion, depthBuffer, &renderFrame, hizBuffer, colourAccess, depthAccess](RenderGraphBuilder& builder)
+					{
+						m_GeometryPass->Setup(builder, renderFrame, true, hizBuffer);
+						builder.WriteTexture(*gbufferAlbedoAO, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, colourAccess, IMAGE_LAYOUT_GENERAL);
+						builder.WriteTexture(*gbufferNormalRoughMetal, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, colourAccess, IMAGE_LAYOUT_GENERAL);
+						builder.WriteTexture(*gbufferMotion, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, colourAccess, IMAGE_LAYOUT_GENERAL);
+						builder.WriteTexture(*depthBuffer, PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, depthAccess, IMAGE_LAYOUT_GENERAL);
+					},
+					[this, renderFrameIndex](CommandList& cl) { RecordGeometryPass(cl, renderFrameIndex, true); },
+					RenderGraphPhase::Geometry, CommandQueueType::CQ_GRAPHICS);
+			}
 
 			// Every BLAS this tick's build batch will touch, plus the TLAS rebuilt every tick -
 			// registered here so both passes' usage declarations below have a valid index.
@@ -1805,7 +1952,7 @@ namespace tyr
 					},
 					[this, renderFrameIndex, shadowViewportWidth, shadowViewportHeight](CommandList& cl)
 					{
-						m_ShadowRTPass->Execute(cl, renderFrameIndex, shadowViewportWidth, shadowViewportHeight);
+						m_ShadowRTPass->Execute(cl, renderFrameIndex, shadowViewportWidth, shadowViewportHeight, GetLodErrorPerDistance(renderFrameIndex));
 					},
 					RenderGraphPhase::RayTracing, CommandQueueType::CQ_GRAPHICS);
 
@@ -1967,6 +2114,33 @@ namespace tyr
 				displayTexture = overlayColourTexture;
 			}
 
+			// Copies the viewport's image back to the CPU, then makes the copy visible to it once
+			// the frame has finished.
+			ViewportCapture& capture = m_Captures[renderFrameIndex];
+			if (renderFrame.captureRequested && displayTexture && capture.buffer
+				&& capture.capacity >= (size_t)viewportData->width * viewportData->height * 4)
+			{
+				TYR_ASSERT(displayTexture->info.format == PixelFormat::PF_R8G8B8A8_UNORM);
+				capture.copied = true;
+				capture.width = viewportData->width;
+				capture.height = viewportData->height;
+
+				RenderBuffer& captureBuffer = m_Registry.GetBuffer(capture.buffer);
+				graph.RegisterBuffer(&captureBuffer);
+				graph.AddPass("ViewportCapture",
+					[displayTexture, &captureBuffer](RenderGraphBuilder& builder)
+					{
+						builder.ReadTexture(*displayTexture, PIPELINE_STAGE_TRANSFER_BIT, BARRIER_ACCESS_TRANSFER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+						builder.WriteBuffer(captureBuffer, PIPELINE_STAGE_TRANSFER_BIT, BARRIER_ACCESS_TRANSFER_WRITE_BIT);
+					},
+					[this, renderFrameIndex, displayTexture](CommandList& cl) { RecordViewportCapture(cl, renderFrameIndex, *displayTexture); },
+					RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
+				graph.AddPass("ViewportCaptureHostRead",
+					[&captureBuffer](RenderGraphBuilder& builder) { builder.ReadBuffer(captureBuffer, PIPELINE_STAGE_HOST_BIT, BARRIER_ACCESS_HOST_READ_BIT); },
+					[](CommandList&) {},
+					RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
+			}
+
 			// Always added, even on a frame with nothing to draw - this is the only pass that
 			// touches the swap chain image.
 			graph.AddPass("GUI",
@@ -2119,6 +2293,14 @@ namespace tyr
 			}
 			m_Ctx.device->WaitForSemaphore(graphicsTimelineSemaphore, syncData->completionTimelineValue, UINT64_MAX);
 		}
+
+		// The slot's last frame has finished, so any capture it took is readable now.
+		ViewportCapture& capture = m_Captures[m_RenderFrameIndex];
+		if (capture.state == ViewportCapture::State::Requested)
+		{
+			capture.state = capture.copied ? ViewportCapture::State::Ready : ViewportCapture::State::Failed;
+		}
+		capture.copied = false;
 
 		// Resource uploads share the graphics queue for now too, in the absence of a transfer
 		// queue. Every upload allocation still live at this point was already signalled above,
@@ -2466,6 +2648,8 @@ namespace tyr
 		targets.height = height;
 		targets.isNew = true;
 
+		EnsureHiZCapacity(slot, width, height);
+
 		SyncViewportOverlay(viewport, slot);
 	}
 
@@ -2632,10 +2816,18 @@ namespace tyr
 		{
 			ShaderDesc desc;
 			desc.entryPoint = "main";
-			desc.fileName = "MeshAS";
+			desc.fileName = "MeshEarlyAS";
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_TASK_BIT;
-			m_Resources.geometryTaskShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+			m_Resources.geometryEarlyTaskShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "MeshLateAS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_TASK_BIT;
+			m_Resources.geometryLateTaskShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
 		}
 		{
 			ShaderDesc desc;
@@ -2664,10 +2856,34 @@ namespace tyr
 		{
 			ShaderDesc desc;
 			desc.entryPoint = "main";
-			desc.fileName = "CullInstancesCS";
+			desc.fileName = "CullInstancesEarlyCS";
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_COMPUTE_BIT;
-			m_Resources.cullingComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+			m_Resources.cullingEarlyComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "CullInstancesLateCS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_COMPUTE_BIT;
+			m_Resources.cullingLateComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "HiZDepthCS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_COMPUTE_BIT;
+			m_Resources.hizDepthComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "HiZDownsampleCS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_COMPUTE_BIT;
+			m_Resources.hizDownsampleComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
 		}
 		{
 			ShaderDesc desc;
@@ -2745,11 +2961,15 @@ namespace tyr
 
 	void Renderer::DeleteShaders()
 	{
-		m_Ctx.device->DeleteShaderModule(m_Resources.geometryTaskShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.geometryEarlyTaskShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.geometryLateTaskShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.geometryMeshShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.geometryPixelShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.lightingComputeShader);
-		m_Ctx.device->DeleteShaderModule(m_Resources.cullingComputeShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.cullingEarlyComputeShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.cullingLateComputeShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.hizDepthComputeShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.hizDownsampleComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.skinningComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.shadowRTComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.shadowDenoiseComputeShader);
@@ -2861,11 +3081,11 @@ namespace tyr
 			{
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
 				poolSize.descriptorType = DescriptorType::StorageBuffer;
-				// 11 original + activeMeshInstanceIndexBuffer/visibleInstanceIndexBuffer/
-				// indirectDrawCommandBuffer/drawCountBuffer for GPU-driven instance culling +
-				// shadowLightSlotMapBuffer for ray-traced shadows + lightIndexBuffer +
-				// debugLineVertexBuffer + skinVertexBuffer/boneMatrixBuffer.
-				poolSize.descriptorCount = 20;
+				// 11 original + activeMeshInstanceIndexBuffer/meshDrawBuffer/indirectDrawCommandBuffer/
+				// drawCountBuffer/instanceVisibilityBuffer for GPU-driven culling + one Hi-Z buffer
+				// per buffered frame slot + shadowLightSlotMapBuffer for ray-traced shadows +
+				// lightIndexBuffer + debugLineVertexBuffer + skinVertexBuffer/boneMatrixBuffer.
+				poolSize.descriptorCount = 21 + RenderConstants::c_BufferedFrameCount;
 			}
 			{
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
@@ -2949,11 +3169,11 @@ namespace tyr
 			AddBinding(TYR_BINDING_LIGHTING_OUTPUT, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 
-			// GPU-driven instance culling - compute-only except TYR_BINDING_VISIBLE_INSTANCE_INDICES,
-			// which the task stage also reads per draw via SV_DrawIndex.
+			// GPU-driven culling - compute-only except TYR_BINDING_MESH_DRAWS, which the task stage
+			// also reads per draw via SV_DrawIndex.
+			const ShaderStage computeAndTaskStages = static_cast<ShaderStage>(SHADER_STAGE_COMPUTE_BIT | SHADER_STAGE_TASK_BIT);
 			AddBinding(TYR_BINDING_ACTIVE_INSTANCE_INDICES, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
-			AddBinding(TYR_BINDING_VISIBLE_INSTANCE_INDICES, DescriptorType::StorageBuffer, 1,
-				static_cast<ShaderStage>(SHADER_STAGE_COMPUTE_BIT | SHADER_STAGE_TASK_BIT));
+			AddBinding(TYR_BINDING_MESH_DRAWS, DescriptorType::StorageBuffer, 1, computeAndTaskStages);
 			AddBinding(TYR_BINDING_INDIRECT_DRAW_COMMANDS, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 			AddBinding(TYR_BINDING_DRAW_COUNT, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 
@@ -2976,6 +3196,9 @@ namespace tyr
 			AddBinding(TYR_BINDING_DEBUG_LINE_VERTEX, DescriptorType::StorageBuffer, 1, SHADER_STAGE_VERTEX_BIT);
 			AddBinding(TYR_BINDING_SKIN_VERTEX, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 			AddBinding(TYR_BINDING_BONE_MATRIX, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
+			AddBinding(TYR_BINDING_INSTANCE_VISIBILITY, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
+			// Rebound when a slot's buffer grows, like TYR_BINDING_LIGHTING_OUTPUT.
+			AddBinding(TYR_BINDING_HIZ, DescriptorType::StorageBuffer, RenderConstants::c_BufferedFrameCount, computeAndTaskStages, lightingOutputFlags);
 
 			m_Resources.descriptorSetLayout = m_Ctx.device->CreateDescriptorSetLayout(layoutDesc);
 
@@ -2988,9 +3211,13 @@ namespace tyr
 			m_Resources.descriptorSet = m_Ctx.device->CreateDescriptorSet(setDesc);
 
 			desc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
-			// No push constant range needed any more - MeshAS.hlsl resolves its mesh instance
-			// index from CullInstancesCS.hlsl's compacted buffer via SV_DrawIndex instead (a
-			// single indirect multi-draw call can't vary push constants per sub-draw anyway).
+			// The task shaders' culling inputs. Each draw's own instance comes from the culling
+			// pass's draw buffer via SV_DrawIndex instead, since one indirect multi-draw call can't
+			// vary push constants per sub-draw.
+			PushConstantRange& taskPushConstantRange = desc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
+			taskPushConstantRange.stageFlags = SHADER_STAGE_TASK_BIT;
+			taskPushConstantRange.offset = 0;
+			taskPushConstantRange.size = sizeof(ShaderCullPushConstants);
 		}
 
 		desc.topology = PrimitiveTopology::TriangeList;
@@ -3051,11 +3278,14 @@ namespace tyr
 		desc.dynamicRendering.stencilAttachmentFormat = PF_UNKNOWN;
 		desc.dynamicRendering.viewMask = 0;
 
-		desc.shaders.Add(m_Resources.geometryTaskShader);
+		desc.shaders.Add(m_Resources.geometryEarlyTaskShader);
 		desc.shaders.Add(m_Resources.geometryMeshShader);
 		desc.shaders.Add(m_Resources.geometryPixelShader);
 
-		m_Resources.geometryGraphicsPipeline = m_Ctx.device->CreateGraphicsPipeline(desc);
+		m_Resources.geometryEarlyPipeline = m_Ctx.device->CreateGraphicsPipeline(desc);
+
+		desc.shaders[0] = m_Resources.geometryLateTaskShader;
+		m_Resources.geometryLatePipeline = m_Ctx.device->CreateGraphicsPipeline(desc);
 
 		// GUI pipeline - reuses the same bindless descriptor set layout, but is otherwise a
 		// completely separate pipeline: vertex-pulling, alpha blending on, no depth testing,
@@ -3160,19 +3390,34 @@ namespace tyr
 
 		m_Resources.lightingPipeline = m_Ctx.device->CreateComputePipeline(lightingDesc);
 
-		// GPU-driven instance frustum culling - runs just before the geometry pass, compacting
-		// visible instances into the indirect draw buffers it then draws from directly.
+		// GPU-driven culling - each runs just before its geometry pass, compacting the instances it
+		// draws into the indirect draw buffers that pass then draws from directly.
 		ComputePipelineDesc cullingDesc;
 		cullingDesc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
 
 		PushConstantRange& cullingPushConstantRange = cullingDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
 		cullingPushConstantRange.stageFlags = SHADER_STAGE_COMPUTE_BIT;
 		cullingPushConstantRange.offset = 0;
-		cullingPushConstantRange.size = sizeof(uint); // activeInstanceCount
+		cullingPushConstantRange.size = sizeof(ShaderCullPushConstants);
 
-		cullingDesc.shader = m_Resources.cullingComputeShader;
+		cullingDesc.shader = m_Resources.cullingEarlyComputeShader;
+		m_Resources.cullingEarlyPipeline = m_Ctx.device->CreateComputePipeline(cullingDesc);
+		cullingDesc.shader = m_Resources.cullingLateComputeShader;
+		m_Resources.cullingLatePipeline = m_Ctx.device->CreateComputePipeline(cullingDesc);
 
-		m_Resources.cullingPipeline = m_Ctx.device->CreateComputePipeline(cullingDesc);
+		// Builds the Hi-Z pyramid between the early and late geometry passes, one level per dispatch.
+		ComputePipelineDesc hizDesc;
+		hizDesc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
+
+		PushConstantRange& hizPushConstantRange = hizDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
+		hizPushConstantRange.stageFlags = SHADER_STAGE_COMPUTE_BIT;
+		hizPushConstantRange.offset = 0;
+		hizPushConstantRange.size = sizeof(ShaderHiZPushConstants);
+
+		hizDesc.shader = m_Resources.hizDepthComputeShader;
+		m_Resources.hizDepthPipeline = m_Ctx.device->CreateComputePipeline(hizDesc);
+		hizDesc.shader = m_Resources.hizDownsampleComputeShader;
+		m_Resources.hizDownsamplePipeline = m_Ctx.device->CreateComputePipeline(hizDesc);
 
 		// Skins one skinned mesh instance per dispatch.
 		ComputePipelineDesc skinningDesc;
@@ -3241,12 +3486,16 @@ namespace tyr
 
 	void Renderer::DeletePipelines()
 	{
-		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.geometryGraphicsPipeline);
+		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.geometryEarlyPipeline);
+		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.geometryLatePipeline);
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.guiPipeline);
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.debugLineOnTopPipeline);
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.debugLineDepthTestedPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.lightingPipeline);
-		m_Ctx.device->DeleteComputePipeline(m_Resources.cullingPipeline);
+		m_Ctx.device->DeleteComputePipeline(m_Resources.cullingEarlyPipeline);
+		m_Ctx.device->DeleteComputePipeline(m_Resources.cullingLatePipeline);
+		m_Ctx.device->DeleteComputePipeline(m_Resources.hizDepthPipeline);
+		m_Ctx.device->DeleteComputePipeline(m_Resources.hizDownsamplePipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.skinningPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.shadowRTPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.shadowDenoisePipeline);
@@ -3374,26 +3623,34 @@ namespace tyr
 			desc.usage = RenderBufferUsage::Storage;
 			m_Resources.activeMeshInstanceIndexBuffer = m_Registry.CreateBuffer(desc);
 		}
+		// The early and late culling passes each have their own half of the next three.
 		{
 			RenderBufferDesc desc;
-			desc.debugName = "Visible Instance Index Buffer";
-			desc.size = sizeof(uint) * RenderConstants::c_MaxMeshInstances;
+			desc.debugName = "Mesh Draw Buffer";
+			desc.size = sizeof(ShaderMeshDraw) * RenderConstants::c_MaxMeshInstances * 2;
 			desc.usage = RenderBufferUsage::Storage;
-			m_Resources.visibleInstanceIndexBuffer = m_Registry.CreateBuffer(desc);
+			m_Resources.meshDrawBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
 			RenderBufferDesc desc;
 			desc.debugName = "Indirect Draw Command Buffer";
-			desc.size = sizeof(uint) * 3 * RenderConstants::c_MaxMeshInstances; // VkDrawMeshTasksIndirectCommandEXT
+			desc.size = sizeof(uint) * 3 * RenderConstants::c_MaxMeshInstances * 2; // VkDrawMeshTasksIndirectCommandEXT
 			desc.usage = RenderBufferUsage::Indirect;
 			m_Resources.indirectDrawCommandBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
 			RenderBufferDesc desc;
 			desc.debugName = "Draw Count Buffer";
-			desc.size = sizeof(uint);
+			desc.size = sizeof(uint) * 2;
 			desc.usage = RenderBufferUsage::Indirect;
 			m_Resources.drawCountBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
+			desc.debugName = "Instance Visibility Buffer";
+			desc.size = sizeof(uint) * RenderConstants::c_MaxMeshInstances;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.instanceVisibilityBuffer = m_Registry.CreateBuffer(desc);
 		}
 		{
 			RenderBufferDesc desc;
@@ -3466,7 +3723,22 @@ namespace tyr
 		m_Registry.DeleteBuffer(m_Resources.debugLineVertexBuffer);
 		m_Registry.DeleteBuffer(m_Resources.guiIndexBuffer);
 		m_Registry.DeleteBuffer(m_Resources.activeMeshInstanceIndexBuffer);
-		m_Registry.DeleteBuffer(m_Resources.visibleInstanceIndexBuffer);
+		m_Registry.DeleteBuffer(m_Resources.meshDrawBuffer);
+		m_Registry.DeleteBuffer(m_Resources.instanceVisibilityBuffer);
+		for (RenderBufferHandle hizBuffer : m_Resources.hizBuffers)
+		{
+			if (hizBuffer)
+			{
+				m_Registry.DeleteBuffer(hizBuffer);
+			}
+		}
+		for (const ViewportCapture& capture : m_Captures)
+		{
+			if (capture.buffer)
+			{
+				m_Registry.DeleteBuffer(capture.buffer);
+			}
+		}
 		m_Registry.DeleteBuffer(m_Resources.indirectDrawCommandBuffer);
 		m_Registry.DeleteBuffer(m_Resources.drawCountBuffer);
 		m_Registry.DeleteBuffer(m_Resources.shadowLightSlotMapBuffer);
@@ -3571,6 +3843,111 @@ namespace tyr
 		m_BLASScratchCapacity = requiredPerSlotSize;
 	}
 
+	uint Renderer::RequestViewportCapture()
+	{
+		ViewportCapture& capture = m_Captures[m_RenderFrameIndex];
+		capture.id = m_NextCaptureID++;
+		capture.state = ViewportCapture::State::Requested;
+		GetRenderFrame().captureRequested = true;
+		return capture.id;
+	}
+
+	ViewportCaptureStatus Renderer::TakeViewportCapture(uint id, Array<uint8>& outPixels, uint& outWidth, uint& outHeight)
+	{
+		for (ViewportCapture& capture : m_Captures)
+		{
+			if (capture.id != id || capture.state == ViewportCapture::State::None)
+			{
+				continue;
+			}
+			if (capture.state == ViewportCapture::State::Requested)
+			{
+				return ViewportCaptureStatus::Waiting;
+			}
+
+			const bool ready = capture.state == ViewportCapture::State::Ready;
+			capture.state = ViewportCapture::State::None;
+			if (!ready)
+			{
+				return ViewportCaptureStatus::Failed;
+			}
+
+			const size_t size = (size_t)capture.width * capture.height * 4;
+			outPixels.Resize((uint)size);
+			memcpy(outPixels.Data(), m_Registry.GetBuffer(capture.buffer).mappedMemory, size);
+			outWidth = capture.width;
+			outHeight = capture.height;
+			return ViewportCaptureStatus::Ready;
+		}
+		return ViewportCaptureStatus::Failed;
+	}
+
+	void Renderer::RecordViewportCapture(CommandList& cmdList, uint renderFrameIndex, const Texture& source)
+	{
+		const ViewportCapture& capture = m_Captures[renderFrameIndex];
+
+		// Rows packed one after another, as the texture's own width.
+		BufferImageCopyInfo region{};
+		region.bufferOffset = 0;
+		region.bufferRowLength = 0;
+		region.bufferImageHeight = 0;
+		region.imageSubresource.aspect = SUBRESOURCE_ASPECT_COLOUR_BIT;
+		region.imageSubresource.mipLevel = 0;
+		region.imageSubresource.baseArrayLayer = 0;
+		region.imageSubresource.arrayLayerCount = 1;
+		region.imageOffset = { 0, 0, 0 };
+		region.imageExtent = { capture.width, capture.height, 1 };
+		cmdList.CopyImageToBuffer(source.image, m_Registry.GetBuffer(capture.buffer).buffer, IMAGE_LAYOUT_GENERAL, &region, 1);
+	}
+
+	void Renderer::EnsureCaptureCapacity(uint slot, size_t size)
+	{
+		ViewportCapture& capture = m_Captures[slot];
+		if (size <= capture.capacity)
+		{
+			return;
+		}
+
+		// Released with this frame's other deletes, once the GPU is done with it.
+		if (capture.buffer)
+		{
+			GetRenderFrame().buffersToDelete.Add(capture.buffer);
+		}
+
+		RenderBufferDesc desc;
+		desc.debugName = "Viewport Capture Buffer";
+		desc.size = size;
+		desc.usage = RenderBufferUsage::Readback;
+		capture.buffer = m_Registry.CreateBuffer(desc);
+		capture.capacity = size;
+	}
+
+	void Renderer::EnsureHiZCapacity(uint slot, uint width, uint height)
+	{
+		const uint requiredSize = GetHiZSize(width, height);
+		if (requiredSize <= m_HiZCapacities[slot])
+		{
+			return;
+		}
+
+		// Released with this frame's other deletes, once the GPU is done with it.
+		if (m_Resources.hizBuffers[slot])
+		{
+			GetRenderFrame().buffersToDelete.Add(m_Resources.hizBuffers[slot]);
+		}
+
+		RenderBufferDesc desc;
+		desc.debugName = "Hi-Z Buffer";
+		desc.size = sizeof(float) * requiredSize;
+		desc.usage = RenderBufferUsage::Storage;
+		m_Resources.hizBuffers[slot] = m_Registry.CreateBuffer(desc);
+		m_HiZCapacities[slot] = requiredSize;
+
+		BufferBindingInfo bindingInfo;
+		bindingInfo.bufferView = m_Registry.GetBuffer(m_Resources.hizBuffers[slot]).bufferView;
+		QueueBufferBindingUpdate(TYR_BINDING_HIZ, slot, bindingInfo);
+	}
+
 	void Renderer::DeleteSamplers()
 	{
 		m_Ctx.device->DeleteSampler(m_Resources.materialSampler);
@@ -3589,7 +3966,8 @@ namespace tyr
 		geometryArgs.registry = &m_Registry;
 		geometryArgs.resources = &m_Resources;
 		geometryArgs.scene = nullptr;
-		geometryArgs.pipeline = m_Resources.geometryGraphicsPipeline;
+		geometryArgs.earlyPipeline = m_Resources.geometryEarlyPipeline;
+		geometryArgs.latePipeline = m_Resources.geometryLatePipeline;
 		geometryArgs.descriptorSet = m_Resources.descriptorSet;
 		m_GeometryPass = new GeometryPass(geometryArgs);
 

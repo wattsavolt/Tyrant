@@ -62,6 +62,9 @@ namespace tyr
 			Dependency dependency = DEPENDENCY_UNKNOWN);
 		void CopyBuffer(BufferHandle srcBuffer, BufferHandle dstBuffer, const BufferCopyInfo* copyInfos, uint copyInfoCount);
 		void CopyBuffer(BufferHandle srcBuffer, BufferHandle dstBuffer);
+		// Sets every uint in the range to value. offset and size must be multiples of 4, and the
+		// buffer a transfer destination.
+		void FillBuffer(BufferHandle buffer, size_t offset, size_t size, uint value);
 		void CopyBufferToImage(BufferHandle buffer, ImageHandle image, ImageLayout targetLayout, const BufferImageCopyInfo* regions, uint regionCount);
 		void CopyImage(ImageHandle srcImage, ImageLayout srcLayout, ImageHandle dstImage, ImageLayout dstLayout, const ImageCopyInfo* regions, uint regionCount);
 		void CopyImageToBuffer(ImageHandle image, BufferHandle buffer, ImageLayout currentLayout, const BufferImageCopyInfo* regions, uint regionCount);

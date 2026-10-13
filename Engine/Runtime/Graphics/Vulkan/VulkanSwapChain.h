@@ -20,7 +20,7 @@ namespace tyr
 
 		void Recreate(void* windowOSHandle, const SwapChainDesc& desc) override;
 
-		void Resize() override;
+		void Resize(const SwapChainDesc& desc) override;
 
 		void DestroyOldSwapChain() override;
 

@@ -250,6 +250,7 @@ namespace tyr
 		m_RendererAPI->SetActiveScene(world.sceneHandle, world.visible);
 
 		m_RendererAPI->SetSceneAmbient(world.sceneHandle, world.settings.ambient);
+		UpdateSkyAndExposure(world);
 
 		SceneView view;
 		view.viewArea = world.viewArea;
@@ -290,6 +291,7 @@ namespace tyr
 		// nothing depends on this world being the active one yet - safe to create it for
 		// every world immediately.
 		world.renderViewportHandle = m_RendererAPI->CreateRenderViewport();
+		m_RendererAPI->SetRenderViewportPresented(world.renderViewportHandle, config.presentToWindow);
 
 		// Not calling the active-scene-window/viewport setup here - that only applies to the
 		// active scene, and a freshly created world isn't automatically the active one.
@@ -1163,6 +1165,13 @@ namespace tyr
 		++world.changeCount;
 	}
 
+	void WorldManager::SetLevelSettings(Handle worldHandle, const LevelSettings& settings)
+	{
+		World& world = m_WorldPool[worldHandle];
+		world.settings = settings;
+		++world.changeCount;
+	}
+
 	void WorldManager::RemoveActorInstance(Handle worldHandle, Entity rootEntity)
 	{
 		World& world = m_WorldPool[worldHandle];
@@ -1228,8 +1237,53 @@ namespace tyr
 			world.physicsWorld = {};
 		}
 
+		if (AssetUtil::IsValidAssetID(world.loadedSkyTexture))
+		{
+			m_AssetManager->DeleteTexture(world.loadedSkyTexture);
+			world.loadedSkyTexture = {};
+		}
+
 		m_RendererAPI->RemoveScene(world.sceneHandle);
 		m_RendererAPI->DeleteRenderViewport(world.renderViewportHandle);
+	}
+
+	void WorldManager::UpdateSkyAndExposure(World& world)
+	{
+		const LevelSettings& settings = world.settings;
+
+		// The sky's texture is loaded when the settings first name it. One missing from the
+		// registry, such as after it was deleted, leaves the sky black.
+		const AssetID skyTexture = AssetUtil::IsValidAssetID(settings.skyTexture) && AssetRegistry::Instance().GetAssets().Contains(settings.skyTexture)
+			? settings.skyTexture : AssetID{};
+		if (skyTexture != world.loadedSkyTexture)
+		{
+			if (AssetUtil::IsValidAssetID(world.loadedSkyTexture))
+			{
+				m_AssetManager->DeleteTexture(world.loadedSkyTexture);
+			}
+			world.loadedSkyTexture = skyTexture;
+			if (AssetUtil::IsValidAssetID(skyTexture))
+			{
+				m_AssetManager->LoadTexture(skyTexture);
+			}
+		}
+
+		SkySettings sky;
+		sky.texture = AssetUtil::IsValidAssetID(world.loadedSkyTexture) ? m_AssetManager->GetTexture(world.loadedSkyTexture) : TextureHandle{};
+		sky.tint = settings.skyTint;
+		sky.intensity = settings.skyIntensity;
+		sky.yaw = settings.skyYaw;
+		m_RendererAPI->SetSceneSky(world.sceneHandle, sky);
+
+		ExposureSettings exposure;
+		exposure.autoExposure = settings.autoExposure;
+		exposure.compensation = settings.exposureCompensation;
+		exposure.manualEV100 = settings.manualExposure;
+		exposure.minEV100 = settings.minExposure;
+		exposure.maxEV100 = settings.maxExposure;
+		exposure.brightenSpeed = settings.exposureBrightenSpeed;
+		exposure.darkenSpeed = settings.exposureDarkenSpeed;
+		m_RendererAPI->SetSceneExposure(world.sceneHandle, exposure);
 	}
 
 	void WorldManager::ReleaseLight(const World& world, DirLightComponent& light)

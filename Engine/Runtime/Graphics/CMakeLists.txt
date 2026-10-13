@@ -87,6 +87,11 @@ target_link_libraries(TyrantGraphics PUBLIC TyrantCore)
 
 target_link_libraries(TyrantGraphics PRIVATE ${PRIVATE_LIBS})
 
+if(WIN32)
+	# Reads whether a display is in HDR mode and how bright it can go.
+	target_link_libraries(TyrantGraphics PRIVATE dxgi)
+endif()
+
 
 # TODO: Disable for phones (if ever supported) to use render passes on Vulkan.
 target_compile_definitions(TyrantGraphics PUBLIC TYR_USE_DYNAMIC_RENDERING=1) 

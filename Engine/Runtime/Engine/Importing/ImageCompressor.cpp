@@ -277,6 +277,84 @@ namespace tyr
         return true;
     }
 
+    bool ImageCompressor::CompressHdrCubemap(const HdrCubemapCompressionDesc& desc)
+    {
+        constexpr uint c_FaceCount = 6;
+        constexpr uint c_BlockSize = 16;
+        TYR_ASSERT(desc.fillFace && desc.faceSize > 0 && desc.mipCount > 0);
+
+        nvtt::Context context;
+        nvtt::OutputOptions outputOptions;
+        nvtt::CompressionOptions compressionOptions;
+        outputOptions.setOutputHeader(false);
+        compressionOptions.setFormat(nvtt::Format_BC6U);
+
+        // Each face's mips, padded the way uploads expect, then interleaved below.
+        Array<uint8> faceData[c_FaceCount];
+        Array<float> pixels;
+        pixels.Resize(desc.faceSize * desc.faceSize * 4);
+        for (uint face = 0; face < c_FaceCount; ++face)
+        {
+            desc.fillFace(face, pixels.Data(), desc.faceSize, desc.userData);
+
+            nvtt::Surface surface;
+            if (!surface.setImage(nvtt::InputFormat_RGBA_32F, static_cast<int>(desc.faceSize), static_cast<int>(desc.faceSize), 1, pixels.Data()))
+            {
+                return false;
+            }
+
+            GpuReadyMemoryOutputHandler outputHandler(c_BlockSize);
+            outputOptions.setOutputHandler(&outputHandler);
+            for (uint8 mip = 0; mip < desc.mipCount; ++mip)
+            {
+                if (!context.compress(surface, 0, mip, compressionOptions, outputOptions))
+                {
+                    return false;
+                }
+                if (mip + 1 < desc.mipCount && !surface.buildNextMipmap(nvtt::MipmapFilter_Box))
+                {
+                    return false;
+                }
+            }
+
+            const uint8* data = static_cast<const uint8*>(outputHandler.getData());
+            faceData[face].Insert(0, data, static_cast<uint>(outputHandler.getDataSize()));
+        }
+
+        Array<uint8>& output = GetThreadLocalBuffer();
+        output.Clear();
+        uint faceOffset = 0;
+        for (uint8 mip = 0; mip < desc.mipCount; ++mip)
+        {
+            const uint mipSize = std::max(1u, desc.faceSize >> mip);
+            const uint blocks = (mipSize + 3) / 4;
+            const uint mipBytes = MemoryUtil::Align(blocks * c_BlockSize, RenderConstants::c_RowPitchAlignment) * blocks;
+            faceOffset = MemoryUtil::Align(faceOffset, RenderConstants::c_UploadAlignment);
+            for (uint face = 0; face < c_FaceCount; ++face)
+            {
+                const uint padding = MemoryUtil::Align(output.Size(), RenderConstants::c_UploadAlignment) - output.Size();
+                for (uint i = 0; i < padding; ++i)
+                {
+                    output.Add(0);
+                }
+                output.Insert(output.Size(), faceData[face].Data() + faceOffset, mipBytes);
+            }
+            faceOffset += mipBytes;
+        }
+
+        TextureInfo textureInfo;
+        textureInfo.width = desc.faceSize;
+        textureInfo.height = desc.faceSize;
+        textureInfo.depth = 1;
+        textureInfo.arrayLayerCount = c_FaceCount;
+        textureInfo.mipCount = desc.mipCount;
+        textureInfo.type = ImageType::Cubemap;
+        textureInfo.format = PF_BC6H_UFLOAT;
+
+        SerializeCompressedImage(textureInfo, desc.outputFilePath);
+        return true;
+    }
+
     bool ImageCompressor::CompressCubemap(const CubemapCompressionDesc& desc)
     {
         nvtt::CubeSurface cubeSurface;

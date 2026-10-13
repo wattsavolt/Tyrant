@@ -18,6 +18,7 @@ namespace tyr
 		, m_PropertiesPanel(worldManager, assetManager, levelWorld)
 		, m_AssetBrowserPanel(assetManager, m_Icons)
 		, m_MaterialEditor(assetManager)
+		, m_LevelSettingsWindow(worldManager, levelWorld)
 	{
 		// Like Unreal, a click on a number box starts typing in it, while dragging still changes it.
 		ImGui::SetCurrentContext(m_GUIModule.GetImGuiContext());
@@ -109,6 +110,7 @@ namespace tyr
 		ImGui::End();
 
 		m_MaterialEditor.Draw();
+		m_LevelSettingsWindow.Draw(editing, m_EditMenu.LevelSettingsOpen());
 
 		// Like Unreal, Delete removes the selected actor wherever the focus is, unless typing.
 		if (editing && selectedActor != c_InvalidEntity && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Delete, false))

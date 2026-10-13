@@ -203,18 +203,13 @@ namespace tyr
 			rv.pendingResize[otherSlot] = true;
 		}
 
-		// Which one actually holds this tick's "real" result - read via the main-thread-safe
-		// mirror, not Renderer::m_TaaEnabled directly, since that's worker-owned (see its own
-		// comment). The two can briefly disagree for a tick or two right after toggling TAA (the
-		// override takes a moment to reach RenderAsync) - a harmless, self-correcting display lag,
-		// not a hazard, since both textures are always kept in a valid state by their own passes
-		// regardless of which one is actually selected here.
+		// The tone mapped image, with the grid over it when there is one.
 		const RenderViewportTextureData& textureData = rv.textureData[renderFrameIndex];
 		if (rv.grid.enabled && textureData.overlayColourTexture)
 		{
 			return textureData.overlayColourTexture;
 		}
-		return m_Renderer.IsTaaEnabledMainThread() ? textureData.resolvedColourTexture : textureData.colourTexture;
+		return textureData.displayColourTexture;
 	}
 
 	void RendererAPI::SetRenderViewportGrid(RenderViewportHandle viewport, const ViewportGridDesc& desc)
@@ -604,6 +599,36 @@ namespace tyr
 		m_Renderer.GetImmediateSceneData(scene).ambient = ambient;
 	}
 
+	void RendererAPI::SetSceneSky(SceneHandle scene, const SkySettings& sky)
+	{
+		m_Renderer.GetImmediateSceneData(scene).sky = sky;
+	}
+
+	void RendererAPI::SetSceneExposure(SceneHandle scene, const ExposureSettings& exposure)
+	{
+		m_Renderer.GetImmediateSceneData(scene).exposure = exposure;
+	}
+
+	void RendererAPI::SetRenderViewportPresented(RenderViewportHandle viewport, bool presented)
+	{
+		m_Renderer.GetRenderViewportPool()[viewport.h].presentToWindow = presented;
+	}
+
+	void RendererAPI::SetDisplaySettings(const DisplaySettings& settings)
+	{
+		m_Renderer.SetDisplaySettings(settings);
+	}
+
+	const DisplaySettings& RendererAPI::GetDisplaySettings() const
+	{
+		return m_Renderer.GetDisplaySettings();
+	}
+
+	bool RendererAPI::GetActiveDisplay(DisplayHDRInfo& outInfo, DisplayOutput& outOutput) const
+	{
+		return m_Renderer.GetActiveDisplay(outInfo, outOutput);
+	}
+
 	DirLightHandle RendererAPI::CreateDirectionalLight(SceneHandle scene, const DirectionalLightDesc& desc)
 	{
 		const DirLightHandle handle = m_Registry.CreateDirectionalLight(desc);
@@ -679,6 +704,7 @@ namespace tyr
 		shaderLight.direction = info.direction;
 		shaderLight.intensity = info.intensity;
 		shaderLight.colour = info.colour;
+		shaderLight.castsShadow = info.castsShadow ? 1.0f : 0.0f;
 
 		m_Renderer.GetRecords().dirLights.Set(index, shaderLight);
 	}

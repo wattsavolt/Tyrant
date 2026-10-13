@@ -66,6 +66,9 @@ namespace tyr
 		// Removes every actor and folder, and resets the level settings, ready for another level.
 		void ClearWorld(Handle worldHandle);
 
+		// Replaces the level settings as an edit to the level, which can be undone.
+		void SetLevelSettings(Handle worldHandle, const LevelSettings& settings);
+
 		// Moves the actor's root, carrying its child entities and their mesh instances with it.
 		void SetActorTransform(Handle worldHandle, Entity rootEntity, const Transform& transform);
 
@@ -120,6 +123,8 @@ namespace tyr
 		// Sends the entity's world transform to its mesh instance and lights, if it has them yet.
 		void UpdateEntityTransform(World& world, Entity entity);
 		// Removes the light from the renderer, if it was ever added.
+		// Sends the level settings' sky and exposure to the world's scene, loading the sky's texture.
+		void UpdateSkyAndExposure(World& world);
 		void ReleaseLight(const World& world, DirLightComponent& light);
 		void ReleaseLight(const World& world, PointLightComponent& light);
 		void ReleaseLight(const World& world, SpotLightComponent& light);

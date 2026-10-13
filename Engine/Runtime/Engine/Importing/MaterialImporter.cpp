@@ -175,8 +175,9 @@ namespace tyr
 		}
 		case ImageBitDepth::SixteenBit:
 		{
+			// Loaded as 32 bit floats, like HDR images.
 			compDesc.image = LoadImage32F(source, 4);
-			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_16F;
+			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_32F;
 			break;
 		}
 		case ImageBitDepth::ThirtyTwoBit:
@@ -204,6 +205,121 @@ namespace tyr
 
 		if (!compressResult)
 		{
+			return false;
+		}
+
+		textureID = AssetRegistry::Instance().AddOrUpdateAsset(outputPath);
+		return true;
+	}
+
+	namespace
+	{
+		struct EquirectImage
+		{
+			const float* pixels;
+			uint width;
+			uint height;
+		};
+
+		// Bilinear, wrapping around horizontally and clamped at the poles.
+		void SampleEquirect(const EquirectImage& image, float u, float v, float* out)
+		{
+			const float x = u * image.width - 0.5f;
+			const float y = Math::Clamp(v * image.height - 0.5f, 0.0f, (float)(image.height - 1));
+			const int x0 = (int)std::floor(x);
+			const int y0 = (int)std::floor(y);
+			const float fx = x - x0;
+			const float fy = y - y0;
+			const uint columns[2] = { (uint)((x0 % (int)image.width + (int)image.width) % (int)image.width), (uint)(((x0 + 1) % (int)image.width + (int)image.width) % (int)image.width) };
+			const uint rows[2] = { (uint)y0, std::min((uint)y0 + 1, image.height - 1) };
+			const float weights[4] = { (1.0f - fx) * (1.0f - fy), fx * (1.0f - fy), (1.0f - fx) * fy, fx * fy };
+			for (uint channel = 0; channel < 4; ++channel)
+			{
+				out[channel] = 0.0f;
+			}
+			for (uint i = 0; i < 4; ++i)
+			{
+				const float* texel = image.pixels + ((size_t)rows[i / 2] * image.width + columns[i % 2]) * 4;
+				for (uint channel = 0; channel < 4; ++channel)
+				{
+					out[channel] += texel[channel] * weights[i];
+				}
+			}
+		}
+
+		// Each texel's direction from Vulkan's cubemap face layout, looked up in the equirectangular
+		// image with +Z in the middle, +X to its right and +Y up.
+		void FillCubeFaceFromEquirect(uint face, float* rgba, uint faceSize, void* userData)
+		{
+			const EquirectImage& image = *static_cast<const EquirectImage*>(userData);
+			for (uint y = 0; y < faceSize; ++y)
+			{
+				for (uint x = 0; x < faceSize; ++x)
+				{
+					const float s = ((float)x + 0.5f) / faceSize * 2.0f - 1.0f;
+					const float t = ((float)y + 0.5f) / faceSize * 2.0f - 1.0f;
+					Vector3 direction;
+					switch (face)
+					{
+					case 0: direction = Vector3(1.0f, -t, -s); break;
+					case 1: direction = Vector3(-1.0f, -t, s); break;
+					case 2: direction = Vector3(s, 1.0f, t); break;
+					case 3: direction = Vector3(s, -1.0f, -t); break;
+					case 4: direction = Vector3(s, -t, 1.0f); break;
+					default: direction = Vector3(-s, -t, -1.0f); break;
+					}
+					direction.Normalize();
+					const float u = 0.5f + Math::Atan2(direction.x, direction.z) / Math::c_TwoPi;
+					const float v = Math::Acos(Math::Clamp(direction.y, -1.0f, 1.0f)) / Math::c_Pi;
+					SampleEquirect(image, u, v, rgba + ((size_t)y * faceSize + x) * 4);
+				}
+			}
+		}
+	}
+
+	bool MaterialImporter::ImportSkyCubemap(const char* sourcePath, const char* outputFolderPath, const char* textureName, uint faceSize, AssetID& textureID)
+	{
+		if (!CreateAssetFolder(outputFolderPath))
+		{
+			return false;
+		}
+
+		char outputPath[TYR_MAX_PATH_TOTAL_SIZE];
+		snprintf(outputPath, sizeof(outputPath), "%s/%s%s", outputFolderPath, textureName, AssetConstants::c_TextureFileExtension);
+
+		ImageInfo info;
+		ImageLoader::LoadImageInfo(sourcePath, info);
+		if (info.width < 4 || info.height < 2)
+		{
+			TYR_LOG_ERROR("%s is too small to make a sky from.", sourcePath);
+			return false;
+		}
+
+		// A face covers a quarter of the image's width, so this keeps the detail it has.
+		if (faceSize == 0)
+		{
+			faceSize = 1u << (std::bit_width((uint)info.width / 4) - 1);
+		}
+		faceSize = Math::Clamp(faceSize, 16u, RenderConstants::c_MaxTextureDimension / 2);
+
+		EquirectImage image;
+		image.pixels = ImageLoader::LoadImage32F(sourcePath, 4);
+		image.width = (uint)info.width;
+		image.height = (uint)info.height;
+
+		HdrCubemapCompressionDesc desc;
+		desc.fillFace = &FillCubeFaceFromEquirect;
+		desc.userData = &image;
+		desc.faceSize = faceSize;
+		desc.mipCount = static_cast<uint8>(TextureUtil::CalculateMaxMips(faceSize, faceSize));
+		desc.outputFilePath = outputPath;
+		const bool compressed = ImageCompressor::CompressHdrCubemap(desc);
+
+		ImageLoader::FreeImage(const_cast<float*>(image.pixels));
+
+		if (!compressed)
+		{
+			TYR_LOG_ERROR("Couldn't compress the sky made from %s.", sourcePath);
 			return false;
 		}
 

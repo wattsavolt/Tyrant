@@ -14,6 +14,15 @@ cbuffer SceneInfoCBuffer : register(b0)
 	uint dirLightCount;
 	uint pointLightCount;
 	uint spotLightCount;
+	float _pad0;
+	float4 _frustumPlanes[6];
+	float4x4 _prevViewProj;
+	float2 _jitterDelta;
+	uint skyTextureIndex;
+	float skyIntensity;
+	float3 skyTint;
+	float skyYawSin;
+	float skyYawCos;
 };
 
 TYR_VK_BINDING(TYR_BINDING_DIR_LIGHT, 0) StructuredBuffer<DirectionalLight> dirLights : register(t8);
@@ -25,6 +34,8 @@ TYR_VK_BINDING(TYR_BINDING_LIGHT_INDICES, 0) StructuredBuffer<uint> lightIndices
 
 TYR_VK_BINDING(TYR_BINDING_MATERIAL, 0) StructuredBuffer<Material> materials : register(t7);
 TYR_VK_BINDING(TYR_BINDING_TEXTURES, 0) Texture2D textures[] : register(t11);
+// The same bindless textures, for the ones that are cubemaps.
+TYR_VK_BINDING(TYR_BINDING_TEXTURES, 0) TextureCube cubeTextures[] : register(t0, space2);
 TYR_VK_BINDING(TYR_BINDING_SAMPLERS, 0) SamplerState samplers[] : register(s12);
 TYR_VK_BINDING(TYR_BINDING_DECAL, 0) StructuredBuffer<Decal> decals : register(t2, space1);
 // The visible decals, lowest sort order first.
@@ -183,11 +194,18 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID, uint3 groupId : SV_Group
 		return;
 	}
 
-	// Depth clears to 0 (reverse-Z's "infinitely far" value) - nothing was drawn here, leave
-	// the background black.
+	// Depth clears to 0, reverse-Z's farthest, so nothing was drawn here and the sky shows.
 	if (deviceDepth <= 0.0f)
 	{
-		outputImages[g_PushConstants.renderFrameIndex][dispatchThreadId.xy] = float4(0.0f, 0.0f, 0.0f, 1.0f);
+		const float3 farPoint = NDCToWorld(PixelToNDC(float2(dispatchThreadId.xy) + 0.5f), 0.0f);
+		const float3 viewDir = normalize(farPoint - camPos);
+		const float3 skyDir = float3(viewDir.x * skyYawCos - viewDir.z * skyYawSin, viewDir.y, viewDir.x * skyYawSin + viewDir.z * skyYawCos);
+		float3 sky = 0.0f;
+		if (skyTextureIndex != TYR_INVALID_INDEX)
+		{
+			sky = cubeTextures[skyTextureIndex].SampleLevel(samplers[0], skyDir, 0.0f).rgb * skyTint * skyIntensity;
+		}
+		outputImages[g_PushConstants.renderFrameIndex][dispatchThreadId.xy] = float4(sky, 1.0f);
 		return;
 	}
 
@@ -252,9 +270,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID, uint3 groupId : SV_Group
 		colour += ComputeSpotLightEffect(spotLights[lightIndices[TYR_MAX_DIR_LIGHTS + TYR_MAX_POINT_LIGHTS + k]], materialData, pixelPos, normal, viewDir) * shadow;
 	}
 
-	// This output texture is UNORM, not SRGB (SRGB doesn't support storage image usage on all
-	// hardware) - write linear colour as-is; the sRGB encode happens later, same as any
-	// other UI element.
+	// Linear HDR colour, exposed and tone mapped later.
 	outputImages[g_PushConstants.renderFrameIndex][dispatchThreadId.xy] = float4(colour, 1.0f);
 }
 

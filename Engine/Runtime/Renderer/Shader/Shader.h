@@ -18,5 +18,7 @@ namespace tyr
         FileName fileName;
         LocalString<ShaderModuleDesc::c_MaxEntryPointSize> entryPoint = "main";
         ShaderStage stage;
+        // Added to the byte code's file name, so builds of one source with different defines are kept apart.
+        LocalString<16> variant = "";
     };
 }

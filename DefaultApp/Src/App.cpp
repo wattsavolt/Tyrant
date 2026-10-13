@@ -80,6 +80,8 @@ void App::Initialize()
 		desc.name = c_AppName;
 		Platform::GetMaxWindowResolution(desc.width, desc.height);
 
+		// There's no editor panel to show it in, so it fills the window.
+		worldParams.presentToWindow = true;
 		m_MainWorld = CreatePrimaryWorld(*m_WindowModule, *m_WorldManager, desc, worldParams, m_PrimaryWindow);
 
 		// The game has the mouse for as long as it runs.

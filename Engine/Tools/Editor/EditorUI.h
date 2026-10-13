@@ -10,6 +10,7 @@
 #include "AssetBrowserPanel.h"
 #include "MaterialEditorWindow.h"
 #include "ActorPicker.h"
+#include "LevelSettingsWindow.h"
 #include "EditorRequests.h"
 
 namespace tyr
@@ -55,6 +56,7 @@ namespace tyr
 		PropertiesPanel m_PropertiesPanel;
 		AssetBrowserPanel m_AssetBrowserPanel;
 		MaterialEditorWindow m_MaterialEditor;
+		LevelSettingsWindow m_LevelSettingsWindow;
 		// The Actors tab's list, for placing actors in the level's root folder.
 		ActorPicker m_ActorsTabPicker;
 		ViewSettings m_ViewSettings;

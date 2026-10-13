@@ -44,6 +44,7 @@ namespace tyr
 	TYR_VK_DECLARE_PROC_NULL(vkCmdTraceRaysKHR);
 
 	TYR_VK_DECLARE_PROC_NULL(vkGetDeviceFaultInfoEXT);
+	TYR_VK_DECLARE_PROC_NULL(vkSetHdrMetadataEXT);
 }
 
 

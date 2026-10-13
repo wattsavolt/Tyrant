@@ -4,6 +4,7 @@
 #include "Utility/PathUtil.h"
 #include "Math/Math.h"
 #include "Importing/ModelImporter.h"
+#include "Importing/MaterialImporter.h"
 #include "AssetSystem/AssetRegistry.h"
 #include "AssetSystem/AssetUtil.h"
 #include "AssetSystem/AssetConstants.h"
@@ -132,6 +133,10 @@ namespace tyr
 		if (m_ShowImportOptions)
 		{
 			DrawImportOptionsWindow();
+		}
+		if (m_ShowSkyImportOptions)
+		{
+			DrawSkyImportOptionsWindow();
 		}
 	}
 
@@ -369,16 +374,53 @@ namespace tyr
 	void FileMenu::Import()
 	{
 		const bool picked = Platform::ShowOpenFileDialog(m_PendingFilePath, sizeof(m_PendingFilePath),
-			"glTF Files\0*.gltf;*.glb\0", "Import Model");
+			"Models and Skies\0*.gltf;*.glb;*.hdr\0glTF Models\0*.gltf;*.glb\0HDR Skies\0*.hdr\0", "Import");
 		if (!picked)
 		{
 			return;
 		}
 
 		PathUtil::GetFileNameWithoutExtension(m_PendingFilePath, m_PendingModelName);
-		snprintf(m_PendingOutputFolder, sizeof(m_PendingOutputFolder), "Models/%s", m_PendingModelName);
+		if (HasExtension(m_PendingFilePath, ".hdr"))
+		{
+			snprintf(m_PendingOutputFolder, sizeof(m_PendingOutputFolder), "Skies/%s", m_PendingModelName);
+			m_ShowSkyImportOptions = true;
+			return;
+		}
 
+		snprintf(m_PendingOutputFolder, sizeof(m_PendingOutputFolder), "Models/%s", m_PendingModelName);
 		m_ShowImportOptions = true;
+	}
+
+	void FileMenu::DrawSkyImportOptionsWindow()
+	{
+		ImGui::SetNextWindowSize(ImVec2(380, 160), ImGuiCond_FirstUseEver);
+		if (ImGui::Begin("Import Sky", &m_ShowSkyImportOptions))
+		{
+			ImGui::Text("%s", m_PendingModelName);
+			ImGui::Separator();
+
+			const char* faceSizeNames[] = { "Match Image", "512", "1024", "2048" };
+			const uint faceSizes[] = { 0, 512, 1024, 2048 };
+			ImGui::Combo("Face Size", &m_SkyFaceSizeIndex, faceSizeNames, static_cast<int>(sizeof(faceSizeNames) / sizeof(faceSizeNames[0])));
+			ImGui::SetItemTooltip("Each of the cubemap's six faces is this many pixels across.");
+
+			ImGui::Separator();
+			if (ImGui::Button("Import"))
+			{
+				AssetID textureID;
+				MaterialImporter::Instance().ImportSkyCubemap(m_PendingFilePath, m_PendingOutputFolder, m_PendingModelName, faceSizes[m_SkyFaceSizeIndex], textureID);
+				// Saved straight away so the import is never lost if the editor doesn't close cleanly.
+				AssetRegistry::Instance().Save();
+				m_ShowSkyImportOptions = false;
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel"))
+			{
+				m_ShowSkyImportOptions = false;
+			}
+		}
+		ImGui::End();
 	}
 
 	void FileMenu::DrawImportOptionsWindow()

@@ -73,6 +73,24 @@ namespace tyr
 #endif
 	}
 
+	bool VulkanHelper::AddOptionalInstanceExtension(Array<const char*>& extensions, const char* name)
+	{
+		uint extensionCount = 0;
+		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
+		StackAllocManager stack;
+		VkExtensionProperties* available = stack.Alloc<VkExtensionProperties>(extensionCount);
+		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, available);
+		for (uint i = 0; i < extensionCount; ++i)
+		{
+			if (strcmp(available[i].extensionName, name) == 0)
+			{
+				extensions.Add(name);
+				return true;
+			}
+		}
+		return false;
+	}
+
 	void VulkanHelper::LoadInstanceExtensionFunctions(VkInstance instance)
 	{
 		// Debug Utils

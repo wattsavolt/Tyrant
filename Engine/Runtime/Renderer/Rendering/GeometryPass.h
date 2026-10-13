@@ -27,6 +27,7 @@ namespace tyr
 		GraphicsPipelineHandle latePipeline;
 		GraphicsPipelineHandle earlyMaskedPipeline;
 		GraphicsPipelineHandle lateMaskedPipeline;
+		GraphicsPipelineHandle translucentPipeline;
 		DescriptorSetHandle descriptorSet;
 	};
 
@@ -45,9 +46,11 @@ namespace tyr
 		// The late pass also reads the Hi-Z its task shader tests meshlets against.
 		void Setup(RenderGraphBuilder& builder, const RenderFrame& renderFrame, bool late, RenderBufferHandle hizBuffer);
 		void Execute(CommandList& cmdList, bool late, const ShaderCullPushConstants& pushConstants);
+		// Draws the translucent list the late culling pass made.
+		void ExecuteTranslucent(CommandList& cmdList, const ShaderCullPushConstants& pushConstants);
 
 	private:
-		void DrawList(CommandList& cmdList, GraphicsPipelineHandle pipeline, uint drawList, const ShaderCullPushConstants& pushConstants);
+		void DrawList(CommandList& cmdList, GraphicsPipelineHandle pipeline, uint drawList, const ShaderCullPushConstants& pushConstants, ShaderStage pushConstantStages);
 
 		Device* m_Device;
 		RenderRegistry* m_Registry;
@@ -57,6 +60,7 @@ namespace tyr
 		GraphicsPipelineHandle m_LatePipeline;
 		GraphicsPipelineHandle m_EarlyMaskedPipeline;
 		GraphicsPipelineHandle m_LateMaskedPipeline;
+		GraphicsPipelineHandle m_TranslucentPipeline;
 		DescriptorSetHandle m_DescriptorSet;
 	};
 

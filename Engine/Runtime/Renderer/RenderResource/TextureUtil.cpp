@@ -28,6 +28,8 @@ namespace tyr
 		case PF_B8G8R8A8_UINT:
 		case PF_B8G8R8A8_SRGB:
 
+		case PF_A2B10G10R10_UNORM:
+
 		case PF_D24_UNORM_S8_UINT:
 		case PF_D32_SFLOAT:
 			return 4;
@@ -37,6 +39,9 @@ namespace tyr
 
 		case PF_R16G16_SFLOAT:
 			return 4;
+
+		case PF_R16_SFLOAT:
+			return 2;
 
 		case PF_R16G16B16A16_UNORM:
 		case PF_R16G16B16A16_SNORM:

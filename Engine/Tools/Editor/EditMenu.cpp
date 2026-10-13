@@ -27,6 +27,10 @@ namespace tyr
 				requests.redo = true;
 			}
 			ImGui::Separator();
+			if (ImGui::MenuItem("Level Settings"))
+			{
+				m_ShowLevelSettings = true;
+			}
 			if (ImGui::BeginMenu("Project Settings"))
 			{
 				if (ImGui::MenuItem("Rendering"))
@@ -69,7 +73,7 @@ namespace tyr
 	{
 		// Runtime-only for now - this doesn't persist to a project settings file yet, so these
 		// revert to their defaults next time the editor opens.
-		ImGui::SetNextWindowSize(ImVec2(400, 260), ImGuiCond_FirstUseEver);
+		ImGui::SetNextWindowSize(ImVec2(420, 420), ImGuiCond_FirstUseEver);
 		if (ImGui::Begin("Project Settings - Rendering", &m_ShowProjectSettings))
 		{
 			// Only the settings for what's on screen now are sent straight away.
@@ -81,8 +85,35 @@ namespace tyr
 			{
 				ApplyRenderSettings(false);
 			}
+			DrawDisplaySettings();
 		}
 		ImGui::End();
+	}
+
+	void EditMenu::DrawDisplaySettings()
+	{
+		ImGui::SeparatorText("Display");
+
+		DisplaySettings settings = m_RendererAPI.GetDisplaySettings();
+		bool changed = ImGui::Checkbox("HDR", &settings.hdrEnabled);
+		ImGui::SetItemTooltip("Used whenever the display is in HDR mode.");
+		changed |= ImGui::DragFloat("Paper White (nits)", &settings.paperWhiteNits, 1.0f, 80.0f, 1000.0f, "%.0f");
+		ImGui::SetItemTooltip("How bright white in the scene is in HDR.");
+		changed |= ImGui::DragFloat("UI Brightness (nits)", &settings.uiNits, 1.0f, 80.0f, 1000.0f, "%.0f");
+		changed |= ImGui::DragFloat("Peak Brightness (nits)", &settings.peakNits, 10.0f, 0.0f, 10000.0f, settings.peakNits > 0.0f ? "%.0f" : "From display");
+		ImGui::SetItemTooltip("The brightest the image gets in HDR. Zero uses what the display reports.");
+		if (changed)
+		{
+			m_RendererAPI.SetDisplaySettings(settings);
+		}
+
+		DisplayHDRInfo info;
+		DisplayOutput output;
+		if (m_RendererAPI.GetActiveDisplay(info, output))
+		{
+			ImGui::Text("Output: %s", output == DisplayOutput::HDR10 ? "HDR10" : "SDR");
+			ImGui::Text("Display: HDR %s, %.0f nits peak, %.0f nits full screen", info.osHdrEnabled ? "on" : "off", info.maxLuminance, info.maxFullFrameLuminance);
+		}
 	}
 
 	bool EditMenu::DrawRenderSettings(const char* label, RenderSettings& settings)

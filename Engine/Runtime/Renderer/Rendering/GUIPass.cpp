@@ -5,6 +5,7 @@
 #include "Rendering/RenderRegistry.h"
 #include "Rendering/RenderGraphBuilder.h"
 #include "Rendering/RenderConstants.h"
+#include "Shaders/ShaderTypes.h"
 #include "RenderResource/RenderBuffer.h"
 #include "RenderResource/Texture.h"
 #include "RenderTransfer/UploadRequest.h"
@@ -18,6 +19,7 @@ namespace tyr
 		float scale[2];
 		float translate[2];
 		uint textureIndex;
+		float brightness;
 	};
 
 	GUIPass::GUIPass(const GUIPassArgs& args)
@@ -33,6 +35,7 @@ namespace tyr
 	{
 		m_Registry = args.registry;
 		m_Pipeline = args.pipeline;
+		m_FullscreenPipeline = args.fullscreenPipeline;
 		m_DescriptorSet = args.descriptorSet;
 		m_VertexBuffer = args.vertexBuffer;
 		m_IndexBuffer = args.indexBuffer;
@@ -58,8 +61,21 @@ namespace tyr
 		}
 	}
 
-	void GUIPass::Execute(CommandList& cmdList, const RenderFrame& renderFrame, uint renderFrameIndex)
+	void GUIPass::Execute(CommandList& cmdList, const RenderFrame& renderFrame, uint renderFrameIndex, uint fullscreenTextureIndex)
 	{
+		const ShaderStage guiPipelineStages = static_cast<ShaderStage>(SHADER_STAGE_VERTEX_BIT | SHADER_STAGE_FRAGMENT_BIT);
+
+		if (fullscreenTextureIndex != TYR_INVALID_INDEX)
+		{
+			GUIPushConstants pushConstants{};
+			pushConstants.textureIndex = fullscreenTextureIndex;
+			pushConstants.brightness = renderFrame.uiBrightness;
+			cmdList.BindGraphicsPipeline(m_FullscreenPipeline);
+			cmdList.BindDescriptorSet(m_DescriptorSet, m_FullscreenPipeline);
+			cmdList.PushConstants(m_FullscreenPipeline, guiPipelineStages, 0, sizeof(GUIPushConstants), &pushConstants);
+			cmdList.Draw(3, 1, 0, 0);
+		}
+
 #if TYR_RENDER_DEBUG
 		// A wall-clock timestamp lets a screenshot's capture time be matched back to an exact
 		// renderFrameIndex/submission count.
@@ -95,8 +111,6 @@ namespace tyr
 		cmdList.BindDescriptorSet(m_DescriptorSet, m_Pipeline);
 		cmdList.BindIndexBuffer(indexBuffer, indexBase);
 
-		const ShaderStage guiPipelineStages = static_cast<ShaderStage>(SHADER_STAGE_VERTEX_BIT | SHADER_STAGE_FRAGMENT_BIT);
-
 		for (const GUIDrawSubmission& submission : renderFrame.guiDrawData)
 		{
 			// A zero (or garbage) display size would make scale = +-INF below, and any vertex
@@ -108,6 +122,7 @@ namespace tyr
 			}
 
 			GUIPushConstants pushConstants;
+			pushConstants.brightness = renderFrame.uiBrightness;
 			pushConstants.scale[0] = 2.0f / submission.displaySize.x;
 			pushConstants.translate[0] = -1.0f;
 			// Y is flipped relative to the usual Vulkan ImGui maths - the viewport is flipped for

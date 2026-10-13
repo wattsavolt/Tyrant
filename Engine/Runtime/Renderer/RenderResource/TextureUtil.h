@@ -34,7 +34,7 @@ namespace tyr
 			return size >= 4 ? std::bit_width(size) - 1 : 0;
 		}
 
-		// Currently just supporting BC3 / BC5 and BC7 which have same block dimensions and block size so hard code for now in below 3 functions
+		// BC3, BC5, BC6H and BC7 share the same block dimensions and block size, so they're hard coded in the below 3 functions
 
 		// Returns block width in pixels. Uncompressed formats are just a 1x1 block.
 		static constexpr uint GetTextureBlockWidth(PixelFormat format)
@@ -47,6 +47,7 @@ namespace tyr
 			case PF_BC5_SNORM:
 			case PF_BC7_UNORM:
 			case PF_BC7_SRGB:
+			case PF_BC6H_UFLOAT:
 				return 4;
 			default:
 				return 1;
@@ -64,6 +65,7 @@ namespace tyr
 			case PF_BC5_SNORM:
 			case PF_BC7_UNORM:
 			case PF_BC7_SRGB:
+			case PF_BC6H_UFLOAT:
 				return 4;
 			default:
 				return 1;
@@ -81,6 +83,7 @@ namespace tyr
 			case PF_BC5_SNORM:
 			case PF_BC7_UNORM:
 			case PF_BC7_SRGB:
+			case PF_BC6H_UFLOAT:
 				return 16;
 			default:
 				return CalculateTexelFormatSize(format);

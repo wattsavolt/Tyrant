@@ -48,6 +48,8 @@ namespace tyr
 
 		void Import();
 		void DrawImportOptionsWindow();
+		// An equirectangular HDR image, made into a sky cubemap.
+		void DrawSkyImportOptionsWindow();
 
 		const EditorSettings& m_Settings;
 		LevelAction m_PendingAction = LevelAction::None;
@@ -65,6 +67,9 @@ namespace tyr
 		AssetPath m_DefaultLevel;
 
 		bool m_ShowImportOptions = false;
+		bool m_ShowSkyImportOptions = false;
+		// 0 picks a face size to match the image.
+		int m_SkyFaceSizeIndex = 0;
 		char m_PendingFilePath[PathConstants::c_MaxPathTotalSize]{};
 		char m_PendingModelName[PathConstants::c_MaxFileNameTotalSize]{};
 		char m_PendingOutputFolder[PathConstants::c_MaxRelativePathTotalSize]{};

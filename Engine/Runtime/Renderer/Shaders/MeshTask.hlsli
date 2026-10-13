@@ -3,7 +3,8 @@
 
 // Culls one draw's meshlets, TYR_MESHLETS_PER_TASK_GROUP per group, and launches a mesh shader
 // group for each survivor. The late pass (TYR_LATE_CULL 1) also tests them against the Hi-Z.
-// The masked pass (TYR_MASKED_PASS 1) keeps only masked meshlets, and the opaque pass the rest.
+// The masked pass (TYR_MASKED_PASS 1) keeps only masked meshlets, the translucent pass
+// (TYR_TRANSLUCENT_PASS 1) only translucent ones, and the opaque pass only opaque ones.
 
 #include "Culling.hlsli"
 #include "MeshTaskPayload.hlsli"
@@ -17,10 +18,19 @@ TYR_VK_BINDING(TYR_BINDING_MATERIAL, 0) StructuredBuffer<Material> materials : r
 // since a single indirect multi-draw call can't vary push constants per sub-draw.
 TYR_VK_BINDING(TYR_BINDING_MESH_DRAWS, 0) StructuredBuffer<MeshDraw> meshDraws : register(t16);
 
-#if TYR_MASKED_PASS
+#ifndef TYR_TRANSLUCENT_PASS
+#define TYR_TRANSLUCENT_PASS 0
+#endif
+
+#if TYR_TRANSLUCENT_PASS
+	static const uint c_DrawList = TYR_DRAW_LIST_TRANSLUCENT;
+	static const uint c_PassBlendMode = TYR_MATERIAL_BLEND_MODE_TRANSLUCENT;
+#elif TYR_MASKED_PASS
 	static const uint c_DrawList = TYR_LATE_CULL ? TYR_DRAW_LIST_LATE_MASKED : TYR_DRAW_LIST_EARLY_MASKED;
+	static const uint c_PassBlendMode = TYR_MATERIAL_BLEND_MODE_MASKED;
 #else
 	static const uint c_DrawList = TYR_LATE_CULL ? TYR_DRAW_LIST_LATE_OPAQUE : TYR_DRAW_LIST_EARLY_OPAQUE;
+	static const uint c_PassBlendMode = TYR_MATERIAL_BLEND_MODE_OPAQUE;
 #endif
 static const uint c_DrawBase = c_DrawList * TYR_MAX_MESH_INSTANCES;
 
@@ -70,11 +80,11 @@ void main(uint3 groupId : SV_GroupID, uint groupThreadIndex : SV_GroupIndex)
 	const float3 row2 = float3(instance.transform._31, instance.transform._32, instance.transform._33);
 	const float minScaleSqr = min(dot(row0, row0), min(dot(row1, row1), dot(row2, row2)));
 	const float3 toCentre = centre - camPos;
-	// Masked surfaces are drawn from both sides, so their meshlets are never back-facing.
-	const bool backFacing = and(and(minScaleSqr >= scaleSqr * 0.98f, dot(toCentre, coneAxis) >= cone.w * length(toCentre) + radius), !TYR_MASKED_PASS);
+	// Masked and translucent surfaces are drawn from both sides, so their meshlets are never back-facing.
+	const bool backFacing = and(and(minScaleSqr >= scaleSqr * 0.98f, dot(toCentre, coneAxis) >= cone.w * length(toCentre) + radius), c_PassBlendMode == TYR_MATERIAL_BLEND_MODE_OPAQUE);
 
 	const uint blendMode = materials[instance.materialIndices[meshlet.materialSlot]].flags & TYR_MATERIAL_BLEND_MODE_MASK;
-	const bool inPass = (blendMode == TYR_MATERIAL_BLEND_MODE_MASKED) == (TYR_MASKED_PASS != 0);
+	const bool inPass = blendMode == c_PassBlendMode;
 
 	bool visible = and(and(IsSphereInFrustum(centre, radius), !backFacing), inPass);
 #if TYR_LATE_CULL

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "RendererMacros.h"
+#include "Rendering/PostProcessSettings.h"
 #include "Core.h"
 #include "Math/Vector3.h"
 #include "RenderAPI/RenderAPITypes.h"
@@ -75,6 +76,8 @@ namespace tyr
 		LocalArray<DecalHandle, RenderConstants::c_MaxDecals> decals;
 		// Flat ambient term added to every pixel regardless of any light.
 		float ambient = 0.0f;
+		ExposureSettings exposure;
+		SkySettings sky;
 		// Whether this scene should actually render/upload this tick.
 		bool visible = true;
 
@@ -85,6 +88,8 @@ namespace tyr
 			lights.Clear();
 			decals.Clear();
 			ambient = 0.0f;
+			exposure = {};
+			sky = {};
 			visible = true;
 		}
 	};

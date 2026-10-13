@@ -33,6 +33,7 @@ namespace tyr
 		m_LatePipeline = args.latePipeline;
 		m_EarlyMaskedPipeline = args.earlyMaskedPipeline;
 		m_LateMaskedPipeline = args.lateMaskedPipeline;
+		m_TranslucentPipeline = args.translucentPipeline;
 		m_DescriptorSet = args.descriptorSet;
 	}
 
@@ -86,16 +87,31 @@ namespace tyr
 		}
 
 		// Opaque first, so masked pixels behind it are rejected before they're shaded.
-		DrawList(cmdList, opaquePipeline, late ? TYR_DRAW_LIST_LATE_OPAQUE : TYR_DRAW_LIST_EARLY_OPAQUE, pushConstants);
+		DrawList(cmdList, opaquePipeline, late ? TYR_DRAW_LIST_LATE_OPAQUE : TYR_DRAW_LIST_EARLY_OPAQUE, pushConstants, SHADER_STAGE_TASK_BIT);
 
 		const GraphicsPipelineHandle maskedPipeline = late ? m_LateMaskedPipeline : m_EarlyMaskedPipeline;
 		cmdList.BindGraphicsPipeline(maskedPipeline);
-		DrawList(cmdList, maskedPipeline, late ? TYR_DRAW_LIST_LATE_MASKED : TYR_DRAW_LIST_EARLY_MASKED, pushConstants);
+		DrawList(cmdList, maskedPipeline, late ? TYR_DRAW_LIST_LATE_MASKED : TYR_DRAW_LIST_EARLY_MASKED, pushConstants, SHADER_STAGE_TASK_BIT);
 	}
 
-	void GeometryPass::DrawList(CommandList& cmdList, GraphicsPipelineHandle pipeline, uint drawList, const ShaderCullPushConstants& pushConstants)
+	void GeometryPass::ExecuteTranslucent(CommandList& cmdList, const ShaderCullPushConstants& pushConstants)
 	{
-		cmdList.PushConstants(pipeline, SHADER_STAGE_TASK_BIT, 0, sizeof(pushConstants), &pushConstants);
+		cmdList.BindGraphicsPipeline(m_TranslucentPipeline);
+		cmdList.BindDescriptorSet(m_DescriptorSet, m_TranslucentPipeline);
+
+		if (!m_Scene)
+		{
+			return;
+		}
+
+		// The pixel shader also reads which frame's ray tracing structure to trace shadows in.
+		DrawList(cmdList, m_TranslucentPipeline, TYR_DRAW_LIST_TRANSLUCENT, pushConstants,
+			static_cast<ShaderStage>(SHADER_STAGE_TASK_BIT | SHADER_STAGE_FRAGMENT_BIT));
+	}
+
+	void GeometryPass::DrawList(CommandList& cmdList, GraphicsPipelineHandle pipeline, uint drawList, const ShaderCullPushConstants& pushConstants, ShaderStage pushConstantStages)
+	{
+		cmdList.PushConstants(pipeline, pushConstantStages, 0, sizeof(pushConstants), &pushConstants);
 
 		// GPU-driven culling has already compacted this list's draws into its own part of
 		// indirectDrawCommandBuffer/meshDrawBuffer and written how many into its own entry of

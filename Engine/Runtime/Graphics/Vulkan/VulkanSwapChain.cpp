@@ -2,6 +2,7 @@
 #include "VulkanDevice.h"
 #include "VulkanCommandQueue.h"
 #include "VulkanHelper.h"
+#include "VulkanExtensions.h"
 
 namespace tyr
 {
@@ -48,7 +49,7 @@ namespace tyr
 		Create(windowOSHandle, desc);
 	}
 
-	void VulkanSwapChain::Resize()
+	void VulkanSwapChain::Resize(const SwapChainDesc& desc)
 	{
 		// A minimized window (or one mid-destruction) reports a 0x0 surface extent - Vulkan
 		// allows creating a 0x0 swapchain, but creating image views for a 0x0 image is invalid
@@ -64,6 +65,7 @@ namespace tyr
 		}
 
 		TYR_ASSERT(!m_OldSwapChain);
+		m_Desc = desc;
 		m_OldImageData = m_ImageData;
 		// CreateSwapChainAndResources below fills m_ImageData in via LocalArray::Add() for the
 		// new swap chain's images - without clearing it first, those calls would append on top
@@ -110,12 +112,30 @@ namespace tyr
 		bool formatFound = false;
 		for (uint i = 0; i < formatCount; ++i)
 		{
-			const auto& sf = surfaceFormats[i];
+			const VkSurfaceFormatKHR& sf = surfaceFormats[i];
 			if (sf.format == colorFormat && sf.colorSpace == colorSpace)
 			{
 				formatFound = true;
 				surfaceFormat = sf;
 				break;
+			}
+		}
+
+		// HDR can be turned off between checking for it and getting here. Every Windows driver offers this one.
+		if (!formatFound)
+		{
+			TYR_LOG_WARNING("The swap chain's format isn't available, so it falls back to sRGB.");
+			for (uint i = 0; i < formatCount; ++i)
+			{
+				const VkSurfaceFormatKHR& sf = surfaceFormats[i];
+				if (sf.format == VK_FORMAT_B8G8R8A8_SRGB && sf.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+				{
+					formatFound = true;
+					surfaceFormat = sf;
+					m_Desc.pixelFormat = PF_B8G8R8A8_SRGB;
+					m_Desc.colorSpace = CP_SRGB_NONLINEAR;
+					break;
+				}
 			}
 		}
 
@@ -207,6 +227,23 @@ namespace tyr
 		swapChainCI.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 
 		TYR_GASSERT(vkCreateSwapchainKHR(m_LogicalDevice, &swapChainCI, g_VulkanAllocationCallbacks, &swapChain));
+
+		// Lets the display tone map what's beyond its own range less, or not at all.
+		if (m_Desc.colorSpace == CP_HDR10_ST2084 && vulkanDevice->IsHdrMetadataSupported() && m_Desc.maxLuminance > 0.0f)
+		{
+			VkHdrMetadataEXT metadata{};
+			metadata.sType = VK_STRUCTURE_TYPE_HDR_METADATA_EXT;
+			// Rec. 2020 primaries and the D65 white point.
+			metadata.displayPrimaryRed = { 0.708f, 0.292f };
+			metadata.displayPrimaryGreen = { 0.170f, 0.797f };
+			metadata.displayPrimaryBlue = { 0.131f, 0.046f };
+			metadata.whitePoint = { 0.3127f, 0.3290f };
+			metadata.maxLuminance = m_Desc.maxLuminance;
+			metadata.minLuminance = m_Desc.minLuminance;
+			metadata.maxContentLightLevel = m_Desc.maxLuminance;
+			metadata.maxFrameAverageLightLevel = m_Desc.maxFrameAverageLuminance;
+			vkSetHdrMetadataEXT(m_LogicalDevice, 1, &swapChain, &metadata);
+		}
 
 		uint imageCount;
 		TYR_GASSERT(vkGetSwapchainImagesKHR(m_LogicalDevice, swapChain, &imageCount, nullptr));

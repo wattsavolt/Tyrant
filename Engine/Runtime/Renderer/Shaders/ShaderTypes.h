@@ -66,6 +66,10 @@
 #define TYR_BINDING_DECAL 31
 // The active scene's visible decals this frame, as slots in the decal buffer, lowest sort order first.
 #define TYR_BINDING_DECAL_INDICES 32
+// Each viewport's exposure and the luminance histogram it's worked out from, indexed by viewport.
+#define TYR_BINDING_EXPOSURE 33
+// The tone mapped image a viewport shows, one storage image per buffered RenderFrame slot.
+#define TYR_BINDING_DISPLAY_OUTPUT 34
 
 // How many copies of the per-frame render targets TYR_BINDING_LIGHTING_OUTPUT holds, one
 // per buffered frame slot - kept in sync with the matching C++ constant.
@@ -80,6 +84,9 @@
 
 // The most decals one scene can have. Kept in sync with RenderConstants::c_MaxDecals.
 #define TYR_MAX_DECALS 256
+
+// How many luminance ranges the exposure histogram counts pixels into. The first holds black.
+#define TYR_EXPOSURE_HISTOGRAM_BIN_COUNT 256
 
 // Kept in sync with SkeletonConstants::c_MaxBones.
 #define TYR_MAX_BONES 256
@@ -99,15 +106,19 @@
 
 // The culling passes' draw lists, each TYR_MAX_MESH_INSTANCES draws long with its own draw count.
 // Each geometry pass draws its masked list after its opaque one, which masked pixels depth test against.
+// The translucent list is filled by the late culling pass and drawn after lighting.
 #define TYR_DRAW_LIST_EARLY_OPAQUE 0
 #define TYR_DRAW_LIST_LATE_OPAQUE 1
 #define TYR_DRAW_LIST_EARLY_MASKED 2
 #define TYR_DRAW_LIST_LATE_MASKED 3
-#define TYR_DRAW_LIST_COUNT 4
+#define TYR_DRAW_LIST_TRANSLUCENT 4
+#define TYR_DRAW_LIST_COUNT 5
 
 // Material::flags bits 0 and 1 hold its MaterialBlendMode.
 #define TYR_MATERIAL_BLEND_MODE_MASK 0x3
+#define TYR_MATERIAL_BLEND_MODE_OPAQUE 0
 #define TYR_MATERIAL_BLEND_MODE_MASKED 1
+#define TYR_MATERIAL_BLEND_MODE_TRANSLUCENT 2
 
 #ifdef __cplusplus
 
@@ -195,6 +206,29 @@ namespace tyr
 		// from GBufferPS.hlsl's raw motion vector so the jitter itself doesn't get mistaken for
 		// real scene motion. Zero whenever TAA is disabled.
 		TYR_SHADER_FLOAT2 jitterDelta;
+		// The sky's cubemap in the bindless textures, multiplied by skyTint and skyIntensity.
+		uint skyTextureIndex;
+		float skyIntensity;
+		TYR_SHADER_FLOAT3 skyTint;
+		// The sky's turn about the vertical axis.
+		float skyYawSin;
+		float skyYawCos;
+		float _pad1;
+		float _pad2;
+		float _pad3;
+	};
+
+	// A viewport's auto exposure, carried from frame to frame.
+	TYR_SHADER_STRUCT(ExposureState)
+	{
+		// Pixel counts by log luminance, cleared every frame.
+		uint histogram[TYR_EXPOSURE_HISTOGRAM_BIN_COUNT];
+		// What the image is multiplied by before tone mapping.
+		float exposure;
+		// The exposure as an EV100, which adapts towards its target over time.
+		float ev100;
+		float _pad0;
+		float _pad1;
 	};
 
 	/// Point light used in renderer 
@@ -203,7 +237,8 @@ namespace tyr
 		TYR_SHADER_FLOAT3 direction;
 		float intensity;
 		TYR_SHADER_FLOAT3 colour;
-		float padding;
+		// 1 when it casts shadows, otherwise 0.
+		float castsShadow;
 	};
 
 	TYR_SHADER_STRUCT(PointLight)
@@ -393,6 +428,55 @@ namespace tyr
 		uint boneMatrixOffset;
 		// Set on an instance's first skinning, when there's no last frame to keep.
 		uint firstFrame;
+	};
+
+	// Counts a viewport's pixels into its histogram by log luminance, for ExposureHistogramCS.hlsl.
+	TYR_SHADER_STRUCT(ExposureHistogramPushConstants)
+	{
+		uint colourIndex;
+		uint width;
+		uint height;
+		uint viewportIndex;
+		// The log2 luminance the second bin starts at, and one over the range the bins cover.
+		float minLogLuminance;
+		float invLogLuminanceRange;
+	};
+
+	// Works out a viewport's exposure from its histogram, for ExposureCS.hlsl.
+	TYR_SHADER_STRUCT(ExposurePushConstants)
+	{
+		uint viewportIndex;
+		float minLogLuminance;
+		float logLuminanceRange;
+		// The share of pixels, darkest first, left out of the average at each end.
+		float lowPercent;
+		float highPercent;
+		float minEV100;
+		float maxEV100;
+		// Added to the EV100. Positive makes the image brighter.
+		float compensation;
+		// 1 for auto exposure, 0 for manualEV100.
+		float autoExposure;
+		float manualEV100;
+		// How much of the way to the target the exposure moves this frame, brightening and darkening.
+		float adaptBrighten;
+		float adaptDarken;
+		// 0 the first frame, so it starts at the target.
+		uint hasHistory;
+	};
+
+	// Exposes, tone maps and writes a viewport's displayed image, for TonemapCS.hlsl.
+	TYR_SHADER_STRUCT(TonemapPushConstants)
+	{
+		uint colourIndex;
+		uint width;
+		uint height;
+		uint renderFrameIndex;
+		uint viewportIndex;
+		// The brightest the tone mapper outputs, where 1 is paper white.
+		float peakBrightness;
+		// Scales the output into the units the display pass expects.
+		float outputScale;
 	};
 
 #ifdef __cplusplus

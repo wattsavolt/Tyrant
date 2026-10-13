@@ -22,6 +22,10 @@ namespace tyr
 		// buffered-frame count) - a swap chain with fewer images than that will run out of
 		// images to acquire before the renderer is done with the ones already acquired.
 		uint minImageCount{};
+		// In nits, sent to an HDR display so it knows the range of what's shown. Zero when unknown.
+		float minLuminance{};
+		float maxLuminance{};
+		float maxFrameAverageLuminance{};
 	};
 
 	/// Class repesenting a swapchain
@@ -36,8 +40,9 @@ namespace tyr
 		// Recreates for the window specified
 		virtual void Recreate(void* windowOSHandle, const SwapChainDesc& desc) = 0;
 
-		// Should only be called when a window resize has occurred. Creates new swapchain, images and image views and switches
-		virtual void Resize() = 0;
+		// Creates a new swap chain, images and image views at the window's current size and switches to them.
+		// desc can change the format and colour space, such as when the display is switched to HDR.
+		virtual void Resize(const SwapChainDesc& desc) = 0;
 
 		virtual void DestroyOldSwapChain() = 0;
 
@@ -64,6 +69,8 @@ namespace tyr
 
 		Device* GetDevice() const { return m_Device; }
 		
+		// The format and colour space are what the swap chain actually uses, which falls back to
+		// sRGB if the one asked for isn't available.
 		const SwapChainDesc& GetDesc() const { return m_Desc; }
 
 		const LocalArray<ImageHandle, c_MaxImages>& GetImages() const { return m_ImageData.images; }

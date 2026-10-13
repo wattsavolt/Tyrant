@@ -149,7 +149,7 @@ namespace tyr
 		snprintf(byteCodeDirPath, sizeof(byteCodeDirPath), "%s/%s", m_Config.byteCodeRootDirPath.CStr(), shaderDesc.dirPath.CStr());
 
 		char byteCodeFilePath[PathConstants::c_MaxPathTotalSize];
-		snprintf(byteCodeFilePath, sizeof(byteCodeFilePath), "%s/%s%s", byteCodeDirPath, shaderDesc.fileName.CStr(), shaderExt);
+		snprintf(byteCodeFilePath, sizeof(byteCodeFilePath), "%s/%s%s%s", byteCodeDirPath, shaderDesc.fileName.CStr(), shaderDesc.variant.CStr(), shaderExt);
 		
 		uint64 sourceWriteTime = 0;
 		if (!GetNewestWriteTime(sourceFilePath, 0, sourceWriteTime))
@@ -347,7 +347,7 @@ namespace tyr
 		snprintf(byteCodeDirPath, sizeof(byteCodeDirPath), "%s/%s", m_Config.byteCodeRootDirPath.CStr(), shaderDesc.dirPath.CStr());
 
 		char byteCodeFilePath[PathConstants::c_MaxAssetPathTotalSize];
-		snprintf(byteCodeFilePath, sizeof(byteCodeFilePath), "%s/%s%s", byteCodeDirPath, shaderDesc.fileName.CStr(), shaderExt);
+		snprintf(byteCodeFilePath, sizeof(byteCodeFilePath), "%s/%s%s%s", byteCodeDirPath, shaderDesc.fileName.CStr(), shaderDesc.variant.CStr(), shaderExt);
 
 		static constexpr uint c_MaxByteCodeSize = 102400;
 		static TYR_THREADLOCAL uint8 byteCode[c_MaxByteCodeSize];

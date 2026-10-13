@@ -235,7 +235,10 @@ function(set_shader_config srcs)
 			set_property(SOURCE ${f} PROPERTY VS_SHADER_MODEL 6.4)
 			# Default but maybe change later.
 			set_property(SOURCE ${f} PROPERTY VS_SHADER_ENTRY_POINT main)
-			if(${FILE_NAME} MATCHES "VS$")
+			if(${FILE_NAME} MATCHES "RTPS$")
+				# Pixel shaders using inline ray tracing, which FXC can't build - see the RTCS branch below.
+				set_property(SOURCE ${f} PROPERTY VS_TOOL_OVERRIDE "None")
+			elseif(${FILE_NAME} MATCHES "VS$")
 				set_property(SOURCE ${f} PROPERTY VS_SHADER_TYPE Vertex)
 			elseif(${FILE_NAME} MATCHES "PS$")
 				set_property(SOURCE ${f} PROPERTY VS_SHADER_TYPE Pixel)

@@ -86,8 +86,14 @@ namespace tyr
 
 		// Width/height aren't needed - the swap chain reads the current extent straight from the
 		// surface itself. Stalls the main thread until it's safe to recreate; acceptable since
-		// resizes aren't frequent.
+		// resizes aren't frequent. Also switches between HDR and SDR to suit the display.
 		void ResizeWindow(RenderWindowHandle window);
+
+		// Takes effect from the next frame, recreating swap chains when HDR is turned on or off.
+		void SetDisplaySettings(const DisplaySettings& settings) { m_DisplaySettings = settings; }
+		const DisplaySettings& GetDisplaySettings() const { return m_DisplaySettings; }
+		// The active scene's window's display, and what it's being sent. False with no active window.
+		bool GetActiveDisplay(DisplayHDRInfo& outInfo, DisplayOutput& outOutput) const;
 
 		// Just allocates a pool slot - creation doesn't also create any textures yet, only once
 		// something actually requests a size.
@@ -203,6 +209,10 @@ namespace tyr
 		// The most a drawn LOD can stray from LOD0 per unit of distance from the camera.
 		float GetLodErrorPerDistance(uint renderFrameIndex);
 		void RecordLightingPass(CommandList& cmdList, uint renderFrameIndex);
+		// Draws translucent surfaces into the slot's translucent targets, then blends them over
+		// the lit image.
+		void RecordTranslucentPass(CommandList& cmdList, uint renderFrameIndex);
+		void RecordTranslucentCompositePass(CommandList& cmdList, uint renderFrameIndex);
 		// No separate Setup - the render graph usage declarations this needs are simple enough to
 		// stay inline in BuildAndExecuteRenderGraph's own "TAAResolve" lambda, the same way
 		// RecordLightingPass's sibling AddPass call already does. Re-derives the previous slot's
@@ -210,6 +220,13 @@ namespace tyr
 		// it all as parameters - keeps this Execute lambda's capture list small enough for
 		// Function<>'s fixed inline buffer (see Function.h).
 		void RecordTAAResolvePass(CommandList& cmdList, uint renderFrameIndex);
+		// Counts the HDR image into the viewport's histogram, then moves its exposure towards
+		// what the histogram calls for.
+		void RecordExposureClearPass(CommandList& cmdList, uint renderFrameIndex);
+		void RecordExposureHistogramPass(CommandList& cmdList, uint renderFrameIndex, uint sourceIndex);
+		void RecordExposurePass(CommandList& cmdList, uint renderFrameIndex);
+		// Exposes and tone maps sourceIndex's image into the slot's display texture.
+		void RecordTonemapPass(CommandList& cmdList, uint renderFrameIndex, uint sourceIndex);
 		// Draws the viewport grid over sourceIndex's image into the slot's overlay texture.
 		void RecordEditorGridPass(CommandList& cmdList, uint renderFrameIndex, uint sourceIndex);
 		// Draws this frame's debug lines into the slot's overlay texture.
@@ -259,6 +276,13 @@ namespace tyr
 		void EnsureTaaResolveOutputBound(uint renderFrameIndex, TextureHandle resolvedColourTexture);
 		// Same idea as EnsureLightingOutputBound, for the grid's overlay output.
 		void EnsureEditorGridOutputBound(uint renderFrameIndex, TextureHandle overlayColourTexture);
+		// Same idea as EnsureLightingOutputBound, for the tone mapper's output.
+		void EnsureDisplayOutputBound(uint renderFrameIndex, TextureHandle displayColourTexture);
+		// Reads the window's display again and recreates its swap chain if it should now be HDR
+		// or SDR, or just if resize is set. Stalls until the GPU is idle when it recreates.
+		void UpdateWindowOutput(RenderWindow& window, bool resize);
+		// The swap chain the window should have for its display and the display settings.
+		SwapChainDesc MakeSwapChainDesc(const RenderWindow& window, bool hdr) const;
 		// Creates or deletes the slot's overlay texture to match whether anything draws into it.
 		void SyncViewportOverlay(RenderViewport& viewport, uint slot);
 		// Actually deletes every buffered slot's textures (if any were ever created) and frees the
@@ -331,6 +355,11 @@ namespace tyr
 		TextureHandle m_ShadowMasksBoundTextures[RenderConstants::c_BufferedFrameCount];
 		TextureHandle m_TaaResolveOutputBoundTextures[RenderConstants::c_BufferedFrameCount];
 		TextureHandle m_EditorGridOutputBoundTextures[RenderConstants::c_BufferedFrameCount];
+		TextureHandle m_DisplayOutputBoundTextures[RenderConstants::c_BufferedFrameCount];
+		// Main thread only.
+		DisplaySettings m_DisplaySettings;
+		// The window the active scene last drew to. Main thread only.
+		RenderWindowHandle m_ActiveWindow;
 		HashMap<uint, uint> m_ViewIdIndexMap;
 		RenderContext m_Ctx{};
 		RenderResources m_Resources{};
@@ -374,6 +403,8 @@ namespace tyr
 		RenderRecords m_Records;
 		// Each material's MaterialBlendMode, for which instances the TLAS forces opaque. Render worker only.
 		uint8 m_MaterialBlendModes[RenderConstants::c_MaxMaterials] = {};
+		// How many materials are translucent, so the translucent passes only run when needed.
+		uint m_TranslucentMaterialCount = 0;
 		// Current per-slot capacity of m_Resources.blasScratchBuffer.
 		size_t m_BLASScratchCapacity = 0;
 		// How many floats each slot's Hi-Z buffer holds.

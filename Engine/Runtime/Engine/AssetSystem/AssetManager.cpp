@@ -102,9 +102,20 @@ namespace tyr
 
 	void AssetManager::ProcessPendingAssets()
 	{
+		// Earlier textures first, stopping at the first that still doesn't fit.
+		uint created = 0;
+		while (created < m_TexturesAwaitingUploadSpace.Size() && CreateTexture(m_TexturesAwaitingUploadSpace[created]))
+		{
+			++created;
+		}
+		m_TexturesAwaitingUploadSpace.EraseFromFront(created);
+
 		while (Optional<TextureHeaderLoadData*> ld = m_TextureHeadersLoadedQueue.Dequeue())
 		{
-			CreateTexture(ld.value());
+			if (!m_TexturesAwaitingUploadSpace.IsEmpty() || !CreateTexture(ld.value()))
+			{
+				m_TexturesAwaitingUploadSpace.Add(ld.value());
+			}
 		}
 
 		while (Optional<TexturePixelLoadData*> ld = m_TexturesLoadedQueue.Dequeue())
@@ -175,6 +186,11 @@ namespace tyr
 		{
 			TempDelete<TextureHeaderLoadData>(ld.value());
 		}
+		for (TextureHeaderLoadData* ld : m_TexturesAwaitingUploadSpace)
+		{
+			TempDelete<TextureHeaderLoadData>(ld);
+		}
+		m_TexturesAwaitingUploadSpace.Clear();
 
 		while (Optional<TexturePixelLoadData*> ld = m_TexturesLoadedQueue.Dequeue())
 		{
@@ -472,8 +488,15 @@ namespace tyr
 		}
 	}
 
-	void AssetManager::CreateTexture(TextureHeaderLoadData* ld)
+	bool AssetManager::CreateTexture(TextureHeaderLoadData* ld)
 	{
+		// The upload space is reserved first, so nothing is made for a texture that has to wait.
+		UploadBufferAllocation allocation;
+		if (!m_RendererAPI->RequestResourceUploadAllocation(ld->header.dataSize, allocation))
+		{
+			return false;
+		}
+
 		TextureDesc desc;
 #if !TYR_FINAL
 		char fileName[TYR_MAX_FILENAME_TOTAL_SIZE];
@@ -496,9 +519,7 @@ namespace tyr
 		pixelLD->texture = textureHandle;
 		pixelLD->filePath = ld->filePath;
 
-		// TODO: Retry if allocation is unsuccessful
-		const bool allocSuccess = m_RendererAPI->RequestResourceUploadAllocation(ld->header.dataSize, pixelLD->allocation);
-		TYR_ASSERT(allocSuccess);
+		pixelLD->allocation = allocation;
 
 		TempDelete<TextureHeaderLoadData>(ld);
 
@@ -513,6 +534,7 @@ namespace tyr
 			TYR_ASSERT(bytesRead >= pixelLD->allocation.size);
 			m_TexturesLoadedQueue.Enqueue(pixelLD);
 		});
+		return true;
 	}
 
 	void AssetManager::UploadTexture(TexturePixelLoadData* ld)

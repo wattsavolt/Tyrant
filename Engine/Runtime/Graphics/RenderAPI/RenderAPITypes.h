@@ -77,6 +77,12 @@ namespace tyr
 		PF_BC7_UNORM,
 		PF_BC7_SRGB,
 
+		PF_R16_SFLOAT,
+		// 10 bits per colour channel, for HDR10 swap chains.
+		PF_A2B10G10R10_UNORM,
+		// Compressed HDR colour without alpha, such as a sky.
+		PF_BC6H_UFLOAT,
+
 		PF_COUNT
 	};
 
@@ -86,6 +92,8 @@ namespace tyr
 		CP_BT709_LINEAR,
 		CP_BT709_NONLINEAR,
 		CP_BT2020_LINEAR,
+		// Rec. 2020 primaries with the PQ curve, as HDR10 displays expect.
+		CP_HDR10_ST2084,
 	};
 
 	enum ColorComponent : uint8

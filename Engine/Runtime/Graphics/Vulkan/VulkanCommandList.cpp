@@ -294,6 +294,13 @@ namespace tyr
 		vkCmdCopyBuffer(commandList.m_CommandBuffer, src.buffer, dst.buffer, 1, &vkBufferCopy);
 	}
 
+	void CommandList::FillBuffer(BufferHandle buffer, size_t offset, size_t size, uint value)
+	{
+		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);
+		const Buffer& dst = commandList.m_Device.GetBuffer(buffer);
+		vkCmdFillBuffer(commandList.m_CommandBuffer, dst.buffer, offset, size, value);
+	}
+
 	void CommandList::CopyBufferToImage(BufferHandle buffer, ImageHandle image, ImageLayout layout, const BufferImageCopyInfo* regions, uint regionCount)
 	{
 		CommandListInternal& commandList = static_cast<CommandListInternal&>(*this);

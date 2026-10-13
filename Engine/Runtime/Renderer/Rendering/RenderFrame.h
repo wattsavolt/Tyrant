@@ -186,6 +186,16 @@ namespace tyr
 		SceneLights activeLights;
 		// How many of the active scene's decals are in view this frame.
 		uint visibleDecalCount = 0;
+		// The active scene's exposure, and how the active window shows images, for this frame.
+		ExposureSettings exposure;
+		DisplayOutput displayOutput = DisplayOutput::SDR;
+		// The tone mapper's brightest output, where 1 is paper white, and what its output is scaled by.
+		float peakBrightness = 1.0f;
+		float displayOutputScale = 1.0f;
+		// How bright the GUI pass's white is, where 1 is 10000 nits. Only used for HDR10.
+		float uiBrightness = 1.0f;
+		// Shows the active viewport on the whole window, under any UI.
+		bool presentViewport = false;
 		// Frame update for the active scene
 		SceneFrame sceneFrame;
 
@@ -256,6 +266,7 @@ namespace tyr
 			debugLineOnTopCount = 0;
 			activeLights.Clear();
 			visibleDecalCount = 0;
+			presentViewport = false;
 			guiDrawData.Clear();
 			guiVertexCursor = 0;
 			guiIndexCursor = 0;

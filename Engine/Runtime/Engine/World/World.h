@@ -29,6 +29,8 @@ namespace tyr
 		Camera* camera = nullptr;
 		// Off for a world being edited in the level editor, so physics and audio don't run in it.
 		bool simulate = true;
+		// Shows the world on the whole of its window, rather than in an editor panel.
+		bool presentToWindow = false;
 	};
 
 	constexpr uint c_MaxActorInstanceEntities = 32;
@@ -85,6 +87,8 @@ namespace tyr
 		// Hierarchy folders, including ones with nothing in them.
 		Array<RelativePath> folders;
 		LevelSettings settings;
+		// The sky texture loaded for settings, kept until settings names another.
+		AssetID loadedSkyTexture;
 		// Goes up with every edit to the level, so the editor can tell when there are unsaved changes.
 		uint changeCount = 0;
 
@@ -95,6 +99,7 @@ namespace tyr
 		{
 			folders.Clear();
 			settings = {};
+			loadedSkyTexture = {};
 			changeCount = 0;
 			name = {};
 			camera = nullptr;

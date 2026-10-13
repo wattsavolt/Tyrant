@@ -24,7 +24,7 @@ namespace tyr
 	class DeviceInternal final : public Device
 	{
 	public:
-		DeviceInternal(VkInstance instance, VkPhysicalDevice device, uint index);
+		DeviceInternal(VkInstance instance, VkPhysicalDevice device, uint index, bool colourSpaceExtensionEnabled);
 		~DeviceInternal();
 
 		VkPhysicalDevice GetPhysicalDevice() const { return m_PhysicalDevice; }
@@ -77,6 +77,12 @@ namespace tyr
 
 		/// Asserts on a failed result. A lost device also logs what the driver says caused it.
 		void CheckResult(VkResult result) const;
+
+		/// Whether swap chains can use colour spaces other than sRGB, such as HDR10.
+		bool IsColourSpaceExtensionEnabled() const { return m_ColourSpaceExtensionEnabled; }
+
+		/// Whether a swap chain can tell the display the brightness range of what it shows.
+		bool IsHdrMetadataSupported() const { return m_HdrMetadataSupported; }
 		
 	private:
 		void ReportDeviceLost() const;
@@ -97,6 +103,8 @@ namespace tyr
 		VkPhysicalDevice m_PhysicalDevice;
 		VkDevice m_LogicalDevice = VK_NULL_HANDLE;
 		bool m_DeviceFaultSupported = false;
+		bool m_ColourSpaceExtensionEnabled = false;
+		bool m_HdrMetadataSupported = false;
 		mutable std::atomic<bool> m_DeviceLostReported = false;
 
 		VmaAllocator m_Allocator;

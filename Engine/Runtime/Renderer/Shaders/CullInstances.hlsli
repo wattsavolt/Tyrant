@@ -120,18 +120,20 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 	const uint maskedList = TYR_DRAW_LIST_EARLY_MASKED;
 #endif
 
-	// An instance is drawn in the opaque list if any of its submeshes isn't masked, and in the
-	// masked list if any is. Unused slots hold TYR_INVALID_INDEX.
+	// An instance is drawn in each list that any of its submeshes' blend modes belongs to.
+	// Unused slots hold TYR_INVALID_INDEX.
 	bool hasOpaque = false;
 	bool hasMasked = false;
+	bool hasTranslucent = false;
 	[unroll]
 	for (uint slot = 0; slot < 16; ++slot)
 	{
 		const uint materialIndex = instance.materialIndices[slot];
 		const bool used = materialIndex != TYR_INVALID_INDEX;
-		const bool masked = (materials[used ? materialIndex : 0].flags & TYR_MATERIAL_BLEND_MODE_MASK) == TYR_MATERIAL_BLEND_MODE_MASKED;
-		hasOpaque = or(hasOpaque, and(used, !masked));
-		hasMasked = or(hasMasked, and(used, masked));
+		const uint blendMode = materials[used ? materialIndex : 0].flags & TYR_MATERIAL_BLEND_MODE_MASK;
+		hasOpaque = or(hasOpaque, and(used, blendMode == TYR_MATERIAL_BLEND_MODE_OPAQUE));
+		hasMasked = or(hasMasked, and(used, blendMode == TYR_MATERIAL_BLEND_MODE_MASKED));
+		hasTranslucent = or(hasTranslucent, and(used, blendMode == TYR_MATERIAL_BLEND_MODE_TRANSLUCENT));
 	}
 
 	if (and(draw, hasOpaque))
@@ -142,6 +144,13 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 	{
 		AppendDraw(maskedList, meshInstanceIndex, lodIndex, lod.meshletCount);
 	}
+#if TYR_LATE_CULL
+	// Translucent surfaces are drawn once all the solid ones are in, whichever pass drew those.
+	if (and(visible, hasTranslucent))
+	{
+		AppendDraw(TYR_DRAW_LIST_TRANSLUCENT, meshInstanceIndex, lodIndex, lod.meshletCount);
+	}
+#endif
 }
 
 #endif

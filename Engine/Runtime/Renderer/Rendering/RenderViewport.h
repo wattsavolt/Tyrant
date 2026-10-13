@@ -46,9 +46,15 @@ namespace tyr
 		// (colourTexture otherwise). Reads the previous buffered slot's own resolvedColourTexture
 		// as history, the same cross-slot-reuse pattern the shadow denoiser already uses.
 		TextureHandle resolvedColourTexture;
+		// Translucent surfaces' lit colours added up by weight, with how much of what's behind
+		// still shows in alpha, and their coverage added up by weight.
+		TextureHandle translucentAccumulation;
+		TextureHandle translucentWeight;
 		// The final image with the grid drawn over it, kept apart from the TAA history so the grid
 		// never smears. Only exists while the viewport's grid is enabled.
 		TextureHandle overlayColourTexture;
+		// The exposed, tone mapped image the viewport shows, in linear colour where 1 is paper white.
+		TextureHandle displayColourTexture;
 		uint width = 0;
 		uint height = 0;
 		// Set whenever this slot's own targets are (re)created, consumed once by the geometry
@@ -81,5 +87,9 @@ namespace tyr
 		bool pendingResize[RenderConstants::c_BufferedFrameCount] = {};
 		// Main thread only - snapshotted into the RenderFrame for the worker.
 		ViewportGridDesc grid;
+		// Sized to its window and shown on all of it, rather than in an editor panel. Main thread only.
+		bool presentToWindow = false;
+		// Whether its exposure has been worked out before, so it can adapt from there. Render worker only.
+		bool exposureHasHistory = false;
 	};
 }

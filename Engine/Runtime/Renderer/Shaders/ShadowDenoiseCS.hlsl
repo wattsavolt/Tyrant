@@ -86,12 +86,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 	float finalResult = spatialResult;
 	if (g_PushConstants.hasHistory)
 	{
-		// gbufferMotion is current-NDC minus previous-NDC (see GBufferPS.hlsl) - subtracting it
-		// (halved, to go from NDC's [-1,1] range to UV's [0,1] range) reprojects this pixel back
-		// into where it was last frame.
+		// gbufferMotion is current NDC minus previous NDC. Halved to go from NDC's range to UV's,
+		// with y flipped since NDC y runs up and rows run down.
 		const float2 motion = textures[g_PushConstants.motionIndex].Load(pixelCoord).rg;
 		const float2 uv = (float2(dispatchThreadId.xy) + 0.5f) / float2(g_PushConstants.width, g_PushConstants.height);
-		const float2 prevUv = uv - motion * 0.5f;
+		const float2 prevUv = uv - motion * float2(0.5f, -0.5f);
 
 		// Exponential moving average, with no history for a pixel that was off-screen last frame.
 		// A bad blend self-corrects within a few frames as new raw samples keep arriving.

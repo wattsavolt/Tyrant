@@ -52,10 +52,24 @@ namespace tyr
 		bool isSRGB = false;
 	};
 
+	// A cubemap made one face at a time, so only one face's pixels are held at once.
+	struct HdrCubemapCompressionDesc
+	{
+		// Fills one face, faceSize by faceSize RGBA floats, in Vulkan's cubemap face order.
+		void (*fillFace)(uint face, float* rgba, uint faceSize, void* userData) = nullptr;
+		void* userData = nullptr;
+		uint faceSize = 0;
+		uint8 mipCount = 1;
+		// Path relative to assets folder
+		const char* outputFilePath = nullptr;
+	};
+
 	class TYR_ENGINE_API ImageCompressor final
 	{
 	public:
 		static bool CompressImage2D(const Image2DCompressionDesc& desc);
 		static bool CompressCubemap(const CubemapCompressionDesc& desc);
+		// Compresses to BC6H, laid out mip by mip with every face of a mip together, as uploads expect.
+		static bool CompressHdrCubemap(const HdrCubemapCompressionDesc& desc);
 	};
 }

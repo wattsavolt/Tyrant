@@ -31,7 +31,7 @@ namespace tyr
 		SetupDebugMessenger();
 		SelectPhysicalDevice();
 		
-		m_Device = new DeviceInternal(m_Instance, m_PhysicalDevice, m_PhysicalDeviceIndex);
+		m_Device = new DeviceInternal(m_Instance, m_PhysicalDevice, m_PhysicalDeviceIndex, m_ColourSpaceExtensionEnabled);
 	}
 
 	void VulkanRenderAPI::ShutdownAPI()
@@ -66,6 +66,8 @@ namespace tyr
 		Array<const char*> extensions;
 		extensions.Reserve(5);
 		VulkanHelper::GetRequiredInstanceExtensions(extensions, m_ValidationLayersEnabled);
+		// Lets swap chains use HDR colour spaces.
+		m_ColourSpaceExtensionEnabled = VulkanHelper::AddOptionalInstanceExtension(extensions, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
 
 		VkInstanceCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;

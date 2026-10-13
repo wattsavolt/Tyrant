@@ -51,6 +51,9 @@ namespace tyr
 		// Above zero, alphaTestCutoff keeps the texture's alpha-test coverage the same in every mip.
 		bool ImportTexture(const TextureSource& source, const char* outputFolderPath, const char* textureName, bool isSRGB, AssetID& textureID, float alphaTestCutoff = 0.0f);
 		bool ImportPbrMaterial(const PbrMaterialImportDesc& desc, AssetID& materialID);
+		// Makes a sky cubemap from an equirectangular HDR image, such as a .hdr from Poly Haven.
+		// A faceSize of 0 picks one to match the image's detail. Reimporting keeps the asset ID.
+		bool ImportSkyCubemap(const char* sourcePath, const char* outputFolderPath, const char* textureName, uint faceSize, AssetID& textureID);
 
 		// The default material and its textures. A material imported without one of its
 		// textures uses the default one instead. Looked up from the registry on first use.

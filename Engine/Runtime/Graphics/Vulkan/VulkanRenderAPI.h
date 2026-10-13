@@ -54,6 +54,7 @@ namespace tyr
 		// Implicitly destroyed automatically when instance is destroyed.
 		VkPhysicalDevice m_PhysicalDevice = VK_NULL_HANDLE;
 		uint m_PhysicalDeviceIndex = UINT32_MAX;
+		bool m_ColourSpaceExtensionEnabled = false;
 
 		static const Array<const char*> c_ValidationLayers;
 	};

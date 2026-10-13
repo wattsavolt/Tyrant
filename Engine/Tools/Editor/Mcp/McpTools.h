@@ -135,6 +135,13 @@ namespace tyr
 		ToolResult SetCamera(const simdjson::dom::object& args);
 		ToolResult GetMaterial(const simdjson::dom::object& args);
 		ToolResult SetMaterial(const simdjson::dom::object& args);
+		ToolResult GetLevelSettings(const simdjson::dom::object& args);
+		ToolResult SetLevelSettings(const simdjson::dom::object& args);
+		ToolResult ImportSky(const simdjson::dom::object& args);
+		ToolResult GetDisplay(const simdjson::dom::object& args);
+		ToolResult SetDisplay(const simdjson::dom::object& args);
+		void WriteLevelSettings();
+		void WriteDisplay();
 
 		static const Tool c_Tools[];
 

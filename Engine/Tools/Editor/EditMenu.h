@@ -19,6 +19,9 @@ namespace tyr
 		// Sends the level editor's or the game's render settings to the renderer.
 		void ApplyRenderSettings(bool editing);
 
+		// Whether the Level Settings window is open.
+		bool& LevelSettingsOpen() { return m_ShowLevelSettings; }
+
 	private:
 		struct RenderSettings
 		{
@@ -29,9 +32,12 @@ namespace tyr
 		void DrawProjectSettingsWindow();
 		// Returns true when the settings were changed.
 		static bool DrawRenderSettings(const char* label, RenderSettings& settings);
+		// HDR and brightness, shared by the editor and the game, and what the display can do.
+		void DrawDisplaySettings();
 
 		RendererAPI& m_RendererAPI;
 		bool m_ShowProjectSettings = false;
+		bool m_ShowLevelSettings = false;
 		// The level editor renders more cheaply than the game, which defaults to the best quality.
 		RenderSettings m_LevelEditorSettings = { QualityLevel::Medium, false };
 		RenderSettings m_GameSettings = { QualityLevel::Ultra, true };

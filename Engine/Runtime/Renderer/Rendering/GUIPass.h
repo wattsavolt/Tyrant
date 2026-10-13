@@ -17,6 +17,8 @@ namespace tyr
 	{
 		RenderRegistry* registry;
 		GraphicsPipelineHandle pipeline;
+		// Draws one texture over the whole window, under the UI.
+		GraphicsPipelineHandle fullscreenPipeline;
 		DescriptorSetHandle descriptorSet;
 		RenderBufferHandle vertexBuffer;
 		RenderBufferHandle indexBuffer;
@@ -39,11 +41,13 @@ namespace tyr
 		// renderFrame/renderFrameIndex are taken as parameters rather than stored on this
 		// object - it's a single long-lived instance reused every tick, so caching per-tick
 		// state here risks it going stale if anything mutates this object in between.
-		void Execute(CommandList& cmdList, const RenderFrame& renderFrame, uint renderFrameIndex);
+		// fullscreenTextureIndex is drawn over the whole window first, unless it's TYR_INVALID_INDEX.
+		void Execute(CommandList& cmdList, const RenderFrame& renderFrame, uint renderFrameIndex, uint fullscreenTextureIndex);
 
 	private:
 		RenderRegistry* m_Registry;
 		GraphicsPipelineHandle m_Pipeline;
+		GraphicsPipelineHandle m_FullscreenPipeline;
 		DescriptorSetHandle m_DescriptorSet;
 		RenderBufferHandle m_VertexBuffer;
 		RenderBufferHandle m_IndexBuffer;

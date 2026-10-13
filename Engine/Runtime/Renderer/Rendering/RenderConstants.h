@@ -87,6 +87,8 @@ namespace tyr
 		static constexpr uint c_ShadowLightSlotMapEntryCount = c_MaxPointLights + c_MaxSpotLights;
 		static constexpr uint c_MaxTextureDimension = 4096;
 		static constexpr uint c_MaxMips = TextureUtil::CalculateMaxMipsForBlockCompressed(c_MaxTextureDimension, c_MaxTextureDimension);
+		// One copy per mip of every layer of the largest texture: a full mip chain on each face of a cubemap.
+		static constexpr uint c_MaxImageCopyRegions = TextureUtil::CalculateMaxMips(c_MaxTextureDimension, c_MaxTextureDimension) * 6;
 		static constexpr uint c_RowPitchAlignment = 256;
 		// Alignment for each mip
 		static constexpr uint c_SubresourceAlignment = 256;

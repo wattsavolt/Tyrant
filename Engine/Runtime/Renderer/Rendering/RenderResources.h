@@ -7,6 +7,7 @@
 #include "RenderAPI/AccelerationStructure.h"
 #include "RenderBase/RenderHandles.h"
 #include "RenderConstants.h"
+#include "PostProcessSettings.h"
 #include "RenderResource/RenderAccelerationStructure.h"
 
 namespace tyr
@@ -66,14 +67,36 @@ namespace tyr
 		ShaderModuleHandle geometryMeshShader;
 		ShaderModuleHandle geometryPixelShader;
 		ShaderModuleHandle geometryMaskedPixelShader;
+		// Translucent surfaces, drawn after lighting into their own targets from both sides.
+		GraphicsPipelineHandle translucentPipeline;
+		ShaderModuleHandle translucentTaskShader;
+		ShaderModuleHandle translucentPixelShader;
+		// Blends the translucent targets over the lit image.
+		ComputePipelineHandle translucentCompositePipeline;
+		ShaderModuleHandle translucentCompositeComputeShader;
 
 		// Shared vertex/index buffers every GUI draw submission (editor chrome, in-game HUD/menu)
 		// is uploaded into for the frame.
 		RenderBufferHandle guiVertexBuffer;
 		RenderBufferHandle guiIndexBuffer;
-		GraphicsPipelineHandle guiPipeline;
+		// One per DisplayOutput, each writing its swap chain's encoding.
+		GraphicsPipelineHandle guiPipelines[static_cast<uint>(DisplayOutput::Count)];
 		ShaderModuleHandle guiVertexShader;
-		ShaderModuleHandle guiPixelShader;
+		ShaderModuleHandle guiPixelShaders[static_cast<uint>(DisplayOutput::Count)];
+		// Draws a viewport's image over the whole window, under the GUI, one per DisplayOutput.
+		GraphicsPipelineHandle fullscreenPipelines[static_cast<uint>(DisplayOutput::Count)];
+		ShaderModuleHandle fullscreenVertexShader;
+
+		// Each viewport's ShaderExposureState, by viewport pool index.
+		RenderBufferHandle exposureBuffer;
+		// Counts the image into its viewport's histogram, then works out the exposure from it.
+		ComputePipelineHandle exposureHistogramPipeline;
+		ShaderModuleHandle exposureHistogramComputeShader;
+		ComputePipelineHandle exposurePipeline;
+		ShaderModuleHandle exposureComputeShader;
+		// Exposes and tone maps the image into the viewport's display texture.
+		ComputePipelineHandle tonemapPipeline;
+		ShaderModuleHandle tonemapComputeShader;
 
 		// Full-screen compute pass that reads the G-buffer + depth and writes the shaded result
 		// into viewportColourTexture.

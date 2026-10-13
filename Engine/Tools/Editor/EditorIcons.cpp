@@ -27,7 +27,7 @@ namespace tyr
 
 			// Not sRGB, to match how the rest of the UI's colours and textures are treated.
 			AssetID iconID;
-			if (!MaterialImporter::Instance().ImportTexture(TextureSource{ sourcePath }, c_IconFolder, name, false, iconID))
+			if (!MaterialImporter::Instance().ImportTexture(TextureSource{ sourcePath }, c_IconFolder, name, true, iconID))
 			{
 				TYR_LOG_ERROR("Failed to import editor icon %s.", sourcePath);
 			}

@@ -4,6 +4,8 @@
 #include "RendererMacros.h"
 #include "RenderBase/RenderHandles.h"
 #include "Rendering/RenderViewport.h"
+#include "Rendering/PostProcessSettings.h"
+#include "RenderAPI/DisplayInfo.h"
 
 namespace tyr
 {
@@ -153,6 +155,20 @@ namespace tyr
 		// reads this, so there's no SceneFrame merge to also queue.
 		void SetSceneAmbient(SceneHandle scene, float ambient);
 
+		// The scene's sky and exposure, read every frame it renders. Main thread only, like ambient.
+		void SetSceneSky(SceneHandle scene, const SkySettings& sky);
+		void SetSceneExposure(SceneHandle scene, const ExposureSettings& exposure);
+
+		// Sizes the viewport to its scene's window and shows it on all of it, under any UI,
+		// rather than in an editor panel.
+		void SetRenderViewportPresented(RenderViewportHandle viewport, bool presented);
+
+		// HDR or SDR output and how bright it is, from the game's options. Takes effect from the next frame.
+		void SetDisplaySettings(const DisplaySettings& settings);
+		const DisplaySettings& GetDisplaySettings() const;
+		// The active window's display and what it's being sent. False with no active window.
+		bool GetActiveDisplay(DisplayHDRInfo& outInfo, DisplayOutput& outOutput) const;
+
 		// Takes an explicit scene handle so the light goes in that scene's light list.
 		DirLightHandle CreateDirectionalLight(SceneHandle scene, const DirectionalLightDesc& desc);
 
@@ -209,7 +225,7 @@ namespace tyr
 		// Copies what the active viewport shows this frame, before the editor's UI is drawn over it.
 		// Returns an ID to collect the pixels with once the GPU has finished, a few frames later.
 		uint RequestViewportCapture();
-		// RGBA8 rows packed top to bottom, in linear colour. Collecting a capture frees it.
+		// RGBA8 rows packed top to bottom, in sRGB. Collecting a capture frees it.
 		ViewportCaptureStatus TakeViewportCapture(uint id, Array<uint8>& outPixels, uint& outWidth, uint& outHeight);
 
 	private:

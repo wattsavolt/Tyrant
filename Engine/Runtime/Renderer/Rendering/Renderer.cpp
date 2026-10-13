@@ -104,6 +104,47 @@ namespace tyr
 			return size;
 		}
 
+		// The brightest the display should be sent, in nits. Most HDR displays reach 1000 even
+		// when they don't say.
+		float GetPeakNits(const DisplaySettings& settings, const DisplayHDRInfo& info)
+		{
+			return settings.peakNits > 0.0f ? settings.peakNits : (info.maxLuminance > 0.0f ? info.maxLuminance : 1000.0f);
+		}
+
+		// Where the exposure histogram's bins start and how much log2 luminance they cover, from
+		// starlight up past direct sunlight.
+		constexpr float c_HistogramMinLogLuminance = -12.0f;
+		constexpr float c_HistogramLogLuminanceRange = 22.0f;
+
+		// Captures copy the viewport's half float RGBA texture as it is.
+		constexpr size_t c_CaptureBytesPerPixel = 8;
+
+		float HalfToFloat(uint16 half)
+		{
+			const uint sign = (uint)(half & 0x8000) << 16;
+			const uint exponent = (half >> 10) & 0x1F;
+			const uint mantissa = half & 0x3FF;
+			uint bits;
+			if (exponent == 0)
+			{
+				// Zero or subnormal, which is mantissa * 2^-24.
+				const float value = (float)mantissa * (1.0f / 16777216.0f);
+				memcpy(&bits, &value, sizeof(bits));
+			}
+			else if (exponent == 31)
+			{
+				bits = 0x7F800000 | (mantissa << 13);
+			}
+			else
+			{
+				bits = ((exponent + 112) << 23) | (mantissa << 13);
+			}
+			bits |= sign;
+			float result;
+			memcpy(&result, &bits, sizeof(result));
+			return result;
+		}
+
 		// VkAccelerationStructureInstanceKHR's transform is row-major 3x4 for a column-vector
 		// transform, the transpose of this engine's row-vector Matrix4 - GetColumn4D(r) of the
 		// engine matrix gives exactly VK row r's 4 components.
@@ -234,6 +275,31 @@ namespace tyr
 		RenderFrame& renderFrame = GetRenderFrame();
 		renderFrame.deltaTime = deltaTime;
 		FlushRecords();
+
+		// Follows the window's display into or out of HDR, such as when HDR is turned on in the
+		// OS, the window moves to another display, or the display settings change.
+		if (renderFrame.activeScene)
+		{
+			const RenderWindowHandle windowHandle = GetImmediateSceneData(renderFrame.activeScene).windowHandle;
+			m_ActiveWindow = windowHandle;
+			if (windowHandle)
+			{
+				RenderWindow& window = m_WindowPool[windowHandle.h];
+				const bool hdr = m_DisplaySettings.hdrEnabled && window.displayInfo.hdrSupported;
+				if (hdr != window.hdrRequested || m_Ctx.device->HasDisplayChanged(window.osHandle, window.displayInfo))
+				{
+					UpdateWindowOutput(window, false);
+				}
+
+				const bool hdrOutput = window.output == DisplayOutput::HDR10;
+				const float paperWhiteNits = std::max(m_DisplaySettings.paperWhiteNits, 1.0f);
+				const float uiNits = std::max(m_DisplaySettings.uiNits, 1.0f);
+				renderFrame.displayOutput = window.output;
+				renderFrame.peakBrightness = hdrOutput ? std::max(GetPeakNits(m_DisplaySettings, window.displayInfo) / paperWhiteNits, 1.0f) : 1.0f;
+				renderFrame.displayOutputScale = hdrOutput ? paperWhiteNits / uiNits : 1.0f;
+				renderFrame.uiBrightness = hdrOutput ? uiNits / 10000.0f : 1.0f;
+			}
+		}
 
 		// Keeps the GPU memory budget the render target pool and asset cache go by up to date.
 		m_Ctx.device->SetCurrentFrameIndex(static_cast<uint>(m_FrameNumber));
@@ -427,6 +493,16 @@ namespace tyr
 				const SceneLights& sceneLights = immediateSceneData.lights;
 				ShaderSceneInfo sceneInfo{};
 				sceneInfo.ambient = immediateSceneData.ambient;
+
+				// Only a cubemap can be sampled as the sky.
+				const SkySettings& sky = immediateSceneData.sky;
+				const bool hasSky = sky.texture && m_Registry.GetTexture(sky.texture).info.type == ImageType::Cubemap;
+				sceneInfo.skyTextureIndex = hasSky ? sky.texture.h.index : TYR_INVALID_INDEX;
+				sceneInfo.skyIntensity = sky.intensity;
+				sceneInfo.skyTint = sky.tint;
+				sceneInfo.skyYawSin = Math::Sin(sky.yaw * Math::c_DegToRad);
+				sceneInfo.skyYawCos = Math::Cos(sky.yaw * Math::c_DegToRad);
+				renderFrame.exposure = immediateSceneData.exposure;
 				sceneInfo.dirLightCount = sceneLights.dirLights.Size();
 				sceneInfo.pointLightCount = sceneLights.pointLights.Size();
 				sceneInfo.spotLightCount = sceneLights.spotLights.Size();
@@ -462,11 +538,20 @@ namespace tyr
 					RenderViewport& viewport = m_RenderViewportPool[viewportHandle.h];
 					RenderViewportTextureData& targets = viewport.textureData[m_RenderFrameIndex];
 
+					// Shown on the whole window, so it's always the window's size.
+					if (viewport.presentToWindow && swapChainWidth != 0 && swapChainHeight != 0)
+					{
+						viewport.requestedWidth = swapChainWidth;
+						viewport.requestedHeight = swapChainHeight;
+						viewport.pendingResize[m_RenderFrameIndex] = !targets.colourTexture || targets.width != swapChainWidth || targets.height != swapChainHeight;
+						renderFrame.presentViewport = true;
+					}
+
 					// Apply this slot's own pending resize, if any. A no-op (just clears the flag) if
 					// this slot already matches the requested size.
 					if (viewport.pendingResize[m_RenderFrameIndex])
 					{
-						if (targets.width != viewport.requestedWidth || targets.height != viewport.requestedHeight)
+						if (!targets.colourTexture || targets.width != viewport.requestedWidth || targets.height != viewport.requestedHeight)
 						{
 							ResizeRenderViewportSlot(viewport, m_RenderFrameIndex, "Viewport", viewport.requestedWidth, viewport.requestedHeight);
 						}
@@ -480,6 +565,7 @@ namespace tyr
 					EnsureShadowMaskArraysBound(m_RenderFrameIndex, targets.shadowMasksRaw, targets.shadowMasks);
 					EnsureTaaResolveOutputBound(m_RenderFrameIndex, targets.resolvedColourTexture);
 					EnsureEditorGridOutputBound(m_RenderFrameIndex, targets.overlayColourTexture);
+					EnsureDisplayOutputBound(m_RenderFrameIndex, targets.displayColourTexture);
 
 					// Only drawn once the slot has somewhere to draw it.
 					if (targets.overlayColourTexture)
@@ -495,7 +581,7 @@ namespace tyr
 						// Buffers are only made on the main thread, so the readback is sized here.
 						if (renderFrame.captureRequested)
 						{
-							EnsureCaptureCapacity(m_RenderFrameIndex, (size_t)targets.width * targets.height * 4);
+							EnsureCaptureCapacity(m_RenderFrameIndex, (size_t)targets.width * targets.height * c_CaptureBytesPerPixel);
 						}
 					}
 				}
@@ -649,7 +735,7 @@ namespace tyr
 
 		if (m_FirstRender)
 		{
-			constexpr uint bindingCount = 24;
+			constexpr uint bindingCount = 25;
 			BufferBindingInfo bindingInfos[bindingCount];
 			BufferBindingUpdate bindingUpdates[bindingCount];
 
@@ -685,6 +771,7 @@ namespace tyr
 			SetBinding(21, TYR_BINDING_INSTANCE_VISIBILITY, m_Resources.instanceVisibilityBuffer);
 			SetBinding(22, TYR_BINDING_DECAL, m_Resources.decalBuffer);
 			SetBinding(23, TYR_BINDING_DECAL_INDICES, m_Resources.decalIndexBuffer);
+			SetBinding(24, TYR_BINDING_EXPOSURE, m_Resources.exposureBuffer);
 
 			m_Ctx.device->UpdateDescriptorSet(m_Resources.descriptorSet, bindingUpdates, bindingCount);
 
@@ -846,8 +933,11 @@ namespace tyr
 
 		// Done whether or not a scene is active, since a removed scene's instances still leave it.
 		MergeSceneContent(renderFrame.sceneFrame);
+		constexpr uint8 c_Translucent = static_cast<uint8>(MaterialBlendMode::Translucent);
 		for (const MaterialBlendModeUpdate& update : renderFrame.materialBlendModeUpdates)
 		{
+			m_TranslucentMaterialCount -= m_MaterialBlendModes[update.materialIndex] == c_Translucent ? 1 : 0;
+			m_TranslucentMaterialCount += update.blendMode == c_Translucent ? 1 : 0;
 			m_MaterialBlendModes[update.materialIndex] = update.blendMode;
 		}
 
@@ -1351,6 +1441,16 @@ namespace tyr
 			float pixelSizePerDistance;
 		};
 
+		// Matches TranslucentCompositeCS.hlsl's push constants byte for byte.
+		struct TranslucentCompositePushConstants
+		{
+			uint accumulationIndex;
+			uint weightIndex;
+			uint width;
+			uint height;
+			uint renderFrameIndex;
+		};
+
 		// Matches TAAResolveCS.hlsl's push constant cbuffer byte-for-byte.
 		struct TAAResolvePushConstants
 		{
@@ -1362,6 +1462,8 @@ namespace tyr
 			uint renderFrameIndex;
 			uint hasHistory;
 			float historyBlendWeight;
+			uint depthIndex;
+			uint viewportIndex;
 		};
 
 		// Matches EditorGridCS.hlsl's push constant cbuffer byte-for-byte.
@@ -1436,6 +1538,83 @@ namespace tyr
 		cmdList.Dispatch(groupCountX, groupCountY, 1);
 	}
 
+	void Renderer::RecordTranslucentPass(CommandList& cmdList, uint renderFrameIndex)
+	{
+		RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
+		if (!viewportData || viewportData->width == 0 || viewportData->height == 0)
+		{
+			return;
+		}
+
+		const Texture& accumulation = m_Registry.GetTexture(viewportData->translucentAccumulation);
+		const Texture& weight = m_Registry.GetTexture(viewportData->translucentWeight);
+		const Texture& depthBuffer = m_Registry.GetTexture(viewportData->depthBuffer);
+
+		Viewport viewport;
+		viewport.width = viewportData->width;
+		viewport.height = viewportData->height;
+
+		RenderingInfo renderingInfo{};
+		renderingInfo.renderArea.offset = { 0, 0 };
+		renderingInfo.renderArea.extents = { viewportData->width, viewportData->height };
+		renderingInfo.viewMask = 0;
+		renderingInfo.layerCount = 1;
+
+		// Nothing added yet, and everything behind still shows.
+		RenderingAttachmentInfo colourAttachments[2];
+		colourAttachments[0].loadOp = AttachmentLoadOp::Clear;
+		colourAttachments[0].storeOp = AttachmentStoreOp::Store;
+		colourAttachments[0].resolveMode = RESOLVE_MODE_NONE;
+		colourAttachments[0].imageLayout = accumulation.imageLayout;
+		colourAttachments[0].clearValue.colour = { 0.0f, 0.0f, 0.0f, 1.0f };
+		colourAttachments[0].imageView = accumulation.imageView;
+
+		colourAttachments[1].loadOp = AttachmentLoadOp::Clear;
+		colourAttachments[1].storeOp = AttachmentStoreOp::Store;
+		colourAttachments[1].resolveMode = RESOLVE_MODE_NONE;
+		colourAttachments[1].imageLayout = weight.imageLayout;
+		colourAttachments[1].clearValue.colour = { 0.0f, 0.0f, 0.0f, 0.0f };
+		colourAttachments[1].imageView = weight.imageView;
+
+		renderingInfo.colourAttachmentCount = 2;
+		renderingInfo.colourAttachments = colourAttachments;
+
+		// Tested against, never written.
+		renderingInfo.hasDepthAttachment = true;
+		renderingInfo.depthAttachment.loadOp = AttachmentLoadOp::Load;
+		renderingInfo.depthAttachment.storeOp = AttachmentStoreOp::Store;
+		renderingInfo.depthAttachment.resolveMode = RESOLVE_MODE_NONE;
+		renderingInfo.depthAttachment.imageLayout = depthBuffer.imageLayout;
+		renderingInfo.depthAttachment.imageView = depthBuffer.imageView;
+
+		cmdList.BeginRendering(renderingInfo);
+		cmdList.SetViewport(&viewport, 1);
+		cmdList.SetScissor(&renderingInfo.renderArea, 1);
+		m_GeometryPass->ExecuteTranslucent(cmdList, MakeCullPushConstants(renderFrameIndex));
+		cmdList.EndRendering();
+	}
+
+	void Renderer::RecordTranslucentCompositePass(CommandList& cmdList, uint renderFrameIndex)
+	{
+		RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
+		if (!viewportData || viewportData->width == 0 || viewportData->height == 0)
+		{
+			return;
+		}
+
+		cmdList.BindComputePipeline(m_Resources.translucentCompositePipeline);
+		cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.translucentCompositePipeline);
+
+		TranslucentCompositePushConstants pushConstants;
+		pushConstants.accumulationIndex = viewportData->translucentAccumulation.h.index;
+		pushConstants.weightIndex = viewportData->translucentWeight.h.index;
+		pushConstants.width = viewportData->width;
+		pushConstants.height = viewportData->height;
+		pushConstants.renderFrameIndex = renderFrameIndex;
+		cmdList.PushConstants(m_Resources.translucentCompositePipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstants), &pushConstants);
+		cmdList.Dispatch((viewportData->width + 7) / 8, (viewportData->height + 7) / 8, 1);
+	}
+
 	void Renderer::RecordTAAResolvePass(CommandList& cmdList, uint renderFrameIndex)
 	{
 		RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
@@ -1467,11 +1646,103 @@ namespace tyr
 		pushConstants.renderFrameIndex = renderFrameIndex;
 		pushConstants.hasHistory = hasHistory ? 1u : 0u;
 		pushConstants.historyBlendWeight = m_QualitySettings.taaHistoryBlendWeight;
+		pushConstants.depthIndex = viewportData->depthBuffer.h.index;
+		pushConstants.viewportIndex = scene.renderViewport.h.index;
 		cmdList.PushConstants(m_Resources.taaResolvePipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(TAAResolvePushConstants), &pushConstants);
 
 		const uint groupCountX = (viewportData->width + 7) / 8;
 		const uint groupCountY = (viewportData->height + 7) / 8;
 		cmdList.Dispatch(groupCountX, groupCountY, 1);
+	}
+
+	void Renderer::RecordExposureClearPass(CommandList& cmdList, uint renderFrameIndex)
+	{
+		(void)renderFrameIndex;
+		const uint viewportIndex = m_Data.scenePool[m_Data.activeScene.h].renderViewport.h.index;
+		cmdList.FillBuffer(m_Registry.GetBuffer(m_Resources.exposureBuffer).buffer, sizeof(ShaderExposureState) * viewportIndex,
+			sizeof(uint) * TYR_EXPOSURE_HISTOGRAM_BIN_COUNT, 0);
+	}
+
+	void Renderer::RecordExposureHistogramPass(CommandList& cmdList, uint renderFrameIndex, uint sourceIndex)
+	{
+		const RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
+		if (!viewportData || viewportData->width == 0 || viewportData->height == 0)
+		{
+			return;
+		}
+
+		cmdList.BindComputePipeline(m_Resources.exposureHistogramPipeline);
+		cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.exposureHistogramPipeline);
+
+		ShaderExposureHistogramPushConstants pushConstants{};
+		pushConstants.colourIndex = sourceIndex;
+		pushConstants.width = viewportData->width;
+		pushConstants.height = viewportData->height;
+		pushConstants.viewportIndex = m_Data.scenePool[m_Data.activeScene.h].renderViewport.h.index;
+		pushConstants.minLogLuminance = c_HistogramMinLogLuminance;
+		pushConstants.invLogLuminanceRange = 1.0f / c_HistogramLogLuminanceRange;
+		cmdList.PushConstants(m_Resources.exposureHistogramPipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstants), &pushConstants);
+
+		// Each group covers 32x32 pixels.
+		cmdList.Dispatch((viewportData->width + 31) / 32, (viewportData->height + 31) / 32, 1);
+	}
+
+	void Renderer::RecordExposurePass(CommandList& cmdList, uint renderFrameIndex)
+	{
+		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
+		const ExposureSettings& settings = renderFrame.exposure;
+		const Scene& scene = m_Data.scenePool[m_Data.activeScene.h];
+		RenderViewport& viewport = m_RenderViewportPool[scene.renderViewport.h];
+
+		cmdList.BindComputePipeline(m_Resources.exposurePipeline);
+		cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.exposurePipeline);
+
+		ShaderExposurePushConstants pushConstants{};
+		pushConstants.viewportIndex = scene.renderViewport.h.index;
+		pushConstants.minLogLuminance = c_HistogramMinLogLuminance;
+		pushConstants.logLuminanceRange = c_HistogramLogLuminanceRange;
+		// The darkest half and the brightest few percent are left out, so a lamp or the night
+		// sky filling part of the view doesn't swing the exposure.
+		pushConstants.lowPercent = 0.5f;
+		pushConstants.highPercent = 0.95f;
+		pushConstants.minEV100 = settings.minEV100;
+		pushConstants.maxEV100 = std::max(settings.maxEV100, settings.minEV100);
+		pushConstants.compensation = settings.compensation;
+		pushConstants.autoExposure = settings.autoExposure ? 1.0f : 0.0f;
+		pushConstants.manualEV100 = settings.manualEV100;
+		// The same adaptation whatever the frame rate.
+		pushConstants.adaptBrighten = 1.0f - Math::Exp(-renderFrame.deltaTime * settings.brightenSpeed);
+		pushConstants.adaptDarken = 1.0f - Math::Exp(-renderFrame.deltaTime * settings.darkenSpeed);
+		pushConstants.hasHistory = viewport.exposureHasHistory ? 1u : 0u;
+		cmdList.PushConstants(m_Resources.exposurePipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstants), &pushConstants);
+		cmdList.Dispatch(1, 1, 1);
+
+		viewport.exposureHasHistory = true;
+	}
+
+	void Renderer::RecordTonemapPass(CommandList& cmdList, uint renderFrameIndex, uint sourceIndex)
+	{
+		const RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
+		if (!viewportData || viewportData->width == 0 || viewportData->height == 0)
+		{
+			return;
+		}
+
+		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
+
+		cmdList.BindComputePipeline(m_Resources.tonemapPipeline);
+		cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.tonemapPipeline);
+
+		ShaderTonemapPushConstants pushConstants{};
+		pushConstants.colourIndex = sourceIndex;
+		pushConstants.width = viewportData->width;
+		pushConstants.height = viewportData->height;
+		pushConstants.renderFrameIndex = renderFrameIndex;
+		pushConstants.viewportIndex = m_Data.scenePool[m_Data.activeScene.h].renderViewport.h.index;
+		pushConstants.peakBrightness = renderFrame.peakBrightness;
+		pushConstants.outputScale = renderFrame.displayOutputScale;
+		cmdList.PushConstants(m_Resources.tonemapPipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstants), &pushConstants);
+		cmdList.Dispatch((viewportData->width + 7) / 8, (viewportData->height + 7) / 8, 1);
 	}
 
 	void Renderer::RecordEditorGridPass(CommandList& cmdList, uint renderFrameIndex, uint sourceIndex)
@@ -1672,10 +1943,21 @@ namespace tyr
 		renderingInfo.colourAttachmentCount = 1;
 		renderingInfo.colourAttachments = &colourAttachment;
 
+		// What the viewport shows, the same texture an editor panel would.
+		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
+		const RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
+		uint fullscreenTextureIndex = TYR_INVALID_INDEX;
+		if (renderFrame.presentViewport && viewportData && viewportData->displayColourTexture)
+		{
+			fullscreenTextureIndex = viewportData->overlayColourTexture && renderFrame.hasOverlay
+				? viewportData->overlayColourTexture.h.index
+				: viewportData->displayColourTexture.h.index;
+		}
+
 		cmdList.BeginRendering(renderingInfo);
 		cmdList.SetViewport(&viewport, 1);
 		cmdList.SetScissor(&renderingInfo.renderArea, 1);
-		m_GUIPass->Execute(cmdList, m_RenderFrames[renderFrameIndex], renderFrameIndex);
+		m_GUIPass->Execute(cmdList, renderFrame, renderFrameIndex, fullscreenTextureIndex);
 		cmdList.EndRendering();
 	}
 
@@ -1692,7 +1974,8 @@ namespace tyr
 
 		GUIPassArgs guiArgs;
 		guiArgs.registry = &m_Registry;
-		guiArgs.pipeline = m_Resources.guiPipeline;
+		guiArgs.pipeline = m_Resources.guiPipelines[static_cast<uint>(renderFrame.displayOutput)];
+		guiArgs.fullscreenPipeline = m_Resources.fullscreenPipelines[static_cast<uint>(renderFrame.displayOutput)];
 		guiArgs.descriptorSet = m_Resources.descriptorSet;
 		guiArgs.vertexBuffer = m_Resources.guiVertexBuffer;
 		guiArgs.indexBuffer = m_Resources.guiIndexBuffer;
@@ -1718,6 +2001,7 @@ namespace tyr
 			geometryArgs.latePipeline = m_Resources.geometryLatePipeline;
 			geometryArgs.earlyMaskedPipeline = m_Resources.geometryEarlyMaskedPipeline;
 			geometryArgs.lateMaskedPipeline = m_Resources.geometryLateMaskedPipeline;
+			geometryArgs.translucentPipeline = m_Resources.translucentPipeline;
 			geometryArgs.descriptorSet = m_Resources.descriptorSet;
 			m_GeometryPass->Recreate(geometryArgs);
 
@@ -1798,6 +2082,10 @@ namespace tyr
 			Texture* shadowMasks = nullptr;
 			Texture* resolvedColourTexture = nullptr;
 			Texture* overlayColourTexture = nullptr;
+			Texture* translucentAccumulation = nullptr;
+			Texture* translucentWeight = nullptr;
+			Texture* displayColourTexture = nullptr;
+			RenderBuffer& exposureBuffer = m_Registry.GetBuffer(m_Resources.exposureBuffer);
 
 			if (hasViewportTextures)
 			{
@@ -1821,6 +2109,9 @@ namespace tyr
 				shadowMasksRaw = &m_Registry.GetTexture(viewportData->shadowMasksRaw);
 				shadowMasks = &m_Registry.GetTexture(viewportData->shadowMasks);
 				resolvedColourTexture = &m_Registry.GetTexture(viewportData->resolvedColourTexture);
+				translucentAccumulation = &m_Registry.GetTexture(viewportData->translucentAccumulation);
+				translucentWeight = &m_Registry.GetTexture(viewportData->translucentWeight);
+				displayColourTexture = &m_Registry.GetTexture(viewportData->displayColourTexture);
 
 				// A freshly (re)created texture's imageLayout is pre-set to its steady-state
 				// value, not UNKNOWN, even though the real image always starts life as
@@ -1838,6 +2129,9 @@ namespace tyr
 					shadowMasksRaw->imageLayout = IMAGE_LAYOUT_UNKNOWN;
 					shadowMasks->imageLayout = IMAGE_LAYOUT_UNKNOWN;
 					resolvedColourTexture->imageLayout = IMAGE_LAYOUT_UNKNOWN;
+					translucentAccumulation->imageLayout = IMAGE_LAYOUT_UNKNOWN;
+					translucentWeight->imageLayout = IMAGE_LAYOUT_UNKNOWN;
+					displayColourTexture->imageLayout = IMAGE_LAYOUT_UNKNOWN;
 					viewportData->isNew = false;
 				}
 
@@ -1849,6 +2143,10 @@ namespace tyr
 				graph.RegisterTexture(shadowMasksRaw);
 				graph.RegisterTexture(shadowMasks);
 				graph.RegisterTexture(resolvedColourTexture);
+				graph.RegisterTexture(translucentAccumulation);
+				graph.RegisterTexture(translucentWeight);
+				graph.RegisterTexture(displayColourTexture);
+				graph.RegisterBuffer(&exposureBuffer);
 			}
 
 			Texture& swapChainImageProxy = window->swapChainImageProxies[window->swapChainImageIndex];
@@ -2085,6 +2383,39 @@ namespace tyr
 				[this, renderFrameIndex](CommandList& cl) { RecordLightingPass(cl, renderFrameIndex); },
 				RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
 
+			// Translucent surfaces, lit and added up in any order, then blended over the lit image.
+			// Skipped while no material is translucent.
+			if (hasViewportTextures && m_TranslucentMaterialCount > 0)
+			{
+				graph.AddPass("Translucent",
+					[this, translucentAccumulation, translucentWeight, depthBuffer, &renderFrame, hizBuffer, renderFrameIndex](RenderGraphBuilder& builder)
+					{
+						m_GeometryPass->Setup(builder, renderFrame, true, hizBuffer);
+						builder.WriteTexture(*translucentAccumulation, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+							static_cast<BarrierAccess>(BARRIER_ACCESS_COLOR_ATTACHMENT_READ_BIT | BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT), IMAGE_LAYOUT_GENERAL);
+						builder.WriteTexture(*translucentWeight, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+							static_cast<BarrierAccess>(BARRIER_ACCESS_COLOR_ATTACHMENT_READ_BIT | BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT), IMAGE_LAYOUT_GENERAL);
+						builder.ReadTexture(*depthBuffer, static_cast<PipelineStage>(PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT),
+							BARRIER_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT, IMAGE_LAYOUT_GENERAL);
+						builder.ReadAccelerationStructure(m_Resources.tlas[renderFrameIndex], PIPELINE_STAGE_FRAGMENT_SHADER_BIT, BARRIER_ACCESS_ACCELERATION_STRUCTURE_READ_BIT);
+						builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.shadowLightSlotMapBuffer), PIPELINE_STAGE_FRAGMENT_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT);
+						builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.lightIndexBuffer), PIPELINE_STAGE_FRAGMENT_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT);
+					},
+					[this, renderFrameIndex](CommandList& cl) { RecordTranslucentPass(cl, renderFrameIndex); },
+					RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
+
+				graph.AddPass("TranslucentComposite",
+					[translucentAccumulation, translucentWeight, colourTexture](RenderGraphBuilder& builder)
+					{
+						builder.ReadTexture(*translucentAccumulation, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+						builder.ReadTexture(*translucentWeight, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+						builder.WriteTexture(*colourTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+							static_cast<BarrierAccess>(BARRIER_ACCESS_SHADER_READ_BIT | BARRIER_ACCESS_SHADER_WRITE_BIT), IMAGE_LAYOUT_GENERAL);
+					},
+					[this, renderFrameIndex](CommandList& cl) { RecordTranslucentCompositePass(cl, renderFrameIndex); },
+					RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
+			}
+
 			// TAA resolve - optional (m_TaaEnabled, independent of quality level so it can be
 			// isolated on its own). Whichever texture it leaves as the "real" result this tick is
 			// what "GUI" below actually reads and what the editor displays.
@@ -2107,10 +2438,12 @@ namespace tyr
 				}
 
 				graph.AddPass("TAAResolve",
-					[this, colourTexture, gbufferMotion, resolvedColourTexture, taaPrevResolvedColourTextureHandle, taaHasHistory](RenderGraphBuilder& builder)
+					[this, colourTexture, gbufferMotion, depthBuffer, resolvedColourTexture, &exposureBuffer, taaPrevResolvedColourTextureHandle, taaHasHistory](RenderGraphBuilder& builder)
 					{
 						builder.ReadTexture(*colourTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
 						builder.ReadTexture(*gbufferMotion, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+						builder.ReadTexture(*depthBuffer, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+						builder.ReadBuffer(exposureBuffer, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT);
 						builder.WriteTexture(*resolvedColourTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
 						if (taaHasHistory)
 						{
@@ -2123,18 +2456,63 @@ namespace tyr
 				taaDisplayTexture = resolvedColourTexture;
 			}
 
-			// Drawn after TAA into its own texture, so the grid never ends up in TAA's history.
-			Texture* displayTexture = taaDisplayTexture;
-			if (overlayColourTexture && taaDisplayTexture)
+			// Exposure is worked out from the anti-aliased HDR image, then applied to it with the
+			// tone mapper, into the texture the viewport shows.
+			Texture* displayTexture = nullptr;
+			if (taaDisplayTexture)
 			{
-				const uint gridSourceIndex = taaDisplayTexture == resolvedColourTexture
+				const uint hdrSourceIndex = taaDisplayTexture == resolvedColourTexture
 					? viewportData->resolvedColourTexture.h.index
 					: viewportData->colourTexture.h.index;
 
-				graph.AddPass("EditorGrid",
-					[taaDisplayTexture, depthBuffer, overlayColourTexture](RenderGraphBuilder& builder)
+				graph.AddPass("ExposureClear",
+					[&exposureBuffer](RenderGraphBuilder& builder)
+					{
+						builder.WriteBuffer(exposureBuffer, PIPELINE_STAGE_TRANSFER_BIT, BARRIER_ACCESS_TRANSFER_WRITE_BIT);
+					},
+					[this, renderFrameIndex](CommandList& cl) { RecordExposureClearPass(cl, renderFrameIndex); },
+					RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
+
+				const BarrierAccess exposureAccess = static_cast<BarrierAccess>(BARRIER_ACCESS_SHADER_READ_BIT | BARRIER_ACCESS_SHADER_WRITE_BIT);
+				graph.AddPass("ExposureHistogram",
+					[taaDisplayTexture, &exposureBuffer, exposureAccess](RenderGraphBuilder& builder)
 					{
 						builder.ReadTexture(*taaDisplayTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+						builder.WriteBuffer(exposureBuffer, PIPELINE_STAGE_COMPUTE_SHADER_BIT, exposureAccess);
+					},
+					[this, renderFrameIndex, hdrSourceIndex](CommandList& cl) { RecordExposureHistogramPass(cl, renderFrameIndex, hdrSourceIndex); },
+					RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
+
+				graph.AddPass("Exposure",
+					[&exposureBuffer, exposureAccess](RenderGraphBuilder& builder)
+					{
+						builder.WriteBuffer(exposureBuffer, PIPELINE_STAGE_COMPUTE_SHADER_BIT, exposureAccess);
+					},
+					[this, renderFrameIndex](CommandList& cl) { RecordExposurePass(cl, renderFrameIndex); },
+					RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
+
+				graph.AddPass("Tonemap",
+					[taaDisplayTexture, displayColourTexture, &exposureBuffer](RenderGraphBuilder& builder)
+					{
+						builder.ReadTexture(*taaDisplayTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+						builder.ReadBuffer(exposureBuffer, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT);
+						builder.WriteTexture(*displayColourTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
+					},
+					[this, renderFrameIndex, hdrSourceIndex](CommandList& cl) { RecordTonemapPass(cl, renderFrameIndex, hdrSourceIndex); },
+					RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
+
+				displayTexture = displayColourTexture;
+			}
+
+			// Drawn after TAA into its own texture, so the grid never ends up in TAA's history.
+			if (overlayColourTexture && displayTexture)
+			{
+				const uint gridSourceIndex = viewportData->displayColourTexture.h.index;
+
+				graph.AddPass("EditorGrid",
+					[displayColourTexture, depthBuffer, overlayColourTexture](RenderGraphBuilder& builder)
+					{
+						builder.ReadTexture(*displayColourTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
 						builder.ReadTexture(*depthBuffer, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
 						builder.WriteTexture(*overlayColourTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
 					},
@@ -2163,9 +2541,9 @@ namespace tyr
 			// the frame has finished.
 			ViewportCapture& capture = m_Captures[renderFrameIndex];
 			if (renderFrame.captureRequested && displayTexture && capture.buffer
-				&& capture.capacity >= (size_t)viewportData->width * viewportData->height * 4)
+				&& capture.capacity >= (size_t)viewportData->width * viewportData->height * c_CaptureBytesPerPixel)
 			{
-				TYR_ASSERT(displayTexture->info.format == PixelFormat::PF_R8G8B8A8_UNORM);
+				TYR_ASSERT(displayTexture->info.format == PixelFormat::PF_R16G16B16A16_SFLOAT);
 				capture.copied = true;
 				capture.width = viewportData->width;
 				capture.height = viewportData->height;
@@ -2469,21 +2847,15 @@ namespace tyr
 	{
 		RenderWindowHandle handle(m_WindowPool.Create());
 		RenderWindow& renderWindow = m_WindowPool[handle.h.index];
-
-		SwapChainDesc swapChainDesc;
-		swapChainDesc.pixelFormat = PixelFormat::PF_B8G8R8A8_SRGB;
-		swapChainDesc.colorSpace = ColorSpace::CP_SRGB_NONLINEAR;
-		// TODO: Enable later
-		swapChainDesc.createDepth = false;
-		swapChainDesc.vSyncEnabled = m_Config.vSyncEnabled;
-		// The swap chain must have as many images as the renderer keeps frames in flight, or it
-		// runs out of images to acquire before earlier ones are done with.
-		swapChainDesc.minImageCount = RenderConstants::c_BufferedFrameCount;
+		renderWindow.osHandle = osHandle;
+		m_Ctx.device->GetDisplayHDRInfo(osHandle, renderWindow.displayInfo);
+		renderWindow.hdrRequested = m_DisplaySettings.hdrEnabled && renderWindow.displayInfo.hdrSupported;
 
 		// Always a fresh swap chain - never reuses one from a just-removed window at the same
 		// pool slot, since a deferred delete of the old one could still be pending.
-		SwapChain* swapChain = m_Ctx.device->CreateSwapChain(osHandle, swapChainDesc);
+		SwapChain* swapChain = m_Ctx.device->CreateSwapChain(osHandle, MakeSwapChainDesc(renderWindow, renderWindow.hdrRequested));
 		renderWindow.swapChain = swapChain;
+		renderWindow.output = swapChain->GetDesc().colorSpace == CP_HDR10_ST2084 ? DisplayOutput::HDR10 : DisplayOutput::SDR;
 
 		// Binary semaphores used to sync swapchain image acquisition/presentation with command
 		// submission - always need recreating here regardless of whether the swap chain itself
@@ -2514,6 +2886,11 @@ namespace tyr
 
 	void Renderer::RemoveWindow(RenderWindowHandle window)
 	{
+		if (m_ActiveWindow == window)
+		{
+			m_ActiveWindow = {};
+		}
+
 		// The swap chain/semaphores can't be deleted right here - RenderAsync or
 		// RenderSubmissionThread might still be using them from up to c_BufferedFrameCount
 		// frames ago. Queue a copy of the resource handles, and the pool handle itself, on this
@@ -2554,17 +2931,57 @@ namespace tyr
 
 	void Renderer::ResizeWindow(RenderWindowHandle window)
 	{
+		UpdateWindowOutput(m_WindowPool[window.h], true);
+	}
+
+	void Renderer::UpdateWindowOutput(RenderWindow& window, bool resize)
+	{
+		m_Ctx.device->GetDisplayHDRInfo(window.osHandle, window.displayInfo);
+		const bool hdr = m_DisplaySettings.hdrEnabled && window.displayInfo.hdrSupported;
+		if (!resize && hdr == window.hdrRequested)
+		{
+			return;
+		}
+
 		StallUntilGPUIdle();
 
 		// No width/height parameter - SwapChain::Resize() reads the current extent straight from
 		// the surface itself (vkGetPhysicalDeviceSurfaceCapabilitiesKHR).
-		RenderWindow& renderWindow = m_WindowPool[window.h];
-		SwapChain* swapChain = renderWindow.swapChain;
-		swapChain->Resize();
+		window.hdrRequested = hdr;
+		window.swapChain->Resize(MakeSwapChainDesc(window, hdr));
 		// Safe to destroy the retired swap chain immediately instead of deferring it (unlike
 		// Resize()'s usual oldSwapchain-kept-around pattern) - everything's confirmed idle above,
 		// so nothing can still be using it.
-		swapChain->DestroyOldSwapChain();
+		window.swapChain->DestroyOldSwapChain();
+		window.output = window.swapChain->GetDesc().colorSpace == CP_HDR10_ST2084 ? DisplayOutput::HDR10 : DisplayOutput::SDR;
+	}
+
+	SwapChainDesc Renderer::MakeSwapChainDesc(const RenderWindow& window, bool hdr) const
+	{
+		SwapChainDesc desc;
+		desc.pixelFormat = hdr ? PixelFormat::PF_A2B10G10R10_UNORM : PixelFormat::PF_B8G8R8A8_SRGB;
+		desc.colorSpace = hdr ? ColorSpace::CP_HDR10_ST2084 : ColorSpace::CP_SRGB_NONLINEAR;
+		desc.createDepth = false;
+		desc.vSyncEnabled = m_Config.vSyncEnabled;
+		// The swap chain must have as many images as the renderer keeps frames in flight, or it
+		// runs out of images to acquire before earlier ones are done with.
+		desc.minImageCount = RenderConstants::c_BufferedFrameCount;
+		desc.minLuminance = window.displayInfo.minLuminance;
+		desc.maxLuminance = GetPeakNits(m_DisplaySettings, window.displayInfo);
+		desc.maxFrameAverageLuminance = window.displayInfo.maxFullFrameLuminance;
+		return desc;
+	}
+
+	bool Renderer::GetActiveDisplay(DisplayHDRInfo& outInfo, DisplayOutput& outOutput) const
+	{
+		if (!m_ActiveWindow)
+		{
+			return false;
+		}
+		const RenderWindow& window = m_WindowPool[m_ActiveWindow.h];
+		outInfo = window.displayInfo;
+		outOutput = window.output;
+		return true;
 	}
 
 	RenderViewportHandle Renderer::CreateRenderViewport()
@@ -2660,6 +3077,9 @@ namespace tyr
 			DeleteViewportTargetTexture(targets.shadowMasksRaw);
 			DeleteViewportTargetTexture(targets.shadowMasks);
 			DeleteViewportTargetTexture(targets.resolvedColourTexture);
+			DeleteViewportTargetTexture(targets.translucentAccumulation);
+			DeleteViewportTargetTexture(targets.translucentWeight);
+			DeleteViewportTargetTexture(targets.displayColourTexture);
 		}
 		if (targets.overlayColourTexture)
 		{
@@ -2667,12 +3087,9 @@ namespace tyr
 			targets.overlayColourTexture = {};
 		}
 
-		// Written by the deferred lighting pass (a storage image), read by the GUI pass to
-		// display it. UNORM, not SRGB - the storage-image format doesn't support SRGB on this
-		// hardware, so the shader writes linear colour and the final sample does the sRGB encode.
-		// Each texture the viewport can display is also a transfer source, for screenshots.
-		targets.colourTexture = CreateViewportTargetTexture(debugName, PixelFormat::PF_R8G8B8A8_UNORM,
-			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT | IMAGE_USAGE_TRANSFER_SRC_BIT), width, height);
+		// Linear HDR colour, written by the deferred lighting pass and read by TAA and the tone mapper.
+		targets.colourTexture = CreateViewportTargetTexture(debugName, PixelFormat::PF_R16G16B16A16_SFLOAT,
+			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT), width, height);
 
 		// Must match the geometry pipeline's declared colour attachment formats - dynamic
 		// rendering requires the two to agree.
@@ -2689,10 +3106,19 @@ namespace tyr
 		targets.shadowMasksRaw = CreateShadowMaskArrayTexture("Shadow Masks Raw", width, height);
 		targets.shadowMasks = CreateShadowMaskArrayTexture("Shadow Masks", width, height);
 
-		// Same usage as colourTexture above - written by a compute pass, sampled by the editor
-		// for display.
-		targets.resolvedColourTexture = CreateViewportTargetTexture("Resolved Colour", PixelFormat::PF_R8G8B8A8_UNORM,
+		// Same as colourTexture above, after TAA.
+		targets.resolvedColourTexture = CreateViewportTargetTexture("Resolved Colour", PixelFormat::PF_R16G16B16A16_SFLOAT,
+			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT), width, height);
+
+		// Written by the tone mapper and sampled by the GUI pass to show it. Float, since HDR
+		// output goes past 1, and so dark gradients don't band. A transfer source for screenshots.
+		targets.displayColourTexture = CreateViewportTargetTexture("Display Colour", PixelFormat::PF_R16G16B16A16_SFLOAT,
 			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT | IMAGE_USAGE_TRANSFER_SRC_BIT), width, height);
+
+		targets.translucentAccumulation = CreateViewportTargetTexture("Translucent Accumulation", PixelFormat::PF_R16G16B16A16_SFLOAT,
+			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_COLOUR_ATTACHMENT_BIT), width, height);
+		targets.translucentWeight = CreateViewportTargetTexture("Translucent Weight", PixelFormat::PF_R16_SFLOAT,
+			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_COLOUR_ATTACHMENT_BIT), width, height);
 
 		targets.width = width;
 		targets.height = height;
@@ -2716,7 +3142,7 @@ namespace tyr
 		if (wanted)
 		{
 			// Written by the grid's compute pass, then drawn into by the debug line pass.
-			targets.overlayColourTexture = CreateViewportTargetTexture("Overlay Colour", PixelFormat::PF_R8G8B8A8_UNORM,
+			targets.overlayColourTexture = CreateViewportTargetTexture("Overlay Colour", PixelFormat::PF_R16G16B16A16_SFLOAT,
 				static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT | IMAGE_USAGE_COLOUR_ATTACHMENT_BIT | IMAGE_USAGE_TRANSFER_SRC_BIT),
 				targets.width, targets.height);
 			targets.overlayIsNew = true;
@@ -2810,6 +3236,23 @@ namespace tyr
 		m_EditorGridOutputBoundTextures[renderFrameIndex] = overlayColourTexture;
 	}
 
+	void Renderer::EnsureDisplayOutputBound(uint renderFrameIndex, TextureHandle displayColourTexture)
+	{
+		if (!displayColourTexture || m_DisplayOutputBoundTextures[renderFrameIndex] == displayColourTexture)
+		{
+			return;
+		}
+
+		const Texture& texture = m_Registry.GetTexture(displayColourTexture);
+		ImageBindingInfo bindingInfo;
+		bindingInfo.imageView = texture.imageView;
+		bindingInfo.hasSampler = false;
+		// Always accessed in the general layout, whatever layout the texture is in now.
+		bindingInfo.layout = IMAGE_LAYOUT_GENERAL;
+		QueueImageBindingUpdate(TYR_BINDING_DISPLAY_OUTPUT, renderFrameIndex, bindingInfo);
+		m_DisplayOutputBoundTextures[renderFrameIndex] = displayColourTexture;
+	}
+
 	void Renderer::DeleteRenderViewportResources(RenderViewportHandle viewport)
 	{
 		RenderViewport& rv = m_RenderViewportPool[viewport.h];
@@ -2825,7 +3268,8 @@ namespace tyr
 			// them. Another viewport, such as the next Play session's, can then reuse them.
 			const TextureHandle textures[] = { targets.colourTexture, targets.gbufferAlbedoAO, targets.gbufferNormalRoughMetal,
 				targets.gbufferMotion, targets.depthBuffer, targets.shadowMasksRaw, targets.shadowMasks,
-				targets.resolvedColourTexture, targets.overlayColourTexture };
+				targets.resolvedColourTexture, targets.overlayColourTexture, targets.translucentAccumulation, targets.translucentWeight,
+				targets.displayColourTexture };
 			for (TextureHandle texture : textures)
 			{
 				if (texture)
@@ -2923,6 +3367,30 @@ namespace tyr
 		{
 			ShaderDesc desc;
 			desc.entryPoint = "main";
+			desc.fileName = "MeshTranslucentAS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_TASK_BIT;
+			m_Resources.translucentTaskShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "TranslucentRTPS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_FRAGMENT_BIT;
+			m_Resources.translucentPixelShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "TranslucentCompositeCS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_COMPUTE_BIT;
+			m_Resources.translucentCompositeComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
 			desc.fileName = "DeferredLightingCS";
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_COMPUTE_BIT;
@@ -3014,7 +3482,44 @@ namespace tyr
 			desc.fileName = "GUIPS";
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_FRAGMENT_BIT;
-			m_Resources.guiPixelShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+			m_Resources.guiPixelShaders[static_cast<uint>(DisplayOutput::SDR)] = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+
+			ShaderCompileConfig hdrCompileConfig;
+			hdrCompileConfig.defines.Add("TYR_OUTPUT_HDR10=1");
+			desc.variant = "_HDR10";
+			m_Resources.guiPixelShaders[static_cast<uint>(DisplayOutput::HDR10)] = m_ShaderCreator.CompileAndCreateShader(hdrCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "FullscreenVS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_VERTEX_BIT;
+			m_Resources.fullscreenVertexShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "ExposureHistogramCS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_COMPUTE_BIT;
+			m_Resources.exposureHistogramComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "ExposureCS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_COMPUTE_BIT;
+			m_Resources.exposureComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "TonemapCS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_COMPUTE_BIT;
+			m_Resources.tonemapComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
 		}
 		{
 			ShaderDesc desc;
@@ -3043,6 +3548,9 @@ namespace tyr
 		m_Ctx.device->DeleteShaderModule(m_Resources.geometryMeshShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.geometryPixelShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.geometryMaskedPixelShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.translucentTaskShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.translucentPixelShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.translucentCompositeComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.lightingComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.cullingEarlyComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.cullingLateComputeShader);
@@ -3054,7 +3562,14 @@ namespace tyr
 		m_Ctx.device->DeleteShaderModule(m_Resources.taaResolveComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.editorGridComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.guiVertexShader);
-		m_Ctx.device->DeleteShaderModule(m_Resources.guiPixelShader);
+		for (ShaderModuleHandle shader : m_Resources.guiPixelShaders)
+		{
+			m_Ctx.device->DeleteShaderModule(shader);
+		}
+		m_Ctx.device->DeleteShaderModule(m_Resources.fullscreenVertexShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.exposureHistogramComputeShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.exposureComputeShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.tonemapComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.debugLineVertexShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.debugLinePixelShader);
 		ShaderCreator::UnloadCompilerLibs();
@@ -3163,8 +3678,8 @@ namespace tyr
 				// drawCountBuffer/instanceVisibilityBuffer for GPU-driven culling + one Hi-Z buffer
 				// per buffered frame slot + shadowLightSlotMapBuffer for ray-traced shadows +
 				// lightIndexBuffer + debugLineVertexBuffer + skinVertexBuffer/boneMatrixBuffer +
-				// decalBuffer/decalIndexBuffer.
-				poolSize.descriptorCount = 23 + RenderConstants::c_BufferedFrameCount;
+				// decalBuffer/decalIndexBuffer + exposureBuffer.
+				poolSize.descriptorCount = 24 + RenderConstants::c_BufferedFrameCount;
 			}
 			{
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
@@ -3178,11 +3693,12 @@ namespace tyr
 			}
 			{
 				// TYR_BINDING_LIGHTING_OUTPUT, TYR_BINDING_SHADOW_MASKS_RAW/SHADOW_MASKS,
-				// TYR_BINDING_TAA_RESOLVE_OUTPUT and TYR_BINDING_EDITOR_GRID_OUTPUT - five
-				// storage-image arrays, each one entry per buffered RenderFrame slot.
+				// TYR_BINDING_TAA_RESOLVE_OUTPUT, TYR_BINDING_EDITOR_GRID_OUTPUT and
+				// TYR_BINDING_DISPLAY_OUTPUT - six storage-image arrays, each one entry per
+				// buffered RenderFrame slot.
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
 				poolSize.descriptorType = DescriptorType::StorageImage;
-				poolSize.descriptorCount = RenderConstants::c_BufferedFrameCount * 5;
+				poolSize.descriptorCount = RenderConstants::c_BufferedFrameCount * 6;
 			}
 			{
 				// TYR_BINDING_TLAS - one top-level acceleration structure per buffered
@@ -3257,8 +3773,9 @@ namespace tyr
 			AddBinding(TYR_BINDING_DRAW_COUNT, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 
 			// Ray-traced shadows - one TLAS per buffered RenderFrame slot, read by the shadow
-			// compute pass via an inline ray query.
-			AddBinding(TYR_BINDING_TLAS, DescriptorType::AccelerationStructure, RenderConstants::c_BufferedFrameCount, SHADER_STAGE_COMPUTE_BIT);
+			// compute pass and the translucent pixel shader via inline ray queries.
+			const ShaderStage computeAndFragmentStages = static_cast<ShaderStage>(SHADER_STAGE_COMPUTE_BIT | SHADER_STAGE_FRAGMENT_BIT);
+			AddBinding(TYR_BINDING_TLAS, DescriptorType::AccelerationStructure, RenderConstants::c_BufferedFrameCount, computeAndFragmentStages);
 
 			// Shadow mask storage - one Texture2DArray per buffered RenderFrame slot, same
 			// re-bindable-on-resize shape as TYR_BINDING_LIGHTING_OUTPUT above.
@@ -3266,12 +3783,12 @@ namespace tyr
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 			AddBinding(TYR_BINDING_SHADOW_MASKS, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
-			AddBinding(TYR_BINDING_SHADOW_LIGHT_SLOT_MAP, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
+			AddBinding(TYR_BINDING_SHADOW_LIGHT_SLOT_MAP, DescriptorType::StorageBuffer, 1, computeAndFragmentStages);
 			AddBinding(TYR_BINDING_TAA_RESOLVE_OUTPUT, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 			AddBinding(TYR_BINDING_EDITOR_GRID_OUTPUT, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
-			AddBinding(TYR_BINDING_LIGHT_INDICES, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
+			AddBinding(TYR_BINDING_LIGHT_INDICES, DescriptorType::StorageBuffer, 1, computeAndFragmentStages);
 			AddBinding(TYR_BINDING_DEBUG_LINE_VERTEX, DescriptorType::StorageBuffer, 1, SHADER_STAGE_VERTEX_BIT);
 			AddBinding(TYR_BINDING_SKIN_VERTEX, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 			AddBinding(TYR_BINDING_BONE_MATRIX, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
@@ -3280,6 +3797,9 @@ namespace tyr
 			AddBinding(TYR_BINDING_HIZ, DescriptorType::StorageBuffer, RenderConstants::c_BufferedFrameCount, computeAndTaskStages, lightingOutputFlags);
 			AddBinding(TYR_BINDING_DECAL, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 			AddBinding(TYR_BINDING_DECAL_INDICES, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
+			AddBinding(TYR_BINDING_EXPOSURE, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
+			AddBinding(TYR_BINDING_DISPLAY_OUTPUT, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
+				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 
 			m_Resources.descriptorSetLayout = m_Ctx.device->CreateDescriptorSetLayout(layoutDesc);
 
@@ -3376,6 +3896,25 @@ namespace tyr
 		desc.shaders[0] = m_Resources.geometryLateMaskedTaskShader;
 		m_Resources.geometryLateMaskedPipeline = m_Ctx.device->CreateGraphicsPipeline(desc);
 
+		// Translucent surfaces are drawn from both sides over the finished depth without writing
+		// it. Colour is added up, and how much of what's behind still shows is multiplied down.
+		GraphicsPipelineDesc translucentDesc = desc;
+		translucentDesc.pipelineLayoutDesc.pushConstantRanges[0].stageFlags = static_cast<ShaderStage>(SHADER_STAGE_TASK_BIT | SHADER_STAGE_FRAGMENT_BIT);
+		translucentDesc.depthStencilStateDesc.depthWriteEnable = false;
+		translucentDesc.blendStateDesc.blendEnabled = true;
+		translucentDesc.blendStateDesc.srcColorBlendFactor = BlendFactor::One;
+		translucentDesc.blendStateDesc.destColorBlendFactor = BlendFactor::One;
+		translucentDesc.blendStateDesc.colorBlendOp = BlendOp::Add;
+		translucentDesc.blendStateDesc.srcAlphaBlendFactor = BlendFactor::Zero;
+		translucentDesc.blendStateDesc.destAlphaBlendFactor = BlendFactor::InvSrcAlpha;
+		translucentDesc.blendStateDesc.alphaBlendOp = BlendOp::Add;
+		translucentDesc.dynamicRendering.colorAttachmentFormats.Clear();
+		translucentDesc.dynamicRendering.colorAttachmentFormats.Add(PF_R16G16B16A16_SFLOAT);
+		translucentDesc.dynamicRendering.colorAttachmentFormats.Add(PF_R16_SFLOAT);
+		translucentDesc.shaders[0] = m_Resources.translucentTaskShader;
+		translucentDesc.shaders[2] = m_Resources.translucentPixelShader;
+		m_Resources.translucentPipeline = m_Ctx.device->CreateGraphicsPipeline(translucentDesc);
+
 		// GUI pipeline - reuses the same bindless descriptor set layout, but is otherwise a
 		// completely separate pipeline: vertex-pulling, alpha blending on, no depth testing,
 		// drawn over whatever the geometry pass already rendered.
@@ -3419,7 +3958,7 @@ namespace tyr
 		guiDesc.depthStencilStateDesc.back = guiDesc.depthStencilStateDesc.front;
 		guiDesc.multiSampleDesc = desc.multiSampleDesc;
 
-		guiDesc.dynamicRendering.colorAttachmentFormats.Add(PF_R8G8B8A8_SRGB);
+		guiDesc.dynamicRendering.colorAttachmentFormats.Add(PF_B8G8R8A8_SRGB);
 		guiDesc.dynamicRendering.depthAttachmentFormat = PF_UNKNOWN;
 		guiDesc.dynamicRendering.stencilAttachmentFormat = PF_UNKNOWN;
 		guiDesc.dynamicRendering.viewMask = 0;
@@ -3430,19 +3969,33 @@ namespace tyr
 		PushConstantRange& guiPushConstantRange = guiDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
 		guiPushConstantRange.stageFlags = guiPipelineStages;
 		guiPushConstantRange.offset = 0;
-		guiPushConstantRange.size = sizeof(float) * 4 + sizeof(uint); // scale, translate, textureIndex
+		guiPushConstantRange.size = sizeof(float) * 4 + sizeof(uint) + sizeof(float); // scale, translate, textureIndex, brightness
 
 		guiDesc.shaders.Add(m_Resources.guiVertexShader);
-		guiDesc.shaders.Add(m_Resources.guiPixelShader);
+		guiDesc.shaders.Add(m_Resources.guiPixelShaders[0]);
 
-		m_Resources.guiPipeline = m_Ctx.device->CreateGraphicsPipeline(guiDesc);
+		// The swap chain format each display output writes to.
+		const PixelFormat outputFormats[] = { PF_B8G8R8A8_SRGB, PF_A2B10G10R10_UNORM };
+		TYR_STATIC_ASSERT(sizeof(outputFormats) / sizeof(outputFormats[0]) == static_cast<uint>(DisplayOutput::Count), "One format per display output.");
+		for (uint output = 0; output < static_cast<uint>(DisplayOutput::Count); ++output)
+		{
+			GraphicsPipelineDesc outputDesc = guiDesc;
+			outputDesc.dynamicRendering.colorAttachmentFormats[0] = outputFormats[output];
+			outputDesc.shaders[1] = m_Resources.guiPixelShaders[output];
+			m_Resources.guiPipelines[output] = m_Ctx.device->CreateGraphicsPipeline(outputDesc);
+
+			// Covers the whole window, so there's nothing under it to blend with.
+			outputDesc.blendStateDesc.blendEnabled = false;
+			outputDesc.shaders[0] = m_Resources.fullscreenVertexShader;
+			m_Resources.fullscreenPipelines[output] = m_Ctx.device->CreateGraphicsPipeline(outputDesc);
+		}
 
 		// Debug lines - vertex-pulled line lists blended into the overlay texture, with the scene's
 		// depth attached read-only. One pipeline tests against it and one ignores it.
 		GraphicsPipelineDesc debugLineDesc = guiDesc;
 		debugLineDesc.topology = PrimitiveTopology::LineList;
 		debugLineDesc.dynamicRendering.colorAttachmentFormats.Clear();
-		debugLineDesc.dynamicRendering.colorAttachmentFormats.Add(PF_R8G8B8A8_UNORM);
+		debugLineDesc.dynamicRendering.colorAttachmentFormats.Add(PF_R16G16B16A16_SFLOAT);
 		debugLineDesc.dynamicRendering.depthAttachmentFormat = PF_D32_SFLOAT;
 		debugLineDesc.pipelineLayoutDesc.pushConstantRanges.Clear();
 		PushConstantRange& debugLinePushConstantRange = debugLineDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
@@ -3478,6 +4031,15 @@ namespace tyr
 		lightingDesc.shader = m_Resources.lightingComputeShader;
 
 		m_Resources.lightingPipeline = m_Ctx.device->CreateComputePipeline(lightingDesc);
+
+		ComputePipelineDesc translucentCompositeDesc;
+		translucentCompositeDesc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
+		PushConstantRange& translucentCompositePushConstantRange = translucentCompositeDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
+		translucentCompositePushConstantRange.stageFlags = SHADER_STAGE_COMPUTE_BIT;
+		translucentCompositePushConstantRange.offset = 0;
+		translucentCompositePushConstantRange.size = sizeof(TranslucentCompositePushConstants);
+		translucentCompositeDesc.shader = m_Resources.translucentCompositeComputeShader;
+		m_Resources.translucentCompositePipeline = m_Ctx.device->CreateComputePipeline(translucentCompositeDesc);
 
 		// GPU-driven culling - each runs just before its geometry pass, compacting the instances it
 		// draws into the indirect draw buffers that pass then draws from directly.
@@ -3571,6 +4133,25 @@ namespace tyr
 		editorGridDesc.shader = m_Resources.editorGridComputeShader;
 
 		m_Resources.editorGridPipeline = m_Ctx.device->CreateComputePipeline(editorGridDesc);
+
+		// Auto exposure and tone mapping.
+		ComputePipelineDesc postDesc;
+		postDesc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
+		PushConstantRange& postPushConstantRange = postDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
+		postPushConstantRange.stageFlags = SHADER_STAGE_COMPUTE_BIT;
+		postPushConstantRange.offset = 0;
+
+		postPushConstantRange.size = sizeof(ShaderExposureHistogramPushConstants);
+		postDesc.shader = m_Resources.exposureHistogramComputeShader;
+		m_Resources.exposureHistogramPipeline = m_Ctx.device->CreateComputePipeline(postDesc);
+
+		postDesc.pipelineLayoutDesc.pushConstantRanges[0].size = sizeof(ShaderExposurePushConstants);
+		postDesc.shader = m_Resources.exposureComputeShader;
+		m_Resources.exposurePipeline = m_Ctx.device->CreateComputePipeline(postDesc);
+
+		postDesc.pipelineLayoutDesc.pushConstantRanges[0].size = sizeof(ShaderTonemapPushConstants);
+		postDesc.shader = m_Resources.tonemapComputeShader;
+		m_Resources.tonemapPipeline = m_Ctx.device->CreateComputePipeline(postDesc);
 	}
 
 	void Renderer::DeletePipelines()
@@ -3579,7 +4160,16 @@ namespace tyr
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.geometryLatePipeline);
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.geometryEarlyMaskedPipeline);
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.geometryLateMaskedPipeline);
-		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.guiPipeline);
+		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.translucentPipeline);
+		m_Ctx.device->DeleteComputePipeline(m_Resources.translucentCompositePipeline);
+		for (uint output = 0; output < static_cast<uint>(DisplayOutput::Count); ++output)
+		{
+			m_Ctx.device->DeleteGraphicsPipeline(m_Resources.guiPipelines[output]);
+			m_Ctx.device->DeleteGraphicsPipeline(m_Resources.fullscreenPipelines[output]);
+		}
+		m_Ctx.device->DeleteComputePipeline(m_Resources.exposureHistogramPipeline);
+		m_Ctx.device->DeleteComputePipeline(m_Resources.exposurePipeline);
+		m_Ctx.device->DeleteComputePipeline(m_Resources.tonemapPipeline);
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.debugLineOnTopPipeline);
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.debugLineDepthTestedPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.lightingPipeline);
@@ -3700,6 +4290,13 @@ namespace tyr
 		}
 		{
 			RenderBufferDesc desc;
+			desc.debugName = "Exposure Buffer";
+			desc.size = sizeof(ShaderExposureState) * RenderConstants::c_MaxScenes;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.exposureBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
 			desc.debugName = "Debug Line Vertex Buffer";
 			// One c_BufferedFrameCount-th per buffered RenderFrame slot, read by DebugLineVS.hlsl
 			// as a StructuredBuffer.
@@ -3813,6 +4410,7 @@ namespace tyr
 
 	void Renderer::DeleteBuffers()
 	{
+		m_Registry.DeleteBuffer(m_Resources.exposureBuffer);
 		m_Registry.DeleteBuffer(m_Resources.materialBuffer);
 		m_Registry.DeleteBuffer(m_Resources.vertexBuffer);
 		m_Registry.DeleteBuffer(m_Resources.indexBuffer);
@@ -4001,13 +4599,13 @@ namespace tyr
 
 	uint8 Renderer::GetTLASInstanceFlags(const LocalArray<MaterialHandle, MeshConstants::c_MaxSubmeshes>& materials) const
 	{
-		// An instance with a masked material has its hits alpha tested by the shader.
-		bool masked = false;
+		// An instance with a masked or translucent material has its hits tested by the shader.
+		bool tested = false;
 		for (MaterialHandle material : materials)
 		{
-			masked |= m_MaterialBlendModes[material.h.index] == static_cast<uint8>(MaterialBlendMode::Masked);
+			tested |= m_MaterialBlendModes[material.h.index] != static_cast<uint8>(MaterialBlendMode::Opaque);
 		}
-		return masked ? 0 : AccelerationStructureInstanceFlags::c_ForceOpaque;
+		return tested ? 0 : AccelerationStructureInstanceFlags::c_ForceOpaque;
 	}
 
 	uint Renderer::RequestViewportCapture()
@@ -4039,9 +4637,16 @@ namespace tyr
 				return ViewportCaptureStatus::Failed;
 			}
 
-			const size_t size = (size_t)capture.width * capture.height * 4;
-			outPixels.Resize((uint)size);
-			memcpy(outPixels.Data(), m_Registry.GetBuffer(capture.buffer).mappedMemory, size);
+			// Half float linear colour to 8 bit sRGB.
+			const uint pixelCount = capture.width * capture.height;
+			outPixels.Resize(pixelCount * 4);
+			const uint16* source = static_cast<const uint16*>(m_Registry.GetBuffer(capture.buffer).mappedMemory);
+			for (uint i = 0; i < pixelCount * 4; ++i)
+			{
+				const float value = Math::Clamp(HalfToFloat(source[i]), 0.0f, 1.0f);
+				const float encoded = (i & 3) == 3 ? value : TextureUtil::LinearToSRGB(value);
+				outPixels[i] = static_cast<uint8>(encoded * 255.0f + 0.5f);
+			}
 			outWidth = capture.width;
 			outHeight = capture.height;
 			return ViewportCaptureStatus::Ready;
@@ -4137,12 +4742,14 @@ namespace tyr
 		geometryArgs.latePipeline = m_Resources.geometryLatePipeline;
 		geometryArgs.earlyMaskedPipeline = m_Resources.geometryEarlyMaskedPipeline;
 		geometryArgs.lateMaskedPipeline = m_Resources.geometryLateMaskedPipeline;
+		geometryArgs.translucentPipeline = m_Resources.translucentPipeline;
 		geometryArgs.descriptorSet = m_Resources.descriptorSet;
 		m_GeometryPass = new GeometryPass(geometryArgs);
 
 		GUIPassArgs guiArgs;
 		guiArgs.registry = &m_Registry;
-		guiArgs.pipeline = m_Resources.guiPipeline;
+		guiArgs.pipeline = m_Resources.guiPipelines[0];
+		guiArgs.fullscreenPipeline = m_Resources.fullscreenPipelines[0];
 		guiArgs.descriptorSet = m_Resources.descriptorSet;
 		guiArgs.vertexBuffer = m_Resources.guiVertexBuffer;
 		guiArgs.indexBuffer = m_Resources.guiIndexBuffer;

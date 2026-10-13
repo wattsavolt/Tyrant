@@ -12,6 +12,7 @@
 #include "AssetSystem/MaterialAsset.h"
 #include "ECS/ComponentRegistry.h"
 #include "Importing/ModelImporter.h"
+#include "Importing/MaterialImporter.h"
 #include "Logging/Logger.h"
 #include "Memory/StackAllocation.h"
 #include "Reflection/TypeRegistry.h"
@@ -96,22 +97,27 @@ namespace tyr
 			return nullptr;
 		}
 
-		// Linear 8-bit colour to sRGB, which is how the viewport is shown.
-		uint8 LinearToSRGB(uint value)
+		// 8-bit sRGB to linear, for averaging pixels.
+		float SRGBToLinear(uint8 value)
 		{
-			static uint8 s_Table[256];
+			static float s_Table[256];
 			static bool s_TableBuilt = false;
 			if (!s_TableBuilt)
 			{
 				for (uint i = 0; i < 256; ++i)
 				{
-					const float linear = i / 255.0f;
-					const float srgb = linear <= 0.0031308f ? linear * 12.92f : 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
-					s_Table[i] = static_cast<uint8>(Math::Clamp(srgb * 255.0f + 0.5f, 0.0f, 255.0f));
+					const float srgb = i / 255.0f;
+					s_Table[i] = srgb <= 0.04045f ? srgb / 12.92f : std::pow((srgb + 0.055f) / 1.055f, 2.4f);
 				}
 				s_TableBuilt = true;
 			}
 			return s_Table[value];
+		}
+
+		uint8 LinearToSRGB(float linear)
+		{
+			const float srgb = linear <= 0.0031308f ? linear * 12.92f : 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
+			return static_cast<uint8>(Math::Clamp(srgb * 255.0f + 0.5f, 0.0f, 255.0f));
 		}
 	}
 
@@ -163,6 +169,16 @@ namespace tyr
 			R"({"type":"object","properties":{"path":{"type":"string","description":"Such as Models/Crate/Crate_Material0.mat"}},"required":["path"]})", &McpTools::GetMaterial },
 		{ "set_material", "Changes a material's parameters, named as get_material shows them, and saves it. Only the values given change. Albedo Tint is linear [r, g, b, a] multiplying the albedo texture; roughness and metallic map the texture's 0 to 1 onto their Min to Max, so equal values give a constant; Blend Mode is 0 opaque, 1 masked, 2 translucent. Every actor using the material changes. Returns the material afterwards.",
 			R"({"type":"object","properties":{"path":{"type":"string"},"values":{"type":"object"}},"required":["path","values"]})", &McpTools::SetMaterial },
+		{ "get_level_settings", "The open level's settings: ambient light, the sky (a cubemap from import_sky, its tint, intensity and yaw in degrees) and exposure in EV100.",
+			R"({"type":"object","properties":{}})", &McpTools::GetLevelSettings },
+		{ "set_level_settings", "Changes the open level's settings, named as get_level_settings shows them, as an undoable edit. Only the values given change. Sky Texture is an asset path. Auto exposure keeps between Min and Max Exposure, and the lower Min Exposure is the more a dark view is brightened; Exposure Compensation adds stops, brighter when positive. Returns the settings afterwards.",
+			R"({"type":"object","properties":{"values":{"type":"object"}},"required":["values"]})", &McpTools::SetLevelSettings },
+		{ "import_sky", "Imports an equirectangular HDR image (.hdr), such as one from Poly Haven, as a sky cubemap for set_level_settings' Sky Texture. Importing to the same folder and name again keeps its asset ID.",
+			R"({"type":"object","properties":{"sourcePath":{"type":"string","description":"Absolute path to the .hdr file"},"outputFolder":{"type":"string","description":"Folder under Assets, such as Skies/Night"},"name":{"type":"string"},"faceSize":{"type":"integer","description":"Pixels across each face, 0 to match the image","default":0}},"required":["sourcePath","outputFolder","name"]})", &McpTools::ImportSky },
+		{ "get_display", "The display settings (HDR on or off, paper white, UI and peak brightness in nits), what the window's display reports, and whether HDR10 or SDR is being output.",
+			R"({"type":"object","properties":{}})", &McpTools::GetDisplay },
+		{ "set_display", "Changes the display settings get_display shows. Only the values given change.",
+			R"({"type":"object","properties":{"hdr":{"type":"boolean"},"paperWhiteNits":{"type":"number"},"uiNits":{"type":"number"},"peakNits":{"type":"number","description":"0 uses what the display reports"}}})", &McpTools::SetDisplay },
 	};
 
 	McpTools::McpTools(Editor& editor)
@@ -1400,7 +1416,7 @@ namespace tyr
 
 	void McpTools::EncodeCapture(uint width, uint height, uint maxWidth)
 	{
-		// Averaged over each output pixel's area while still linear, then converted to sRGB.
+		// Averaged over each output pixel's area in linear colour, then converted back to sRGB.
 		const uint outWidth = width > maxWidth ? maxWidth : width;
 		const uint outHeight = width > maxWidth ? (uint)((uint64)height * maxWidth / width) : height;
 		m_ImagePixels.Resize(outWidth * outHeight * 3);
@@ -1412,18 +1428,18 @@ namespace tyr
 			{
 				const uint x0 = (uint)((uint64)x * width / outWidth);
 				const uint x1 = std::max(x0 + 1, (uint)((uint64)(x + 1) * width / outWidth));
-				uint sums[3] = {};
+				float sums[3] = {};
 				for (uint sy = y0; sy < y1; ++sy)
 				{
 					const uint8* row = m_CapturePixels.Data() + ((size_t)sy * width + x0) * 4;
 					for (uint sx = x0; sx < x1; ++sx, row += 4)
 					{
-						sums[0] += row[0];
-						sums[1] += row[1];
-						sums[2] += row[2];
+						sums[0] += SRGBToLinear(row[0]);
+						sums[1] += SRGBToLinear(row[1]);
+						sums[2] += SRGBToLinear(row[2]);
 					}
 				}
-				const uint count = (x1 - x0) * (y1 - y0);
+				const float count = (float)((x1 - x0) * (y1 - y0));
 				uint8* out = m_ImagePixels.Data() + ((size_t)y * outWidth + x) * 3;
 				out[0] = LinearToSRGB(sums[0] / count);
 				out[1] = LinearToSRGB(sums[1] / count);
@@ -1567,6 +1583,131 @@ namespace tyr
 			return found;
 		}
 		WriteMaterial(material);
+		return ToolResult::Done;
+	}
+
+	void McpTools::WriteLevelSettings()
+	{
+		const World& level = m_Editor.m_WorldManager->GetWorld(m_Editor.m_LevelEditorWorld);
+		McpReflection::WriteObject(m_Result, &level.settings, TypeRegistry::Instance().GetType(GetTypeID<LevelSettings>()));
+	}
+
+	McpTools::ToolResult McpTools::GetLevelSettings(const dom::object& /*args*/)
+	{
+		WriteLevelSettings();
+		return ToolResult::Done;
+	}
+
+	McpTools::ToolResult McpTools::SetLevelSettings(const dom::object& args)
+	{
+		dom::object values;
+		if (args["values"].get_object().get(values))
+		{
+			return Fail("values (an object) is needed.");
+		}
+		if (!RequireEditing())
+		{
+			return ToolResult::Failed;
+		}
+
+		// Edited as a copy, so a bad value leaves the settings as they were.
+		LevelSettings settings = m_Editor.m_WorldManager->GetWorld(m_Editor.m_LevelEditorWorld).settings;
+		if (!McpReflection::ReadObject(values, &settings, TypeRegistry::Instance().GetType(GetTypeID<LevelSettings>()), m_Error, sizeof(m_Error)))
+		{
+			return ToolResult::Failed;
+		}
+		m_Editor.m_WorldManager->SetLevelSettings(m_Editor.m_LevelEditorWorld, settings);
+		WriteLevelSettings();
+		return ToolResult::Done;
+	}
+
+	McpTools::ToolResult McpTools::ImportSky(const dom::object& args)
+	{
+		char sourcePath[PathConstants::c_MaxPathTotalSize];
+		char outputFolder[PathConstants::c_MaxRelativePathTotalSize];
+		char name[PathConstants::c_MaxFileNameTotalSize];
+		const bool hasSource = GetString(args, "sourcePath", sourcePath, sizeof(sourcePath));
+		const bool hasFolder = GetString(args, "outputFolder", outputFolder, sizeof(outputFolder));
+		const bool hasName = GetString(args, "name", name, sizeof(name));
+		double faceSize = 0.0;
+		GetNumber(args, "faceSize", faceSize);
+		if (HasArgumentError())
+		{
+			return ToolResult::Failed;
+		}
+		if (!hasSource || !hasFolder || !hasName)
+		{
+			return Fail("sourcePath, outputFolder and name are needed.");
+		}
+		if (!Platform::FileExists(sourcePath))
+		{
+			return Fail("There's no file at %s.", sourcePath);
+		}
+
+		AssetID textureID;
+		if (!MaterialImporter::Instance().ImportSkyCubemap(sourcePath, outputFolder, name, (uint)Math::Clamp(faceSize, 0.0, 4096.0), textureID))
+		{
+			return Fail("The import failed. read_log has the details.");
+		}
+		AssetRegistry::Instance().Save();
+
+		m_Result.BeginObject();
+		m_Result.KeyString("path", AssetRegistry::Instance().GetAssetData(textureID).filePath.CStr());
+		m_Result.EndObject();
+		return ToolResult::Done;
+	}
+
+	void McpTools::WriteDisplay()
+	{
+		const DisplaySettings& settings = m_Editor.m_RendererAPI->GetDisplaySettings();
+		m_Result.BeginObject();
+		m_Result.KeyBool("hdr", settings.hdrEnabled);
+		m_Result.KeyNumber("paperWhiteNits", settings.paperWhiteNits);
+		m_Result.KeyNumber("uiNits", settings.uiNits);
+		m_Result.KeyNumber("peakNits", settings.peakNits);
+		DisplayHDRInfo info;
+		DisplayOutput output;
+		if (m_Editor.m_RendererAPI->GetActiveDisplay(info, output))
+		{
+			m_Result.KeyString("output", output == DisplayOutput::HDR10 ? "HDR10" : "SDR");
+			m_Result.KeyBool("displayHdrOn", info.osHdrEnabled);
+			m_Result.KeyBool("hdrSupported", info.hdrSupported);
+			m_Result.KeyNumber("displayPeakNits", info.maxLuminance);
+			m_Result.KeyNumber("displayFullFrameNits", info.maxFullFrameLuminance);
+			m_Result.KeyNumber("displayMinNits", info.minLuminance);
+		}
+		m_Result.EndObject();
+	}
+
+	McpTools::ToolResult McpTools::GetDisplay(const dom::object& /*args*/)
+	{
+		WriteDisplay();
+		return ToolResult::Done;
+	}
+
+	McpTools::ToolResult McpTools::SetDisplay(const dom::object& args)
+	{
+		DisplaySettings settings = m_Editor.m_RendererAPI->GetDisplaySettings();
+		dom::element hdr;
+		if (!args["hdr"].get(hdr))
+		{
+			hdr.get_bool().get(settings.hdrEnabled);
+		}
+		double paperWhite = settings.paperWhiteNits;
+		double ui = settings.uiNits;
+		double peak = settings.peakNits;
+		GetNumber(args, "paperWhiteNits", paperWhite);
+		GetNumber(args, "uiNits", ui);
+		GetNumber(args, "peakNits", peak);
+		if (HasArgumentError())
+		{
+			return ToolResult::Failed;
+		}
+		settings.paperWhiteNits = (float)Math::Clamp(paperWhite, 1.0, 10000.0);
+		settings.uiNits = (float)Math::Clamp(ui, 1.0, 10000.0);
+		settings.peakNits = (float)Math::Clamp(peak, 0.0, 10000.0);
+		m_Editor.m_RendererAPI->SetDisplaySettings(settings);
+		WriteDisplay();
 		return ToolResult::Done;
 	}
 

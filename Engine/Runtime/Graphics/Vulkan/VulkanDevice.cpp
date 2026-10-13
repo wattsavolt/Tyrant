@@ -30,10 +30,11 @@ namespace tyr
 #endif
 	};
 
-	DeviceInternal::DeviceInternal(VkInstance instance, VkPhysicalDevice device, uint index)
+	DeviceInternal::DeviceInternal(VkInstance instance, VkPhysicalDevice device, uint index, bool colourSpaceExtensionEnabled)
 		: Device(index)
 		, m_Instance(instance)
 		, m_PhysicalDevice(device)
+		, m_ColourSpaceExtensionEnabled(colourSpaceExtensionEnabled)
 	{
 		// Set to default
 		for (uint i = 0; i < c_QueueGroupCount; i++)
@@ -150,6 +151,12 @@ namespace tyr
 					{
 						extensions[numExtensions++] = VK_EXT_DEVICE_FAULT_EXTENSION_NAME;
 						m_DeviceFaultSupported = true;
+					}
+					// Tells an HDR display the brightness range of what's shown.
+					else if (strcmp(entry.extensionName, VK_EXT_HDR_METADATA_EXTENSION_NAME) == 0 && m_ColourSpaceExtensionEnabled)
+					{
+						extensions[numExtensions++] = VK_EXT_HDR_METADATA_EXTENSION_NAME;
+						m_HdrMetadataSupported = true;
 					}
 #if !TYR_FINAL
 					// Reports each object's GPU addresses, so a fault's address can be traced to its object.
@@ -382,6 +389,10 @@ namespace tyr
 		{
 			TYR_VK_GET_INSTANCE_PROC_ADDR(vkGetDeviceFaultInfoEXT);
 		}
+		if (m_HdrMetadataSupported)
+		{
+			TYR_VK_GET_INSTANCE_PROC_ADDR(vkSetHdrMetadataEXT);
+		}
 
 		// Retrieve queues
 		for (uint i = 0; i < c_QueueGroupCount; i++)
@@ -494,6 +505,7 @@ namespace tyr
 
 		vmaDestroyAllocator(m_Allocator);
 		vkDestroyDevice(m_LogicalDevice, g_VulkanAllocationCallbacks);
+		DisplayUtil::Shutdown();
 	}
 
 	void Device::WaitIdle() const
@@ -586,6 +598,42 @@ namespace tyr
 	{
 		DeviceInternal& device = static_cast<DeviceInternal&>(*this);
 		return new VulkanSwapChain(windowOSHandle, &device, desc);
+	}
+
+	void Device::GetDisplayHDRInfo(void* windowOSHandle, DisplayHDRInfo& outInfo) const
+	{
+		DisplayUtil::QueryDisplay(windowOSHandle, outInfo);
+
+		const DeviceInternal& device = static_cast<const DeviceInternal&>(*this);
+		if (!outInfo.osHdrEnabled || !device.IsColourSpaceExtensionEnabled())
+		{
+			return;
+		}
+
+		// A second surface on the same window is allowed, and only lives long enough to read its formats.
+		VkSurfaceKHR surface = VK_NULL_HANDLE;
+		VulkanHelper::CreateWindowSurface(windowOSHandle, device.GetInstance(), &surface);
+
+		uint formatCount = 0;
+		vkGetPhysicalDeviceSurfaceFormatsKHR(device.GetPhysicalDevice(), surface, &formatCount, nullptr);
+		StackAllocManager stack;
+		VkSurfaceFormatKHR* formats = stack.Alloc<VkSurfaceFormatKHR>(formatCount);
+		vkGetPhysicalDeviceSurfaceFormatsKHR(device.GetPhysicalDevice(), surface, &formatCount, formats);
+		for (uint i = 0; i < formatCount; ++i)
+		{
+			if (formats[i].format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 && formats[i].colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT)
+			{
+				outInfo.hdrSupported = true;
+				break;
+			}
+		}
+
+		vkDestroySurfaceKHR(device.GetInstance(), surface, g_VulkanAllocationCallbacks);
+	}
+
+	bool Device::HasDisplayChanged(void* windowOSHandle, const DisplayHDRInfo& info) const
+	{
+		return DisplayUtil::HasDisplayChanged(windowOSHandle, info);
 	}
 
 	CommandQueue* Device::CreateCommandQueue(CommandQueueType queueType, uint queueIndex, const GDebugString& debugName)

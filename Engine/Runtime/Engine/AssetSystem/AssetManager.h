@@ -124,8 +124,9 @@ namespace tyr
 		void ProcessPendingAssets();
 
 		// Texture loading pipeline: load the header, create the GPU texture and request an
-		// upload allocation, then submit the upload once the pixel data is ready.
-		void CreateTexture(TextureHeaderLoadData* ld);
+		// upload allocation, then submit the upload once the pixel data is ready. Returns false,
+		// without creating anything, when there's no upload space yet.
+		bool CreateTexture(TextureHeaderLoadData* ld);
 		void UploadTexture(TexturePixelLoadData* ld);
 		// Frees a texture's renderer resource and AssetData entry, deferred until any
 		// in-flight load for it has finished.
@@ -196,6 +197,8 @@ namespace tyr
 		MPSCRingBuffer<CpuAssetLoadData*, c_CpuAssetLoadQueueSize> m_CpuAssetsLoadedQueue;
 		// Materials that have had the file loaded but waiting on their textures to load
 		Array<MaterialLoadData*> m_MaterialsAwaitingTextures;
+		// Textures waiting for upload space, such as when a level loads many at once. In load order.
+		Array<TextureHeaderLoadData*> m_TexturesAwaitingUploadSpace;
 		// Mesh instances' assets still loading - waiting on their mesh's header and every
 		// material they'll need.
 		Array<MeshInstanceAssetsRequest*> m_PendingMeshInstanceAssets;

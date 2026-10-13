@@ -3,8 +3,10 @@
 #include "RenderConstants.h"
 #include "RenderAPI/Sync.h"
 #include "RenderAPI/SwapChain.h"
+#include "RenderAPI/DisplayInfo.h"
 #include "RenderBase/RenderHandles.h"
 #include "RenderResource/Texture.h"
+#include "PostProcessSettings.h"
 
 namespace tyr
 {
@@ -23,6 +25,12 @@ namespace tyr
 	{
 		SwapChain* swapChain = nullptr;
 		uint swapChainImageIndex = 0;
+		void* osHandle = nullptr;
+		// The display the window was last on, and what the swap chain writes for it. Main thread only.
+		DisplayHDRInfo displayInfo;
+		DisplayOutput output = DisplayOutput::SDR;
+		// Whether HDR was asked for, which differs from output when the swap chain fell back to SDR.
+		bool hdrRequested = false;
 		RenderWindowFrame frames[RenderConstants::c_BufferedFrameCount]{};
 		// Signalled by the submission that renders into a given swap chain image and waited on
 		// by that image's Present() call, so - unlike the acquire semaphore above - this one

@@ -42,7 +42,7 @@ namespace tyr
 		}
 	}
 
-    void CreateImageCopyInfos(LocalArray<BufferImageCopyInfo, RenderConstants::c_MaxMips>& copyInfos, uint highestMip, uint mipCount, const TextureInfo& textureInfo, size_t baseOffset)
+    void CreateImageCopyInfos(LocalArray<BufferImageCopyInfo, RenderConstants::c_MaxImageCopyRegions>& copyInfos, uint highestMip, uint mipCount, const TextureInfo& textureInfo, size_t baseOffset)
     {
         // Expects each mip's rows padded to c_RowPitchAlignment and each mip to start at a
         // c_UploadAlignment boundary.
@@ -102,7 +102,7 @@ namespace tyr
 		// The UNDEFINED->GENERAL transition into a valid copy destination is declared by
 		// TransferPass::Setup via the render graph, which runs this pass - nothing further
 		// needed here before the copy itself.
-		LocalArray<BufferImageCopyInfo, RenderConstants::c_MaxMips> copyInfos;
+		LocalArray<BufferImageCopyInfo, RenderConstants::c_MaxImageCopyRegions> copyInfos;
 		for (uint i = 0; i < count; ++i)
 		{
             Texture& dstTexture = registry.GetTexture(requests[i].dstTexture);

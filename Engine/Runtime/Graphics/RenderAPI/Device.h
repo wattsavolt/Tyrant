@@ -9,6 +9,7 @@
 #include "RenderAPI/ShaderModule.h"
 #include "RenderAPI/Sync.h"
 #include "RenderAPI/Pipeline.h"
+#include "RenderAPI/DisplayInfo.h"
 
 namespace tyr
 {
@@ -38,8 +39,8 @@ namespace tyr
 		static constexpr uint16 c_MaxImageViews = c_MaxImages * 3;
 		static constexpr uint16 c_MaxSamplers = 20;
 		static constexpr uint16 c_MaxRenderPasses = 1;
-		static constexpr uint16 c_MaxGraphicsPipelines = 10;
-		static constexpr uint16 c_MaxComputePipelines = 10;
+		static constexpr uint16 c_MaxGraphicsPipelines = 16;
+		static constexpr uint16 c_MaxComputePipelines = 16;
 		static constexpr uint16 c_MaxRayTracingPipelines = 10;
 		// One BLAS per mesh and per skinned instance, plus each frame's TLAS.
 		static constexpr uint16 c_MaxAccelerationStructures = 2048;
@@ -56,6 +57,12 @@ namespace tyr
 		
 		// No virtuals as implementations determined at compile time for faster performance
 		SwapChain* CreateSwapChain(void* windowOSHandle, const SwapChainDesc& desc);
+		// Whether the window's display is in HDR and this device can present HDR10 to it, and
+		// how bright the display can go. Main thread only.
+		void GetDisplayHDRInfo(void* windowOSHandle, DisplayHDRInfo& outInfo) const;
+		// True when info no longer describes the window's display, such as after the window moves
+		// to another display or HDR is turned on or off. Cheap enough to check every frame.
+		bool HasDisplayChanged(void* windowOSHandle, const DisplayHDRInfo& info) const;
 		// Returns nullptr if this device has no queue of the requested type (a dedicated
 		// compute/transfer queue isn't guaranteed to exist).
 		CommandQueue* CreateCommandQueue(CommandQueueType queueType, uint queueIndex, const GDebugString& debugName);

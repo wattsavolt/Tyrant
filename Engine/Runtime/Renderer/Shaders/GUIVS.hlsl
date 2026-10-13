@@ -11,11 +11,13 @@ struct GUIVertex
 	uint colour;
 };
 
+// Matches GUIPS.hlsl's.
 struct PushConstants
 {
 	float2 scale;
 	float2 translate;
 	uint textureIndex;
+	float brightness;
 };
 TYR_VK_PUSH_CONSTANT PushConstants g_PushConstants;
 

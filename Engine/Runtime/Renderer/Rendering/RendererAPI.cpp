@@ -9,6 +9,7 @@
 #include "RenderResource/Mesh.h"
 #include "RenderTransfer/BufferAllocation.h"
 #include "Geometry/BoundingSphere.h"
+#include <algorithm>
 
 namespace tyr
 {
@@ -707,6 +708,64 @@ namespace tyr
 		shaderLight.colour = info.colour;
 
 		m_Renderer.GetRecords().spotLights.Set(index, shaderLight);
+	}
+
+	DecalHandle RendererAPI::CreateDecal(SceneHandle scene, const DecalDesc& desc)
+	{
+		LocalArray<DecalHandle, RenderConstants::c_MaxDecals>& decals = m_Renderer.GetImmediateSceneData(scene).decals;
+		if (decals.Size() == RenderConstants::c_MaxDecals)
+		{
+			TYR_LOG_WARNING("A level can't have more than %u decals.", RenderConstants::c_MaxDecals);
+			return {};
+		}
+
+		const DecalHandle handle = m_Registry.CreateDecal();
+		UploadDecal(handle, desc.info);
+		decals.Add(handle);
+		return handle;
+	}
+
+	void RendererAPI::UpdateDecal(DecalHandle handle, const DecalDesc& desc)
+	{
+		UploadDecal(handle, desc.info);
+	}
+
+	void RendererAPI::DeleteDecal(SceneHandle scene, DecalHandle handle)
+	{
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		RemoveSceneLight(m_Renderer.GetImmediateSceneData(scene).decals, handle);
+		renderFrame.decalsToDelete.Add(handle);
+		m_Renderer.GetRecords().decals.ClearDirty(handle.h.index);
+	}
+
+	void RendererAPI::UploadDecal(DecalHandle handle, const DecalInfo& info)
+	{
+		const Vector3 size(Math::Abs(info.scale.x), Math::Abs(info.scale.y), Math::Abs(info.scale.z));
+		Decal& decal = m_Registry.GetDecal(handle);
+		decal.info = info;
+		decal.centre = info.position;
+		decal.radius = (size * 0.5f).Length();
+
+		// A flat box would have no inverse, so each side keeps a little size.
+		constexpr float c_MinSize = 0.001f;
+		const Vector3 safeScale(std::max(size.x, c_MinSize), std::max(size.y, c_MinSize), std::max(size.z, c_MinSize));
+
+		ShaderDecal shaderDecal{};
+		shaderDecal.worldToBox = Matrix4::CreateInverseTRS(info.position, info.rotation, safeScale);
+		shaderDecal.boundsCentre = decal.centre;
+		shaderDecal.boundsRadius = decal.radius;
+		shaderDecal.tangent = info.rotation.Rotate(Vector3::c_Right);
+		shaderDecal.normal = info.rotation.Rotate(Vector3::c_Up);
+		shaderDecal.invWidth = 1.0f / safeScale.x;
+		shaderDecal.invLength = 1.0f / safeScale.z;
+		shaderDecal.materialIndex = info.material.h.index;
+		shaderDecal.opacity = Math::Clamp(info.opacity, 0.0f, 1.0f);
+		// Fading over all of each half of the box is a fade depth of 1.
+		shaderDecal.invFadeDepth = 2.0f / Math::Clamp(info.fadeDepth, 0.001f, 1.0f);
+		shaderDecal.colourWeight = info.affectsColour ? 1.0f : 0.0f;
+		shaderDecal.normalWeight = info.affectsNormal ? 1.0f : 0.0f;
+		shaderDecal.roughnessWeight = info.affectsRoughness ? 1.0f : 0.0f;
+		m_Renderer.GetRecords().decals.Set(handle.h.index, shaderDecal);
 	}
 
 	bool RendererAPI::RequestResourceUploadAllocation(size_t size, UploadBufferAllocation& allocation)

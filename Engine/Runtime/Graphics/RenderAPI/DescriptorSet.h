@@ -36,7 +36,7 @@ namespace tyr
 		DescriptorBindingFlags bindingFlags;
 	};
 
-	static constexpr uint c_MaxDescriptorBindings = 32u;
+	static constexpr uint c_MaxDescriptorBindings = 48u;
 	struct DescriptorSetLayoutDesc
 	{
 		TYR_DECLARE_GDEBUGNAME(debugName);

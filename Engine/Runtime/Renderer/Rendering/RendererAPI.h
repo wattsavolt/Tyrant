@@ -33,6 +33,8 @@ namespace tyr
 	struct DirectionalLightInfo;
 	struct PointLightInfo;
 	struct SpotLightInfo;
+	struct DecalDesc;
+	struct DecalInfo;
 	struct GUIDrawData;
 	struct DebugLineVertex;
 	struct ViewportGridDesc;
@@ -170,6 +172,13 @@ namespace tyr
 
 		void DeleteSpotLight(SceneHandle scene, SpotLightHandle handle);
 
+		// Returns an invalid handle when the scene already has as many decals as it can.
+		DecalHandle CreateDecal(SceneHandle scene, const DecalDesc& desc);
+
+		void UpdateDecal(DecalHandle handle, const DecalDesc& desc);
+
+		void DeleteDecal(SceneHandle scene, DecalHandle handle);
+
 		bool RequestResourceUploadAllocation(size_t size, UploadBufferAllocation& allocation);
 
 		void FlushBufferUploadAllocation(const UploadBufferAllocation& alloc);
@@ -210,6 +219,7 @@ namespace tyr
 		void UploadDirectionalLight(const DirectionalLightInfo& info, uint index);
 		void UploadPointLight(const PointLightInfo& info, uint index);
 		void UploadSpotLight(const SpotLightInfo& info, uint index);
+		void UploadDecal(DecalHandle handle, const DecalInfo& info);
 		void UploadMaterial(MaterialHandle handle, const MaterialDesc& desc);
 
 		Renderer& m_Renderer;

@@ -105,8 +105,19 @@ namespace tyr
 		// every layer ShadowDenoisePass needs to process this tick, with no need for it to repeat
 		// the same directional/local iteration logic.
 		const LocalArray<uint, RenderConstants::c_MaxShadowSlots>& GetActiveSlots() const { return m_ActiveSlots; }
+		// Slots whose light changed this tick, so last tick's result there belongs to another light.
+		const bool* GetNewSlots() const { return m_NewSlots; }
 
 	private:
+		// The light that owned each local slot last tick. A light keeps its slot while it stays
+		// selected, so the denoiser's history for that slot is still its own.
+		struct LocalSlotOwner
+		{
+			bool isSpot = false;
+			PointLightHandle pointHandle;
+			SpotLightHandle spotHandle;
+		};
+
 		RenderRegistry* m_Registry;
 		RenderResources* m_Resources;
 		ComputePipelineHandle m_Pipeline;
@@ -124,6 +135,9 @@ namespace tyr
 		// loop will never read a slot beyond the active light count anyway.
 		LocalArray<uint, RenderConstants::c_MaxDirLights> m_PresentDirLightSlots;
 		LocalArray<uint, RenderConstants::c_MaxShadowSlots> m_ActiveSlots;
+		DirLightHandle m_DirSlotOwners[RenderConstants::c_MaxDirLights] = {};
+		LocalSlotOwner m_LocalSlotOwners[RenderConstants::c_MaxShadowCastingLocalLights] = {};
+		bool m_NewSlots[RenderConstants::c_MaxShadowSlots] = {};
 		TextureHandle m_DepthBuffer;
 		TextureHandle m_GBufferNormalRoughMetal;
 	};

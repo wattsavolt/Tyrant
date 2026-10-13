@@ -100,6 +100,11 @@ namespace tyr
 		// normal cursor behaviour.
 		void SetMouseCaptured(bool captured);
 
+		// Whether gameplay should act on input. The editor turns it off while playing until the
+		// viewport is clicked, so it can still be used.
+		void SetGameInputEnabled(bool enabled) { m_GameInputEnabled = enabled; }
+		bool IsGameInputEnabled() const { return m_GameInputEnabled; }
+
 		// This tick's typed characters (WM_CHAR order), for text fields - cleared every Update().
 		const char* GetTypedChars() const { return m_TypedChars; }
 		uint GetTypedCharCount() const { return m_TypedCharCount; }
@@ -145,6 +150,7 @@ namespace tyr
 		char m_TypedChars[c_MaxTypedCharsPerFrame]{};
 		uint m_TypedCharCount = 0;
 		GamepadState m_Gamepads[c_MaxGamepads]{};
+		bool m_GameInputEnabled = true;
 
 	private:
 		const GamepadState& GetGamepad(uint gamepadIndex) const

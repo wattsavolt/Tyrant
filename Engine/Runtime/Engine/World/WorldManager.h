@@ -18,6 +18,7 @@ namespace tyr
 	struct DirLightComponent;
 	struct PointLightComponent;
 	struct SpotLightComponent;
+	struct DecalComponent;
 	struct Transform;
 	struct ActorTypeDesc;
 	class TYR_ENGINE_API WorldManager final
@@ -69,7 +70,7 @@ namespace tyr
 		void SetActorTransform(Handle worldHandle, Entity rootEntity, const Transform& transform);
 
 		// False when adding an actor of this type would take the world over the renderer's limit
-		// for any type of light.
+		// for any type of light, or for decals.
 		bool HasRoomForActorLights(Handle worldHandle, const ActorTypeDesc& actorType);
 
 		// Replaces one of the entity's components, such as after editing it, and updates whatever
@@ -122,6 +123,10 @@ namespace tyr
 		void ReleaseLight(const World& world, DirLightComponent& light);
 		void ReleaseLight(const World& world, PointLightComponent& light);
 		void ReleaseLight(const World& world, SpotLightComponent& light);
+		// Makes the renderer's decals once their materials have loaded.
+		void SyncDecals(World& world);
+		// Removes the decal from the renderer and lets go of its material.
+		void ReleaseDecal(const World& world, DecalComponent& decal);
 		// Swaps the mesh instance for one using the new mesh and materials. Refused while the
 		// current one is still loading.
 		bool SetMeshComponent(Handle worldHandle, Entity entity, const MeshComponent& meshComponent);

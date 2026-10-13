@@ -49,6 +49,8 @@ namespace tyr
 
 		// Starts or stops the game when moving to or from Editing. Pausing just stops updating it.
 		void SetPlayState(PlayState state);
+		// Gives the playing game the mouse and keyboard, or takes them back for the editor.
+		void SetGameInputCaptured(bool captured);
 
 		// Sends the View menu's grid setting to the level's viewport when it changes.
 		void UpdateGrid();
@@ -109,6 +111,8 @@ namespace tyr
 
 		AppBase& m_App;
 		PlayState m_PlayState = PlayState::Editing;
+		// While playing, the game has the mouse until Escape is pressed, then again once clicked.
+		bool m_GameInputCaptured = false;
 		WindowHandle m_PrimaryWindow{};
 		URef<Camera> m_Camera;
 		WindowModule* m_WindowModule{};

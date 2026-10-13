@@ -75,6 +75,38 @@ namespace tyr
 		root.AddComponent(light);
 	TYR_ACTOR_END()
 
+	// Where the player starts, standing on the actor's position and facing its Z axis. The box
+	// makes it pickable in the editor and is about the player's size.
+	TYR_ACTOR_START(PlayerStartActor)
+		BoxComponent box{};
+		box.center = Vector3(0.0f, 0.9f, 0.0f);
+		box.halfExtents = Vector3(0.3f, 0.9f, 0.3f);
+
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(box);
+	TYR_ACTOR_END()
+
+	// The character the game spawns for the player at a PlayerStartActor.
+	TYR_ACTOR_START(PlayerCharacterActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(CharacterComponent{});
+	TYR_ACTOR_END()
+
+	// Projects its material down its -Y axis, so it lies flat on a floor until turned. Scaling it
+	// sizes the box. The box component makes it pickable in the editor.
+	TYR_ACTOR_START(DecalActor)
+		BoxComponent box{};
+		box.center = Vector3::c_Zero;
+		box.halfExtents = Vector3(0.5f, 0.5f, 0.5f);
+
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(box);
+		root.AddComponent(DecalComponent{});
+	TYR_ACTOR_END()
+
 	// Shines along its Z axis, so it's turned with the rotate gizmo.
 	TYR_ACTOR_START(SpotLightActor)
 		SpotLightComponent light{};

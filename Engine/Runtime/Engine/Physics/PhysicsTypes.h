@@ -40,6 +40,9 @@ namespace tyr
 		static constexpr uint c_MaxBodyPairs = 65536;
 		static constexpr uint c_MaxContactConstraints = 16384;
 		static constexpr uint c_InvalidBodyID = 0xFFFFFFFF;
+		// Characters each physics world can move at once.
+		static constexpr uint c_MaxCharacters = 16;
+		static constexpr uint c_InvalidCharacter = 0xFFFFFFFF;
 		static constexpr float c_Gravity = -9.81f;
 	};
 

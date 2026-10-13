@@ -4,6 +4,7 @@
 #include "Core.h"
 #include "Math/Vector3.h"
 #include "Math/Matrix4.h"
+#include "Math/Quaternion.h"
 #include "RenderBase/RenderHandles.h"
 #include "RenderResource/MeshDesc.h"
 
@@ -83,5 +84,27 @@ namespace tyr
 	struct SpotLightDesc
 	{
 		SpotLightInfo info;
+	};
+
+	// A unit box placed by the transform, projecting the material along its -Y axis.
+	struct DecalInfo
+	{
+		Vector3 position;
+		Quaternion rotation;
+		Vector3 scale;
+		MaterialHandle material;
+		float opacity;
+		// How much of the box's depth, from each end, it fades out over, from 0 to 1.
+		float fadeDepth;
+		bool affectsColour;
+		bool affectsNormal;
+		bool affectsRoughness;
+		// Higher draws over lower.
+		int sortOrder;
+	};
+
+	struct DecalDesc
+	{
+		DecalInfo info;
 	};
 }

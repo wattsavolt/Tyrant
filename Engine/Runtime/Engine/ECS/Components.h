@@ -107,6 +107,31 @@ namespace tyr
 		AssetID collisionMesh;
 	};
 
+	// An upright capsule moved by gameplay, such as the player, rather than by the simulation. It
+	// slides along walls, walks up steps and falls. The entity's position is the capsule's base.
+	struct CharacterComponent
+	{
+		float radius = 0.3f;
+		float height = 1.75f;
+		float crouchHeight = 1.15f;
+		// The steepest slope it can walk up, in degrees.
+		float maxSlope = 50.0f;
+		// The tallest step it walks up without jumping.
+		float stepHeight = 0.35f;
+		// Set by gameplay. Not saved. moveVelocity is horizontal, in metres per second, and a
+		// jump speed is used by the next physics step on the ground, then cleared.
+		Vector3 moveVelocity;
+		float jumpSpeed = 0.0f;
+		bool wantsCrouch = false;
+		// Set by physics. Not saved. Standing up waits until there's room overhead.
+		bool grounded = false;
+		bool crouched = false;
+		// Its last two fixed step positions, blended between for rendering.
+		Vector3 previousPosition;
+		Vector3 currentPosition;
+		uint characterIndex = PhysicsConstants::c_InvalidCharacter;
+	};
+
 	// Makes the ColliderComponent on the same entity move.
 	struct RigidBodyComponent
 	{
@@ -176,6 +201,25 @@ namespace tyr
 		bool castsShadow;
 		// Invalid until the light has been created in the renderer.
 		SpotLightHandle lightHandle;
+	};
+
+	// Projects a material down the entity's -Y axis onto whatever is inside its box, which is a
+	// metre on each side before the entity's scale. The material's albedo alpha is its coverage.
+	struct DecalComponent
+	{
+		AssetID material;
+		float opacity = 1.0f;
+		// How much of the box's depth, from each end, it fades out over, from 0 to 1.
+		float fadeDepth = 0.5f;
+		bool affectsColour = true;
+		bool affectsNormal = true;
+		// Roughness and metallic.
+		bool affectsRoughness = true;
+		// Higher draws over lower where decals overlap.
+		int sortOrder = 0;
+		// The material it holds loaded, and the renderer's decal made once it has. Not saved.
+		AssetID loadedMaterial;
+		DecalHandle decalHandle;
 	};
 
 }

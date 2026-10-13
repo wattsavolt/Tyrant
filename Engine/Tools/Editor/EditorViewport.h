@@ -56,6 +56,8 @@ namespace tyr
 			// The gizmo moved the selected actor to this transform.
 			bool transformChanged = false;
 			Transform transform;
+			// A click on the game while it's playing, to give it the mouse back.
+			bool playClicked = false;
 		};
 
 		EditorViewport(RendererAPI& rendererAPI, const EditorIcons& icons);

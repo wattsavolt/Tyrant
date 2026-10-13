@@ -122,6 +122,9 @@ namespace tyr
 		RenderBufferHandle shadowLightSlotMapBuffer;
 		// The active scene's lights this frame, as slots in the light buffers.
 		RenderBufferHandle lightIndexBuffer;
+		RenderBufferHandle decalBuffer;
+		// The active scene's visible decals this frame, as slots in the decal buffer.
+		RenderBufferHandle decalIndexBuffer;
 
 		// TAA resolve - optional (Renderer::m_TaaEnabled), blends this tick's lit colour with the
 		// previous buffered viewport slot's own resolved history.

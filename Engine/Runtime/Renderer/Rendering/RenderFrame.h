@@ -141,6 +141,7 @@ namespace tyr
 		Array<DirLightHandle> dirLightsToDelete;
 		Array<PointLightHandle> pointLightsToDelete;
 		Array<SpotLightHandle> spotLightsToDelete;
+		Array<DecalHandle> decalsToDelete;
 		// Windows removed this tick. A window's swap chain/semaphores can't be deleted right
 		// away - something might still be using them from up to c_BufferedFrameCount frames
 		// ago - so deletion waits until this slot cycles back and its GPU work is done.
@@ -183,6 +184,8 @@ namespace tyr
 		// The active scene's lights this frame, in the same order as the light index list the
 		// lighting shader reads, so shadow slots match it.
 		SceneLights activeLights;
+		// How many of the active scene's decals are in view this frame.
+		uint visibleDecalCount = 0;
 		// Frame update for the active scene
 		SceneFrame sceneFrame;
 
@@ -213,6 +216,7 @@ namespace tyr
 			dirLightsToDelete.Reserve(RenderConstants::c_MaxDirLights);
 			pointLightsToDelete.Reserve(RenderConstants::c_MaxPointLights);
 			spotLightsToDelete.Reserve(RenderConstants::c_MaxSpotLights);
+			decalsToDelete.Reserve(c_DefaultPendingListReserve);
 		}
 
 		void Clear()
@@ -235,6 +239,7 @@ namespace tyr
 			dirLightsToDelete.Clear();
 			pointLightsToDelete.Clear();
 			spotLightsToDelete.Clear();
+			decalsToDelete.Clear();
 			windowsToDelete.Clear();
 			scenesToDelete.Clear();
 			renderViewportsToDelete.Clear();
@@ -250,6 +255,7 @@ namespace tyr
 			debugLineDepthTestedCount = 0;
 			debugLineOnTopCount = 0;
 			activeLights.Clear();
+			visibleDecalCount = 0;
 			guiDrawData.Clear();
 			guiVertexCursor = 0;
 			guiIndexCursor = 0;

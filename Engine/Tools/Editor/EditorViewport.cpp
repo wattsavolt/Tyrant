@@ -47,6 +47,11 @@ namespace tyr
 		const bool imageHovered = ImGui::IsItemHovered();
 		DrawDebugTexts(world, imageMin.x, imageMin.y, width, height);
 
+		if (!state.editing && imageHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+		{
+			events.playClicked = true;
+		}
+
 		if (state.editing)
 		{
 			if (ImGui::BeginDragDropTarget())

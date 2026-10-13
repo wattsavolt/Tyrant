@@ -64,6 +64,7 @@ namespace tyr
 		RenderRecordTable<ShaderDirectionalLight, RenderConstants::c_DirLightPoolSize> dirLights;
 		RenderRecordTable<ShaderPointLight, RenderConstants::c_PointLightPoolSize> pointLights;
 		RenderRecordTable<ShaderSpotLight, RenderConstants::c_SpotLightPoolSize> spotLights;
+		RenderRecordTable<ShaderDecal, RenderConstants::c_DecalPoolSize> decals;
 		RenderRecordTable<BonePalette, RenderConstants::c_MaxSkeletalMeshInstances> bonePalettes;
 	};
 

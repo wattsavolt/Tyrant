@@ -48,8 +48,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 	// Depth-aware spatial blur of this tick's raw trace - skips neighbours whose depth differs
 	// too much, since those are likely a different surface entirely and blurring across them
 	// would leak light/shadow between unrelated objects.
+	const float rawCentre = shadowMasksRaw[g_PushConstants.renderFrameIndex][uint3(dispatchThreadId.xy, g_PushConstants.slot)].r;
 	float spatialSum = 0.0f;
 	float spatialWeight = 0.0f;
+	// The range of this tick's results on the same surface just around this pixel, which history
+	// is clamped to so it can't hold on to shadow that's no longer there.
+	float neighbourMin = rawCentre;
+	float neighbourMax = rawCentre;
 	const int radius = (int)g_PushConstants.spatialRadius;
 	for (int y = -radius; y <= radius; ++y)
 	{
@@ -70,9 +75,12 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 			const float raw = shadowMasksRaw[g_PushConstants.renderFrameIndex][uint3(sampleCoord, g_PushConstants.slot)].r;
 			spatialSum += raw * weight;
 			spatialWeight += weight;
+
+			const bool adjacent = and(weight > 0.0f, max(abs(x), abs(y)) <= 1);
+			neighbourMin = min(neighbourMin, adjacent ? raw : 1.0f);
+			neighbourMax = max(neighbourMax, adjacent ? raw : 0.0f);
 		}
 	}
-	const float rawCentre = shadowMasksRaw[g_PushConstants.renderFrameIndex][uint3(dispatchThreadId.xy, g_PushConstants.slot)].r;
 	const float spatialResult = spatialWeight > 0.0f ? (spatialSum / spatialWeight) : rawCentre;
 
 	float finalResult = spatialResult;
@@ -90,7 +98,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 		const float onScreen = all(prevUv == saturate(prevUv)) ? 1.0f : 0.0f;
 		const int2 maxCoord = int2(g_PushConstants.width - 1, g_PushConstants.height - 1);
 		const int2 prevPixelCoord = min(int2(saturate(prevUv) * float2(g_PushConstants.width, g_PushConstants.height)), maxCoord);
-		const float history = shadowMasks[g_PushConstants.prevRenderFrameIndex][uint3(prevPixelCoord, g_PushConstants.slot)].r;
+		const float history = clamp(shadowMasks[g_PushConstants.prevRenderFrameIndex][uint3(prevPixelCoord, g_PushConstants.slot)].r, neighbourMin, neighbourMax);
 		finalResult = lerp(spatialResult, history, 0.85f * onScreen);
 	}
 

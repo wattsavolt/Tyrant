@@ -73,6 +73,10 @@ namespace tyr
 		constexpr const char* c_FirstLevelName = "Main";
 		// How long a directional light's direction is drawn, in metres.
 		constexpr float c_DirLightArrowLength = 2.0f;
+		// How far above the player's feet the editor's camera is taken to be, when the player
+		// starts there.
+		constexpr float c_FallbackEyeHeight = 1.6f;
+		const Id64 c_PlayerStartType("PlayerStartActor");
 
 		bool HasExtension(const char* path, const char* extension)
 		{
@@ -223,7 +227,7 @@ namespace tyr
 		Platform::GetMaxWindowResolution(desc.width, desc.height);
 
 		// 10 metres above the grid and pulled back along -Z, looking down at the origin.
-		m_Camera = MakeURef<Camera>(Vector3(0.0f, 10.0f, -10.0f), Vector3::c_Up, Vector3::c_Forward, 90.0f, 1.0f, 2000.0f);
+		m_Camera = MakeURef<Camera>(Vector3(0.0f, 10.0f, -10.0f), Vector3::c_Up, Vector3::c_Forward, 90.0f, 0.1f, 2000.0f);
 		m_Camera->Target(Vector3::c_Zero);
 
 		WorldConfig worldParams{};
@@ -239,6 +243,7 @@ namespace tyr
 		TYR_GET_MODULE(InputModule, inputModule);
 		m_InputManager = inputModule->GetInputManager();
 		m_InputManager->SetWindow(m_WindowModule, m_PrimaryWindow);
+		m_InputManager->SetGameInputEnabled(false);
 
 		m_Settings = MakeURef<EditorSettings>();
 
@@ -488,6 +493,18 @@ namespace tyr
 		EditorViewport::Events events;
 		m_EditorViewport->Draw(viewportRect, activeWorld, *m_InputManager, deltaTime, editState, events);
 
+		if (m_PlayState == PlayState::Playing)
+		{
+			if (events.playClicked)
+			{
+				SetGameInputCaptured(true);
+			}
+			else if (m_GameInputCaptured && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+			{
+				SetGameInputCaptured(false);
+			}
+		}
+
 		if (events.meshDropped)
 		{
 			AddMeshDrop(events.drop, "");
@@ -634,6 +651,17 @@ namespace tyr
 				break;
 			}
 		});
+
+		world.entities.ForEach<CharacterComponent>([&world](Entity entity, CharacterComponent& character)
+		{
+			if (!world.entities.HasComponent<ComponentTransform>(entity))
+			{
+				return;
+			}
+			const float height = character.crouched ? character.crouchHeight : character.height;
+			const Vector3 centre = world.entities.GetComponent<ComponentTransform>(entity).world.position + Vector3(0.0f, height * 0.5f, 0.0f);
+			DebugDraw::Capsule(centre, character.radius, std::max(height * 0.5f - character.radius, 0.0f), Quaternion::c_Identity, DebugColour::c_Orange);
+		});
 	}
 
 	void Editor::DrawDebugOverlays()
@@ -687,6 +715,36 @@ namespace tyr
 					DebugDraw::Arrow(start, start + Vector3::SafeNormalize(light.direction) * c_DirLightArrowLength, DebugColour::c_Orange);
 				}
 			});
+		}
+
+		// A decal's box is all there is to see of it before it has a material.
+		world.entities.ForEach<DecalComponent>([&world, this](Entity entity, DecalComponent& /*decal*/)
+		{
+			if (!world.entities.HasComponent<ComponentTransform>(entity))
+			{
+				return;
+			}
+			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+			const uint colour = entity == m_SelectedActor ? DebugColour::c_Yellow : DebugColour::c_Green;
+			DebugDraw::Box(transform.position, transform.scale * 0.5f, transform.rotation, colour);
+			// Points the way it projects.
+			const Vector3 down = transform.rotation.Rotate(-Vector3::c_Up) * (Math::Abs(transform.scale.y) * 0.5f);
+			DebugDraw::Arrow(transform.position, transform.position + down, colour);
+		});
+
+		// A player start shows the player's size and which way they'll face.
+		for (const ActorInstance& actor : world.actorInstances)
+		{
+			const Entity root = actor.RootEntity();
+			if (actor.typeID != c_PlayerStartType || !world.entities.HasComponent<ComponentTransform>(root))
+			{
+				continue;
+			}
+			const Transform& transform = world.entities.GetComponent<ComponentTransform>(root).world;
+			const uint colour = root == m_SelectedActor ? DebugColour::c_Yellow : DebugColour::c_Cyan;
+			const Vector3 centre = transform.position + Vector3(0.0f, 0.9f, 0.0f);
+			DebugDraw::Capsule(centre, 0.3f, 0.6f, Quaternion::c_Identity, colour);
+			DebugDraw::Arrow(centre, centre + transform.rotation.Rotate(Vector3::c_Forward) * 0.8f, colour);
 		}
 
 		if (viewSettings.showActorNames)
@@ -805,10 +863,10 @@ namespace tyr
 			return;
 		}
 
-		// The renderer only supports so many of each type of light.
+		// The renderer only supports so many of each type of light, and so many decals.
 		if (!m_WorldManager->HasRoomForActorLights(m_LevelEditorWorld, *actorTypeDesc))
 		{
-			TYR_LOG_WARNING("Can't add a %s, the level already has as many of its lights as the renderer supports.", actorTypeDesc->name.CStr());
+			TYR_LOG_WARNING("Can't add a %s, the level already has as many of its lights or decals as the renderer supports.", actorTypeDesc->name.CStr());
 			return;
 		}
 
@@ -998,6 +1056,9 @@ namespace tyr
 				SaveLevel();
 			}
 			m_App.SetStartLevel(AssetUtil::IsValidAssetID(m_Level) ? AssetRegistry::Instance().GetAssetData(m_Level).filePath.CStr() : "");
+			// Without a player start, the player stands where the editor's camera is, facing the same way.
+			const Vector3 cameraForward = m_Camera->GetForward();
+			m_App.SetFallbackStart(m_Camera->GetPosition() - Vector3(0.0f, c_FallbackEyeHeight, 0.0f), Math::Atan2(cameraForward.x, cameraForward.z));
 			m_EditorUI->ApplyRenderSettings(false);
 			m_App.Initialize();
 		}
@@ -1014,6 +1075,15 @@ namespace tyr
 		{
 			m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld()).paused = state == PlayState::Paused;
 		}
+		// Like Unreal, the game takes the mouse as soon as it starts.
+		SetGameInputCaptured(state == PlayState::Playing);
+	}
+
+	void Editor::SetGameInputCaptured(bool captured)
+	{
+		m_GameInputCaptured = captured;
+		m_InputManager->SetGameInputEnabled(captured);
+		m_InputManager->SetMouseCaptured(captured);
 	}
 
 	void Editor::Shutdown()

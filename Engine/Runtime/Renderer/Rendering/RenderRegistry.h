@@ -131,6 +131,17 @@ namespace tyr
 			return m_SpotLightPool[handle.h];
 		}
 
+		DecalHandle CreateDecal();
+		void DeleteDecal(DecalHandle handle);
+		Decal& GetDecal(DecalHandle handle)
+		{
+			return m_DecalPool[handle.h];
+		}
+		const Decal& GetDecal(DecalHandle handle) const
+		{
+			return m_DecalPool[handle.h];
+		}
+
 		Device& GetDevice() { return m_Device; };
 
 	private:
@@ -145,6 +156,7 @@ namespace tyr
 		LocalObjectPool<DirectionalLight, RenderConstants::c_DirLightPoolSize> m_DirLightPool;
 		LocalObjectPool<PointLight, RenderConstants::c_PointLightPoolSize> m_PointLightPool;
 		LocalObjectPool<SpotLight, RenderConstants::c_SpotLightPoolSize> m_SpotLightPool;
+		LocalObjectPool<Decal, RenderConstants::c_DecalPoolSize> m_DecalPool;
 
 		static RenderRegistry* s_Instance;
 	};

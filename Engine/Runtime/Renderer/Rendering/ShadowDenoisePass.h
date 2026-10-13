@@ -56,7 +56,8 @@ namespace tyr
 		void Setup(RenderGraphBuilder& builder, TextureHandle depthBuffer, TextureHandle gbufferMotion,
 			TextureHandle shadowMasksRaw, TextureHandle shadowMasks, TextureHandle prevShadowMasks, bool hasHistory);
 
-		void Execute(CommandList& cmdList, const LocalArray<uint, RenderConstants::c_MaxShadowSlots>& activeSlots,
+		// newSlots, indexed by slot, marks slots whose light changed this tick and so have no history.
+		void Execute(CommandList& cmdList, const LocalArray<uint, RenderConstants::c_MaxShadowSlots>& activeSlots, const bool* newSlots,
 			uint renderFrameIndex, uint prevRenderFrameIndex, bool hasHistory, uint width, uint height, uint spatialRadius);
 
 	private:

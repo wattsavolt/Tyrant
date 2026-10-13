@@ -221,10 +221,10 @@ namespace tyr
 		Matrix3 rot3x3;
 		invRot.ToRotationMatrix(rot3x3);
 
-		// Set up final matrix with scale, rotation and translation
-		m[0][0] = invScale.x * rot3x3[0][0]; m[0][1] = invScale.x * rot3x3[0][1]; m[0][2] = invScale.x * rot3x3[0][2]; m[0][3] = 0;
-		m[1][0] = invScale.y * rot3x3[1][0]; m[1][1] = invScale.y * rot3x3[1][1]; m[1][2] = invScale.y * rot3x3[1][2]; m[1][3] = 0;
-		m[2][0] = invScale.z * rot3x3[2][0]; m[2][1] = invScale.z * rot3x3[2][1]; m[2][2] = invScale.z * rot3x3[2][2]; m[2][3] = 0;		
+		// Row vectors are rotated back first, then unscaled, so the scale goes on the columns.
+		m[0][0] = rot3x3[0][0] * invScale.x; m[0][1] = rot3x3[0][1] * invScale.y; m[0][2] = rot3x3[0][2] * invScale.z; m[0][3] = 0;
+		m[1][0] = rot3x3[1][0] * invScale.x; m[1][1] = rot3x3[1][1] * invScale.y; m[1][2] = rot3x3[1][2] * invScale.z; m[1][3] = 0;
+		m[2][0] = rot3x3[2][0] * invScale.x; m[2][1] = rot3x3[2][1] * invScale.y; m[2][2] = rot3x3[2][2] * invScale.z; m[2][3] = 0;
 		m[3][0] = invTranslate.x;            m[3][1] = invTranslate.y;            m[3][2] = invTranslate.z;            m[3][3] = 1;
 	}
 

@@ -65,6 +65,7 @@ namespace tyr
 		void* meshExtension = const_cast<char*>(AssetConstants::c_MeshFileExtension);
 		void* skeletalMeshExtension = const_cast<char*>(AssetConstants::c_SkeletalMeshFileExtension);
 		void* animationExtension = const_cast<char*>(AssetConstants::c_AnimationFileExtension);
+		void* materialExtension = const_cast<char*>(AssetConstants::c_MaterialFileExtension);
 
 		m_Reflector.RegisterFieldReflector(GetTypeID<MeshComponent>(), MakeFieldKey("mesh"), &ReflectAsset, meshExtension);
 		m_Reflector.RegisterFieldReflector(GetTypeID<MeshComponent>(), MakeFieldKey("materials"), &ReflectMeshMaterials<MeshComponent>, this);
@@ -73,6 +74,7 @@ namespace tyr
 		m_Reflector.RegisterFieldReflector(GetTypeID<ColliderComponent>(), MakeFieldKey("shape"), &PropertiesReflector::ReflectEnum, const_cast<PropertiesReflector::EnumNames*>(&c_ColliderShapes));
 		m_Reflector.RegisterFieldReflector(GetTypeID<RigidBodyComponent>(), MakeFieldKey("motionType"), &PropertiesReflector::ReflectEnum, const_cast<PropertiesReflector::EnumNames*>(&c_MotionTypes));
 		m_Reflector.RegisterFieldReflector(GetTypeID<AnimatorComponent>(), MakeFieldKey("clip"), &ReflectAsset, animationExtension);
+		m_Reflector.RegisterFieldReflector(GetTypeID<DecalComponent>(), MakeFieldKey("material"), &ReflectAsset, materialExtension);
 		m_Reflector.RegisterFieldReflector(GetTypeID<AnimatorComponent>(), MakeFieldKey("layerClip"), &ReflectAsset, animationExtension);
 	}
 

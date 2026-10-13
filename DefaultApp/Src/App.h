@@ -3,11 +3,13 @@
 #include "App/AppBase.h"
 #include "Window/WindowHandle.h"
 #include "World/Camera.h"
+#include "Gameplay/FirstPersonController.h"
 
 namespace tyr
 {
 	class WindowModule;
 	class WorldManager;
+	class InputManager;
 }
 
 class App final : public tyr::AppBase
@@ -23,10 +25,15 @@ public:
 	bool WantsExit() const override;
 
 private:
+	// Puts a player character at the level's player start and takes control of it.
+	void SpawnPlayer();
+
 	tyr::Camera m_Camera;
 	tyr::WindowHandle m_PrimaryWindow{};
 	tyr::WindowModule* m_WindowModule{};
 	tyr::WorldManager* m_WorldManager{};
+	tyr::InputManager* m_InputManager{};
+	tyr::FirstPersonController m_Controller;
 	tyr::Handle m_MainWorld{};
 	bool m_Embedded;
 };

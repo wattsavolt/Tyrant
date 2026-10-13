@@ -54,6 +54,14 @@ namespace tyr
 		TYR_COMPONENT_FIELD(&RigidBodyComponent::gravityFactor, "Gravity Factor", true, true, true);
 	TYR_COMPONENT_END();
 
+	TYR_COMPONENT_START(CharacterComponent, 0);
+		TYR_COMPONENT_FIELD(&CharacterComponent::radius, "Radius", true, true, true);
+		TYR_COMPONENT_FIELD(&CharacterComponent::height, "Height", true, true, true);
+		TYR_COMPONENT_FIELD(&CharacterComponent::crouchHeight, "Crouch Height", true, true, true);
+		TYR_COMPONENT_FIELD(&CharacterComponent::maxSlope, "Max Slope", true, true, true);
+		TYR_COMPONENT_FIELD(&CharacterComponent::stepHeight, "Step Height", true, true, true);
+	TYR_COMPONENT_END();
+
 	TYR_COMPONENT_START(BoxComponent, 0);
 		TYR_COMPONENT_FIELD(&BoxComponent::center, "Center", true, true, true);
 		TYR_COMPONENT_FIELD(&BoxComponent::halfExtents, "Half Extents", true, true, true);
@@ -72,6 +80,16 @@ namespace tyr
 		TYR_COMPONENT_FIELD(&PointLightComponent::range, "Range", true, true, true);
 		TYR_COMPONENT_FIELD(&PointLightComponent::attenuation, "Attenuation", true, true, true);
 		TYR_COMPONENT_FIELD(&PointLightComponent::castsShadow, "Casts Shadow", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(DecalComponent, 0);
+		TYR_COMPONENT_FIELD(&DecalComponent::material, "Material", true, true, true);
+		TYR_COMPONENT_FIELD(&DecalComponent::opacity, "Opacity", true, true, true);
+		TYR_COMPONENT_FIELD(&DecalComponent::fadeDepth, "Fade Depth", true, true, true);
+		TYR_COMPONENT_FIELD(&DecalComponent::affectsColour, "Affects Colour", true, true, true);
+		TYR_COMPONENT_FIELD(&DecalComponent::affectsNormal, "Affects Normal", true, true, true);
+		TYR_COMPONENT_FIELD(&DecalComponent::affectsRoughness, "Affects Roughness", true, true, true);
+		TYR_COMPONENT_FIELD(&DecalComponent::sortOrder, "Sort Order", true, true, true);
 	TYR_COMPONENT_END();
 
 	TYR_COMPONENT_START(SpotLightComponent, 0);

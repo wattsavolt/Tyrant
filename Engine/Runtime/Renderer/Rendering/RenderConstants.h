@@ -66,6 +66,9 @@ namespace tyr
 		static constexpr uint c_DirLightPoolSize = c_MaxDirLights * c_LightPoolSceneCount;
 		static constexpr uint c_PointLightPoolSize = c_MaxPointLights * c_LightPoolSceneCount;
 		static constexpr uint c_SpotLightPoolSize = c_MaxSpotLights * c_LightPoolSceneCount;
+		static constexpr uint c_MaxDecals = 256;
+		static_assert(c_MaxDecals == TYR_MAX_DECALS, "Keep in sync with ShaderTypes.h's TYR_MAX_DECALS.");
+		static constexpr uint c_DecalPoolSize = c_MaxDecals * c_LightPoolSceneCount;
 		// The active scene's lights each frame, as their pool slots: directional, then point,
 		// then spot.
 		static constexpr uint c_LightIndexCount = c_MaxDirLights + c_MaxPointLights + c_MaxSpotLights;

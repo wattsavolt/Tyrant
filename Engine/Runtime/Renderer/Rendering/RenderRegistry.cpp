@@ -151,4 +151,14 @@ namespace tyr
 	{
 		m_SpotLightPool.Delete(handle.h);
 	}
+
+	DecalHandle RenderRegistry::CreateDecal()
+	{
+		return DecalHandle(m_DecalPool.Create());
+	}
+
+	void RenderRegistry::DeleteDecal(DecalHandle handle)
+	{
+		m_DecalPool.Delete(handle.h);
+	}
 }

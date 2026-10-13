@@ -924,7 +924,7 @@ namespace tyr
 		WorldManager& worldManager = *m_Editor.m_WorldManager;
 		if (!worldManager.HasRoomForActorLights(levelWorld, *type))
 		{
-			return Fail("The level already has as many of this actor's lights as the renderer supports.");
+			return Fail("The level already has as many of this actor's lights or decals as the renderer supports.");
 		}
 
 		// Named after the mesh, like one dropped from the asset browser.

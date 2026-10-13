@@ -45,7 +45,7 @@ namespace tyr
 		}
 	}
 
-	void ShadowDenoisePass::Execute(CommandList& cmdList, const LocalArray<uint, RenderConstants::c_MaxShadowSlots>& activeSlots,
+	void ShadowDenoisePass::Execute(CommandList& cmdList, const LocalArray<uint, RenderConstants::c_MaxShadowSlots>& activeSlots, const bool* newSlots,
 		uint renderFrameIndex, uint prevRenderFrameIndex, bool hasHistory, uint width, uint height, uint spatialRadius)
 	{
 		if (activeSlots.IsEmpty())
@@ -66,12 +66,12 @@ namespace tyr
 		pushConstants.height = height;
 		pushConstants.renderFrameIndex = renderFrameIndex;
 		pushConstants.prevRenderFrameIndex = prevRenderFrameIndex;
-		pushConstants.hasHistory = hasHistory ? 1u : 0u;
 		pushConstants.spatialRadius = spatialRadius;
 
 		for (uint slot : activeSlots)
 		{
 			pushConstants.slot = slot;
+			pushConstants.hasHistory = hasHistory && !newSlots[slot] ? 1u : 0u;
 			cmdList.PushConstants(m_Pipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(ShadowDenoisePushConstants), &pushConstants);
 			cmdList.Dispatch(groupsX, groupsY, 1);
 		}

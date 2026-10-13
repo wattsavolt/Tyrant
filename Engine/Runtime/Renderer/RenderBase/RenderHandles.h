@@ -17,4 +17,5 @@ namespace tyr
 	TYR_CREATE_HANDLE_TYPE(DirLightHandle);
 	TYR_CREATE_HANDLE_TYPE(PointLightHandle);
 	TYR_CREATE_HANDLE_TYPE(SpotLightHandle);
+	TYR_CREATE_HANDLE_TYPE(DecalHandle);
 }

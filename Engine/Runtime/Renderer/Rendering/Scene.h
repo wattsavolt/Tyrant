@@ -71,6 +71,8 @@ namespace tyr
 		RenderViewportHandle renderViewport{};
 		// Kept here on the main thread, where each frame's light index list is built from them.
 		SceneLights lights;
+		// The same for decals, in no particular order.
+		LocalArray<DecalHandle, RenderConstants::c_MaxDecals> decals;
 		// Flat ambient term added to every pixel regardless of any light.
 		float ambient = 0.0f;
 		// Whether this scene should actually render/upload this tick.
@@ -81,6 +83,7 @@ namespace tyr
 			windowHandle = {};
 			renderViewport = {};
 			lights.Clear();
+			decals.Clear();
 			ambient = 0.0f;
 			visible = true;
 		}

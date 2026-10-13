@@ -100,6 +100,22 @@ namespace tyr
 			return desc;
 		}
 
+		DecalDesc CreateDecalDesc(const DecalComponent& decal, MaterialHandle material, const Transform& transform)
+		{
+			DecalDesc desc{};
+			desc.info.position = transform.position;
+			desc.info.rotation = transform.rotation;
+			desc.info.scale = transform.scale;
+			desc.info.material = material;
+			desc.info.opacity = decal.opacity;
+			desc.info.fadeDepth = decal.fadeDepth;
+			desc.info.affectsColour = decal.affectsColour;
+			desc.info.affectsNormal = decal.affectsNormal;
+			desc.info.affectsRoughness = decal.affectsRoughness;
+			desc.info.sortOrder = decal.sortOrder;
+			return desc;
+		}
+
 		// Replaces a light component with an edited copy, keeping the renderer's handle for it.
 		template<typename T>
 		T& ReplaceLight(EntitySystem& entities, Entity entity, const void* data)
@@ -190,6 +206,13 @@ namespace tyr
 					light.lightHandle = m_RendererAPI->CreateSpotLight(world.sceneHandle, CreateLightDesc(light, GetWorldTransform(world.entities, entity)));
 				}
 			});
+
+			world.decalsPending = true;
+		}
+
+		if (world.decalsPending)
+		{
+			SyncDecals(world);
 		}
 
 		// TODO: Step physics and audio here once their components exist, only when world.simulate
@@ -204,6 +227,12 @@ namespace tyr
 		if (!world.paused)
 		{
 			m_AnimationSystem.Update(world, deltaTime);
+		}
+
+		// After physics, so the camera is where the entity is drawn this frame.
+		if (world.cameraEntity != c_InvalidEntity && world.entities.HasComponent<ComponentTransform>(world.cameraEntity))
+		{
+			world.camera->SetPosition(world.entities.GetComponent<ComponentTransform>(world.cameraEntity).world.position + world.cameraOffset);
 		}
 
 		// The other way a resize can be detected - externally, by the OS/windowing system -
@@ -375,7 +404,8 @@ namespace tyr
 		EntitySystem& entities = m_WorldPool[worldHandle].entities;
 		return HasRoomFor<DirLightComponent>(entities, actorType, RenderConstants::c_MaxDirLights)
 			&& HasRoomFor<PointLightComponent>(entities, actorType, RenderConstants::c_MaxPointLights)
-			&& HasRoomFor<SpotLightComponent>(entities, actorType, RenderConstants::c_MaxSpotLights);
+			&& HasRoomFor<SpotLightComponent>(entities, actorType, RenderConstants::c_MaxSpotLights)
+			&& HasRoomFor<DecalComponent>(entities, actorType, RenderConstants::c_MaxDecals);
 	}
 
 	bool WorldManager::SetComponentData(Handle worldHandle, Entity entity, ComponentTypeID typeID, const void* data)
@@ -453,6 +483,45 @@ namespace tyr
 			{
 				m_RendererAPI->UpdateSpotLight(light.lightHandle, CreateLightDesc(light, GetWorldTransform(world.entities, entity)));
 			}
+			return true;
+		}
+
+		// A changed character is made again on the next physics update.
+		if (typeID == ComponentRegistry::GetComponentTypeID<CharacterComponent>())
+		{
+			CharacterComponent& character = world.entities.GetComponent<CharacterComponent>(entity);
+			if (world.physicsWorld)
+			{
+				m_PhysicsManager.RemoveCharacter(world.physicsWorld, character);
+			}
+			const CharacterComponent& edited = *static_cast<const CharacterComponent*>(data);
+			character.radius = edited.radius;
+			character.height = edited.height;
+			character.crouchHeight = edited.crouchHeight;
+			character.maxSlope = edited.maxSlope;
+			character.stepHeight = edited.stepHeight;
+			return true;
+		}
+
+		if (typeID == ComponentRegistry::GetComponentTypeID<DecalComponent>())
+		{
+			DecalComponent& decal = world.entities.GetComponent<DecalComponent>(entity);
+			const DecalComponent& edited = *static_cast<const DecalComponent*>(data);
+			// A new material is loaded and its decal made by the next SyncDecals.
+			if (edited.material != decal.loadedMaterial)
+			{
+				ReleaseDecal(world, decal);
+			}
+			const AssetID loadedMaterial = decal.loadedMaterial;
+			const DecalHandle decalHandle = decal.decalHandle;
+			decal = edited;
+			decal.loadedMaterial = loadedMaterial;
+			decal.decalHandle = decalHandle;
+			if (decal.decalHandle)
+			{
+				m_RendererAPI->UpdateDecal(decal.decalHandle, CreateDecalDesc(decal, m_AssetManager->GetMaterial(decal.loadedMaterial), GetWorldTransform(world.entities, entity)));
+			}
+			world.decalsPending = true;
 			return true;
 		}
 
@@ -598,6 +667,15 @@ namespace tyr
 			if (light.lightHandle)
 			{
 				m_RendererAPI->UpdateSpotLight(light.lightHandle, CreateLightDesc(light, transform));
+			}
+		}
+
+		if (world.entities.HasComponent<DecalComponent>(entity))
+		{
+			const DecalComponent& decal = world.entities.GetComponent<DecalComponent>(entity);
+			if (decal.decalHandle)
+			{
+				m_RendererAPI->UpdateDecal(decal.decalHandle, CreateDecalDesc(decal, m_AssetManager->GetMaterial(decal.loadedMaterial), transform));
 			}
 		}
 	}
@@ -831,6 +909,18 @@ namespace tyr
 		{
 			ReleaseLight(world, world.entities.GetComponent<SpotLightComponent>(entity));
 		}
+		if (world.entities.HasComponent<DecalComponent>(entity))
+		{
+			ReleaseDecal(world, world.entities.GetComponent<DecalComponent>(entity));
+		}
+		if (world.physicsWorld && world.entities.HasComponent<CharacterComponent>(entity))
+		{
+			m_PhysicsManager.RemoveCharacter(world.physicsWorld, world.entities.GetComponent<CharacterComponent>(entity));
+		}
+		if (world.cameraEntity == entity)
+		{
+			world.cameraEntity = c_InvalidEntity;
+		}
 		if (world.entities.HasComponent<ColliderComponent>(entity))
 		{
 			ReleaseColliderMesh(world, world.entities.GetComponent<ColliderComponent>(entity));
@@ -962,6 +1052,20 @@ namespace tyr
 				return;
 			}
 			MoveEntity(world, entity, position, rotation);
+		});
+
+		world.entities.ForEach<CharacterComponent>([this, &world, alpha](Entity entity, CharacterComponent& character)
+		{
+			if (character.characterIndex == PhysicsConstants::c_InvalidCharacter)
+			{
+				return;
+			}
+			const Vector3 position = Vector3::Lerp(alpha, character.previousPosition, character.currentPosition);
+			const Transform& current = world.entities.GetComponent<ComponentTransform>(entity).world;
+			if (current.position != position)
+			{
+				MoveEntity(world, entity, position, current.rotation);
+			}
 		});
 	}
 
@@ -1113,6 +1217,10 @@ namespace tyr
 		{
 			ReleaseLight(world, light);
 		});
+		world.entities.ForEach<DecalComponent>([this, &world](Entity /*entity*/, DecalComponent& decal)
+		{
+			ReleaseDecal(world, decal);
+		});
 
 		if (world.physicsWorld)
 		{
@@ -1148,6 +1256,47 @@ namespace tyr
 		{
 			m_RendererAPI->DeleteSpotLight(world.sceneHandle, light.lightHandle);
 			light.lightHandle = {};
+		}
+	}
+
+	void WorldManager::SyncDecals(World& world)
+	{
+		bool pending = false;
+		world.entities.ForEach<DecalComponent>([this, &world, &pending](Entity entity, DecalComponent& decal)
+		{
+			if (decal.decalHandle || !AssetUtil::IsValidAssetID(decal.material))
+			{
+				return;
+			}
+			if (decal.loadedMaterial != decal.material)
+			{
+				m_AssetManager->LoadMaterial(decal.material);
+				decal.loadedMaterial = decal.material;
+			}
+
+			const MaterialHandle material = m_AssetManager->GetMaterial(decal.loadedMaterial);
+			if (!material)
+			{
+				// A material that failed to load stops being waited on.
+				pending |= m_AssetManager->GetLoadState(decal.loadedMaterial) == AssetLoadState::Loading;
+				return;
+			}
+			decal.decalHandle = m_RendererAPI->CreateDecal(world.sceneHandle, CreateDecalDesc(decal, material, GetWorldTransform(world.entities, entity)));
+		});
+		world.decalsPending = pending;
+	}
+
+	void WorldManager::ReleaseDecal(const World& world, DecalComponent& decal)
+	{
+		if (decal.decalHandle)
+		{
+			m_RendererAPI->DeleteDecal(world.sceneHandle, decal.decalHandle);
+			decal.decalHandle = {};
+		}
+		if (AssetUtil::IsValidAssetID(decal.loadedMaterial))
+		{
+			m_AssetManager->DeleteMaterial(decal.loadedMaterial);
+			decal.loadedMaterial = AssetConstants::c_InvalidAssetID;
 		}
 	}
 }

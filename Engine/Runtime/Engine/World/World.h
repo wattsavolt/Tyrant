@@ -75,6 +75,12 @@ namespace tyr
 		EntitySystem entities;
 		// The entities version the renderer-side mesh instances and lights were last synced at.
 		uint syncedEntitiesVersion = 0;
+		// Set while a decal is waiting for its material to load.
+		bool decalsPending = false;
+		// When set, the camera follows this entity, offset from its position, once physics has
+		// moved it each frame. Gameplay still turns the camera.
+		Entity cameraEntity = c_InvalidEntity;
+		Vector3 cameraOffset;
 		Array<ActorInstance> actorInstances;
 		// Hierarchy folders, including ones with nothing in them.
 		Array<RelativePath> folders;
@@ -103,6 +109,9 @@ namespace tyr
 			paused = false;
 			entities.Reset();
 			syncedEntitiesVersion = 0;
+			decalsPending = false;
+			cameraEntity = c_InvalidEntity;
+			cameraOffset = Vector3::c_Zero;
 			actorInstances.Clear();
 		}
 	};

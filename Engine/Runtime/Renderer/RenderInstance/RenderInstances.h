@@ -58,4 +58,13 @@ namespace tyr
 	{
 		SpotLightInfo info;
 	};
+
+	// Only ever touched on the main thread, which culls and sorts the decals each frame.
+	struct Decal
+	{
+		DecalInfo info;
+		// The box's bounding sphere in world space.
+		Vector3 centre;
+		float radius;
+	};
 }

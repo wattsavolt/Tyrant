@@ -4,6 +4,7 @@
 #include "World/World.h"
 #include "AssetSystem/AssetManager.h"
 #include "AssetSystem/AssetUtil.h"
+#include "Math/Math.h"
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -21,6 +22,7 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/ScaledShape.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
 
 namespace tyr
 {
@@ -237,13 +239,35 @@ namespace tyr
 		}
 	}
 
+	// A CharacterComponent's Jolt character, with a shape for each stance.
+	struct PhysicsCharacter
+	{
+		JPH::Ref<JPH::CharacterVirtual> character;
+		JPH::RefConst<JPH::Shape> standingShape;
+		JPH::RefConst<JPH::Shape> crouchingShape;
+	};
+
 	struct PhysicsWorldData
 	{
 		BroadPhaseLayerMap broadPhaseLayers;
 		ObjectVsBroadPhaseFilter objectVsBroadPhaseFilter;
 		ObjectPairFilter objectPairFilter;
 		JPH::PhysicsSystem system;
+		// After the system, so they're destroyed before it. Empty slots have no character.
+		PhysicsCharacter characters[PhysicsConstants::c_MaxCharacters];
 	};
+
+	namespace
+	{
+		// A capsule standing on the origin, so the character's position is its base.
+		JPH::RefConst<JPH::Shape> CreateCharacterShape(float radius, float height)
+		{
+			const float safeRadius = radius > 0.05f ? radius : 0.05f;
+			const float halfCylinder = height * 0.5f - safeRadius > 0.01f ? height * 0.5f - safeRadius : 0.01f;
+			const JPH::Vec3 offset(0.0f, halfCylinder + safeRadius, 0.0f);
+			return JPH::RotatedTranslatedShapeSettings(offset, JPH::Quat::sIdentity(), new JPH::CapsuleShape(halfCylinder, safeRadius)).Create().Get();
+		}
+	}
 
 	PhysicsManager::PhysicsManager()
 	{
@@ -310,6 +334,7 @@ namespace tyr
 		PhysicsWorldData& data = *entry.data;
 
 		CreateBodies(data, world, assetManager);
+		CreateCharacters(data, world);
 
 		entry.accumulator += deltaTime;
 		uint steps = 0;
@@ -344,6 +369,107 @@ namespace tyr
 		bodies.RemoveBody(bodyID);
 		bodies.DestroyBody(bodyID);
 		collider.bodyID = PhysicsConstants::c_InvalidBodyID;
+	}
+
+	void PhysicsManager::RemoveCharacter(Handle physicsWorld, CharacterComponent& character)
+	{
+		if (character.characterIndex == PhysicsConstants::c_InvalidCharacter)
+		{
+			return;
+		}
+		m_Worlds[physicsWorld].data->characters[character.characterIndex] = PhysicsCharacter();
+		character.characterIndex = PhysicsConstants::c_InvalidCharacter;
+	}
+
+	void PhysicsManager::CreateCharacters(PhysicsWorldData& data, World& world)
+	{
+		world.entities.ForEach<CharacterComponent>([&](Entity entity, CharacterComponent& character)
+		{
+			if (character.characterIndex != PhysicsConstants::c_InvalidCharacter || !world.entities.HasComponent<ComponentTransform>(entity))
+			{
+				return;
+			}
+
+			uint slot = 0;
+			while (slot < PhysicsConstants::c_MaxCharacters && data.characters[slot].character != nullptr)
+			{
+				++slot;
+			}
+			if (slot == PhysicsConstants::c_MaxCharacters)
+			{
+				TYR_LOG_ERROR("A world can't have more than %u characters.", PhysicsConstants::c_MaxCharacters);
+				return;
+			}
+
+			PhysicsCharacter& physicsCharacter = data.characters[slot];
+			physicsCharacter.standingShape = CreateCharacterShape(character.radius, character.height);
+			physicsCharacter.crouchingShape = CreateCharacterShape(character.radius, character.crouchHeight);
+
+			JPH::CharacterVirtualSettings settings;
+			settings.mShape = physicsCharacter.standingShape;
+			settings.mMaxSlopeAngle = character.maxSlope * Math::c_DegToRad;
+			// Contacts below the centre of the capsule's bottom sphere hold it up.
+			settings.mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(), -character.radius);
+			// Mesh colliders have internal edges it would otherwise catch on.
+			settings.mEnhancedInternalEdgeRemoval = true;
+
+			const Vector3& position = world.entities.GetComponent<ComponentTransform>(entity).world.position;
+			physicsCharacter.character = new JPH::CharacterVirtual(&settings, ToJolt(position), JPH::Quat::sIdentity(), static_cast<JPH::uint64>(entity), &data.system);
+			character.characterIndex = slot;
+			character.previousPosition = position;
+			character.currentPosition = position;
+			character.crouched = false;
+		});
+	}
+
+	void PhysicsManager::StepCharacters(PhysicsWorldData& data, World& world)
+	{
+		const JPH::Vec3 gravity = data.system.GetGravity();
+		const JPH::DefaultBroadPhaseLayerFilter broadPhaseFilter = data.system.GetDefaultBroadPhaseLayerFilter(ObjectLayers::c_Moving);
+		const JPH::DefaultObjectLayerFilter layerFilter = data.system.GetDefaultLayerFilter(ObjectLayers::c_Moving);
+		const JPH::BodyFilter bodyFilter;
+		const JPH::ShapeFilter shapeFilter;
+		const float deltaTime = PhysicsConstants::c_FixedTimeStep;
+
+		world.entities.ForEach<CharacterComponent>([&](Entity /*entity*/, CharacterComponent& character)
+		{
+			if (character.characterIndex == PhysicsConstants::c_InvalidCharacter)
+			{
+				return;
+			}
+			PhysicsCharacter& physicsCharacter = data.characters[character.characterIndex];
+			JPH::CharacterVirtual& virtualCharacter = *physicsCharacter.character;
+
+			// Standing back up only happens once the taller capsule fits.
+			if (character.wantsCrouch != character.crouched)
+			{
+				const JPH::Shape* shape = character.wantsCrouch ? physicsCharacter.crouchingShape.GetPtr() : physicsCharacter.standingShape.GetPtr();
+				if (virtualCharacter.SetShape(shape, 1.5f * virtualCharacter.GetCharacterPadding(), broadPhaseFilter, layerFilter, bodyFilter, shapeFilter, *m_TempAllocator))
+				{
+					character.crouched = character.wantsCrouch;
+				}
+			}
+
+			// On the ground it moves with whatever it stands on, otherwise it keeps falling.
+			virtualCharacter.UpdateGroundVelocity();
+			const JPH::Vec3 up = virtualCharacter.GetUp();
+			const float verticalSpeed = virtualCharacter.GetLinearVelocity().Dot(up);
+			const JPH::Vec3 groundVelocity = virtualCharacter.GetGroundVelocity();
+			const bool onGround = virtualCharacter.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround && verticalSpeed - groundVelocity.Dot(up) < 0.1f;
+			JPH::Vec3 velocity = onGround ? groundVelocity + up * character.jumpSpeed : up * verticalSpeed;
+			velocity += gravity * deltaTime + ToJolt(character.moveVelocity);
+			character.jumpSpeed = 0.0f;
+			virtualCharacter.SetLinearVelocity(velocity);
+
+			JPH::CharacterVirtual::ExtendedUpdateSettings updateSettings;
+			updateSettings.mStickToFloorStepDown = JPH::Vec3(0.0f, -character.stepHeight, 0.0f);
+			updateSettings.mWalkStairsStepUp = JPH::Vec3(0.0f, character.stepHeight, 0.0f);
+			virtualCharacter.ExtendedUpdate(deltaTime, gravity, updateSettings, broadPhaseFilter, layerFilter, bodyFilter, shapeFilter, *m_TempAllocator);
+
+			character.previousPosition = character.currentPosition;
+			character.currentPosition = FromJolt(virtualCharacter.GetPosition());
+			character.grounded = virtualCharacter.IsSupported();
+		});
 	}
 
 	bool PhysicsManager::Raycast(Handle physicsWorld, const Vector3& origin, const Vector3& direction, float maxDistance, RaycastHit& outHit) const
@@ -469,6 +595,7 @@ namespace tyr
 		});
 
 		data.system.Update(PhysicsConstants::c_FixedTimeStep, 1, m_TempAllocator, m_JobSystem);
+		StepCharacters(data, world);
 
 		world.entities.ForEach<RigidBodyComponent>([&](Entity entity, RigidBodyComponent& rigidBody)
 		{

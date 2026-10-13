@@ -11,7 +11,7 @@ namespace tyr
 		m_Up = Vector3::c_Up;
 		m_Forward = Vector3::c_Forward;
 		m_Fov = 90;
-		m_NearZ = 1;
+		m_NearZ = 0.1f;
 		m_FarZ = 2000;
 	}
 

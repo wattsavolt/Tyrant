@@ -4,6 +4,7 @@
 #include "EngineMacros.h"
 #include "Window/WindowHandle.h"
 #include "String/Path.h"
+#include "Math/Vector3.h"
 
 namespace tyr
 {
@@ -30,10 +31,22 @@ namespace tyr
 		// The level to open on Initialize, relative to the assets folder. Empty for none.
 		void SetStartLevel(const char* levelPath) { m_StartLevel = levelPath; }
 
+		// Where the player starts when the level has no player start, such as where the editor's
+		// camera is. Yaw is in radians around Y from +Z.
+		void SetFallbackStart(const Vector3& position, float yaw)
+		{
+			m_HasFallbackStart = true;
+			m_FallbackStartPosition = position;
+			m_FallbackStartYaw = yaw;
+		}
+
 	protected:
 		AppBase();
 
 		AssetPath m_StartLevel;
+		bool m_HasFallbackStart = false;
+		Vector3 m_FallbackStartPosition;
+		float m_FallbackStartYaw = 0.0f;
 
 		// Shared by Editor and App: creates an OS window, registers it with the renderer to get a
 		// RenderWindowHandle, then creates a world bound to that window. worldConfig.windowHandle is

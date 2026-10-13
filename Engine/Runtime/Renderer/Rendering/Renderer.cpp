@@ -596,6 +596,47 @@ namespace tyr
 					QueueFrameUpload(m_Resources.lightIndexBuffer, 0, lightIndices, sizeof(lightIndices));
 				}
 
+				// The decals in view, in the order they're blended: lowest sort order first, so
+				// higher ones end up on top.
+				if (!sceneFrame.views.IsEmpty())
+				{
+					struct VisibleDecal
+					{
+						int sortOrder;
+						uint index;
+					};
+					VisibleDecal visibleDecals[RenderConstants::c_MaxDecals];
+					uint visibleCount = 0;
+					for (DecalHandle handle : immediateSceneData.decals)
+					{
+						const Decal& decal = m_Registry.GetDecal(handle);
+						bool inView = true;
+						for (const Vector4& plane : sceneInfo.frustumPlanes)
+						{
+							inView &= Vector3::Dot(Vector3(plane.x, plane.y, plane.z), decal.centre) + plane.w >= -decal.radius;
+						}
+						if (inView)
+						{
+							visibleDecals[visibleCount++] = { decal.info.sortOrder, handle.h.index };
+						}
+					}
+					std::sort(visibleDecals, visibleDecals + visibleCount, [](const VisibleDecal& a, const VisibleDecal& b)
+					{
+						return a.sortOrder != b.sortOrder ? a.sortOrder < b.sortOrder : a.index < b.index;
+					});
+
+					uint decalIndices[RenderConstants::c_MaxDecals];
+					for (uint i = 0; i < visibleCount; ++i)
+					{
+						decalIndices[i] = visibleDecals[i].index;
+					}
+					if (visibleCount > 0)
+					{
+						QueueFrameUpload(m_Resources.decalIndexBuffer, 0, decalIndices, sizeof(uint) * visibleCount);
+					}
+					renderFrame.visibleDecalCount = visibleCount;
+				}
+
 				// Clear and update to get rid of old views
 				m_ViewIdIndexMap.Clear();
 				for (uint i = 0; i < sceneFrame.views.Size(); ++i)
@@ -608,7 +649,7 @@ namespace tyr
 
 		if (m_FirstRender)
 		{
-			constexpr uint bindingCount = 22;
+			constexpr uint bindingCount = 24;
 			BufferBindingInfo bindingInfos[bindingCount];
 			BufferBindingUpdate bindingUpdates[bindingCount];
 
@@ -642,6 +683,8 @@ namespace tyr
 			SetBinding(19, TYR_BINDING_SKIN_VERTEX, m_Resources.skinVertexBuffer);
 			SetBinding(20, TYR_BINDING_BONE_MATRIX, m_Resources.boneMatrixBuffer);
 			SetBinding(21, TYR_BINDING_INSTANCE_VISIBILITY, m_Resources.instanceVisibilityBuffer);
+			SetBinding(22, TYR_BINDING_DECAL, m_Resources.decalBuffer);
+			SetBinding(23, TYR_BINDING_DECAL_INDICES, m_Resources.decalIndexBuffer);
 
 			m_Ctx.device->UpdateDescriptorSet(m_Resources.descriptorSet, bindingUpdates, bindingCount);
 
@@ -1303,6 +1346,9 @@ namespace tyr
 			// Which entry of TYR_BINDING_LIGHTING_OUTPUT's outputImages[] array to write this
 			// dispatch's result into - one per buffered RenderFrame slot.
 			uint renderFrameIndex;
+			uint decalCount;
+			// How wide a pixel is one unit from the camera, for picking decal texture mips.
+			float pixelSizePerDistance;
 		};
 
 		// Matches TAAResolveCS.hlsl's push constant cbuffer byte-for-byte.
@@ -1380,6 +1426,9 @@ namespace tyr
 		pushConstants.width = viewportWidth;
 		pushConstants.height = viewportHeight;
 		pushConstants.renderFrameIndex = renderFrameIndex;
+		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
+		pushConstants.decalCount = renderFrame.visibleDecalCount;
+		pushConstants.pixelSizePerDistance = renderFrame.lodProjectionScale > 0.0f ? 1.0f / renderFrame.lodProjectionScale : 0.0f;
 		cmdList.PushConstants(m_Resources.lightingPipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(LightingPushConstants), &pushConstants);
 
 		const uint groupCountX = (viewportWidth + 7) / 8;
@@ -1696,7 +1745,7 @@ namespace tyr
 			m_Resources.activeMeshInstanceIndexBuffer, m_Resources.meshDrawBuffer, m_Resources.instanceVisibilityBuffer,
 			m_Resources.indirectDrawCommandBuffer, m_Resources.drawCountBuffer,
 			m_Resources.tlasInstanceBuffer, m_Resources.shadowLightSlotMapBuffer, m_Resources.lightIndexBuffer,
-			m_Resources.skinVertexBuffer, m_Resources.boneMatrixBuffer
+			m_Resources.skinVertexBuffer, m_Resources.boneMatrixBuffer, m_Resources.decalBuffer, m_Resources.decalIndexBuffer
 		};
 		constexpr uint bufferCount = (uint)(sizeof(graphBuffers) / sizeof(graphBuffers[0]));
 
@@ -1979,7 +2028,7 @@ namespace tyr
 					},
 					[this, renderFrameIndex, prevRenderFrameIndex, shadowHasHistory, shadowViewportWidth, shadowViewportHeight](CommandList& cl)
 					{
-						m_ShadowDenoisePass->Execute(cl, m_ShadowRTPass->GetActiveSlots(), renderFrameIndex, prevRenderFrameIndex,
+						m_ShadowDenoisePass->Execute(cl, m_ShadowRTPass->GetActiveSlots(), m_ShadowRTPass->GetNewSlots(), renderFrameIndex, prevRenderFrameIndex,
 							shadowHasHistory, shadowViewportWidth, shadowViewportHeight, m_QualitySettings.denoiserSpatialRadius);
 					},
 					RenderGraphPhase::RayTracing, CommandQueueType::CQ_GRAPHICS);
@@ -2030,6 +2079,8 @@ namespace tyr
 					}
 					builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.shadowLightSlotMapBuffer), PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT);
 					builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.lightIndexBuffer), PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT);
+					builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.decalBuffer), PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT);
+					builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.decalIndexBuffer), PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT);
 				},
 				[this, renderFrameIndex](CommandList& cl) { RecordLightingPass(cl, renderFrameIndex); },
 				RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
@@ -2363,6 +2414,10 @@ namespace tyr
 		for (SpotLightHandle handle : renderFrame.spotLightsToDelete)
 		{
 			m_Registry.DeleteSpotLight(handle);
+		}
+		for (DecalHandle handle : renderFrame.decalsToDelete)
+		{
+			m_Registry.DeleteDecal(handle);
 		}
 		for (const PendingWindowDelete& pending : renderFrame.windowsToDelete)
 		{
@@ -3107,8 +3162,9 @@ namespace tyr
 				// 11 original + activeMeshInstanceIndexBuffer/meshDrawBuffer/indirectDrawCommandBuffer/
 				// drawCountBuffer/instanceVisibilityBuffer for GPU-driven culling + one Hi-Z buffer
 				// per buffered frame slot + shadowLightSlotMapBuffer for ray-traced shadows +
-				// lightIndexBuffer + debugLineVertexBuffer + skinVertexBuffer/boneMatrixBuffer.
-				poolSize.descriptorCount = 21 + RenderConstants::c_BufferedFrameCount;
+				// lightIndexBuffer + debugLineVertexBuffer + skinVertexBuffer/boneMatrixBuffer +
+				// decalBuffer/decalIndexBuffer.
+				poolSize.descriptorCount = 23 + RenderConstants::c_BufferedFrameCount;
 			}
 			{
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
@@ -3222,6 +3278,8 @@ namespace tyr
 			AddBinding(TYR_BINDING_INSTANCE_VISIBILITY, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 			// Rebound when a slot's buffer grows, like TYR_BINDING_LIGHTING_OUTPUT.
 			AddBinding(TYR_BINDING_HIZ, DescriptorType::StorageBuffer, RenderConstants::c_BufferedFrameCount, computeAndTaskStages, lightingOutputFlags);
+			AddBinding(TYR_BINDING_DECAL, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
+			AddBinding(TYR_BINDING_DECAL_INDICES, DescriptorType::StorageBuffer, 1, SHADER_STAGE_COMPUTE_BIT);
 
 			m_Resources.descriptorSetLayout = m_Ctx.device->CreateDescriptorSetLayout(layoutDesc);
 
@@ -3701,6 +3759,20 @@ namespace tyr
 		}
 		{
 			RenderBufferDesc desc;
+			desc.debugName = "Decal Buffer";
+			desc.size = sizeof(ShaderDecal) * RenderConstants::c_DecalPoolSize;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.decalBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
+			desc.debugName = "Decal Index Buffer";
+			desc.size = sizeof(uint) * RenderConstants::c_MaxDecals;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.decalIndexBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
 			desc.debugName = "TLAS Instance Buffer";
 			// One c_BufferedFrameCount-th per buffered RenderFrame slot.
 			desc.size = RenderConstants::c_TLASInstanceBufferSize * RenderConstants::c_BufferedFrameCount;
@@ -3776,6 +3848,8 @@ namespace tyr
 		m_Registry.DeleteBuffer(m_Resources.drawCountBuffer);
 		m_Registry.DeleteBuffer(m_Resources.shadowLightSlotMapBuffer);
 		m_Registry.DeleteBuffer(m_Resources.lightIndexBuffer);
+		m_Registry.DeleteBuffer(m_Resources.decalBuffer);
+		m_Registry.DeleteBuffer(m_Resources.decalIndexBuffer);
 		m_Registry.DeleteBuffer(m_Resources.tlasInstanceBuffer);
 		m_Registry.DeleteBuffer(m_Resources.rtCullingStagingBuffer);
 		m_Registry.DeleteBuffer(m_Resources.blasStorageBuffer);
@@ -3912,6 +3986,7 @@ namespace tyr
 		FlushRecordTable(m_Records.dirLights, m_Resources.directionalLightBuffer);
 		FlushRecordTable(m_Records.pointLights, m_Resources.pointLightBuffer);
 		FlushRecordTable(m_Records.spotLights, m_Resources.spotLightBuffer);
+		FlushRecordTable(m_Records.decals, m_Resources.decalBuffer);
 
 		// Each palette only uploads the bones it uses, so palettes go up one at a time.
 		m_Records.bonePalettes.Flush([this](uint first, uint count)

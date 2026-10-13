@@ -10,6 +10,11 @@
 
 namespace tyr
 {
+	namespace
+	{
+		constexpr uint c_UnassignedSlot = 0xFFFFFFFFu;
+	}
+
 	ShadowRTPass::ShadowRTPass(const ShadowRTPassArgs& args)
 	{
 		Recreate(args);
@@ -40,6 +45,10 @@ namespace tyr
 		{
 			m_ActiveDirLights[i] = {};
 		}
+		for (bool& isNew : m_NewSlots)
+		{
+			isNew = false;
+		}
 
 		// Every directional light gets dispatched at its position in the list (a real trace if
 		// it casts shadows, a cheap "fully lit" fallback if not), which keeps every slot
@@ -53,6 +62,12 @@ namespace tyr
 			{
 				m_ActiveDirLights[i] = handle;
 			}
+			m_NewSlots[i] = !(m_DirSlotOwners[i] == m_ActiveDirLights[i]);
+			m_DirSlotOwners[i] = m_ActiveDirLights[i];
+		}
+		for (uint i = lights.dirLights.Size(); i < RenderConstants::c_MaxDirLights; ++i)
+		{
+			m_DirSlotOwners[i] = {};
 		}
 
 		// Nearest-N selection for local lights - unlike directional lights (always traced, at
@@ -121,7 +136,56 @@ namespace tyr
 			selected.pointHandle = candidates[pass].pointHandle;
 			selected.spotHandle = candidates[pass].spotHandle;
 			selected.lightIndex = candidates[pass].lightIndex;
-			selected.slot = RenderConstants::c_MaxDirLights + pass;
+			selected.slot = c_UnassignedSlot;
+		}
+
+		// Lights already holding a slot keep it, whatever order the distances put them in now.
+		bool claimed[RenderConstants::c_MaxShadowCastingLocalLights] = {};
+		for (SelectedLocalLight& selected : m_SelectedLocalLights)
+		{
+			for (uint i = 0; i < RenderConstants::c_MaxShadowCastingLocalLights; ++i)
+			{
+				const LocalSlotOwner& owner = m_LocalSlotOwners[i];
+				const bool same = owner.isSpot == selected.isSpot &&
+					(selected.isSpot ? owner.spotHandle == selected.spotHandle : owner.pointHandle == selected.pointHandle);
+				if (!claimed[i] && same)
+				{
+					claimed[i] = true;
+					selected.slot = RenderConstants::c_MaxDirLights + i;
+					break;
+				}
+			}
+		}
+
+		// Newly selected lights take the slots nobody kept, which start without history.
+		uint nextFree = 0;
+		for (SelectedLocalLight& selected : m_SelectedLocalLights)
+		{
+			if (selected.slot != c_UnassignedSlot)
+			{
+				continue;
+			}
+			while (claimed[nextFree])
+			{
+				++nextFree;
+			}
+			claimed[nextFree] = true;
+			LocalSlotOwner& owner = m_LocalSlotOwners[nextFree];
+			owner.isSpot = selected.isSpot;
+			owner.pointHandle = selected.pointHandle;
+			owner.spotHandle = selected.spotHandle;
+			selected.slot = RenderConstants::c_MaxDirLights + nextFree;
+			m_NewSlots[selected.slot] = true;
+		}
+		for (uint i = 0; i < RenderConstants::c_MaxShadowCastingLocalLights; ++i)
+		{
+			if (!claimed[i])
+			{
+				m_LocalSlotOwners[i] = {};
+			}
+		}
+		for (const SelectedLocalLight& selected : m_SelectedLocalLights)
+		{
 			m_ActiveSlots.Add(selected.slot);
 		}
 

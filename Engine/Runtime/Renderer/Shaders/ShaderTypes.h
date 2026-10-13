@@ -62,6 +62,10 @@
 #define TYR_BINDING_INSTANCE_VISIBILITY 29
 // One Hi-Z pyramid per buffered frame slot - see HiZ.hlsli.
 #define TYR_BINDING_HIZ 30
+// Every scene's decals, in fixed slots.
+#define TYR_BINDING_DECAL 31
+// The active scene's visible decals this frame, as slots in the decal buffer, lowest sort order first.
+#define TYR_BINDING_DECAL_INDICES 32
 
 // How many copies of the per-frame render targets TYR_BINDING_LIGHTING_OUTPUT holds, one
 // per buffered frame slot - kept in sync with the matching C++ constant.
@@ -73,6 +77,9 @@
 // Where point-light entries start in TYR_BINDING_LIGHT_INDICES - kept in sync with
 // RenderConstants::c_MaxDirLights.
 #define TYR_MAX_DIR_LIGHTS 2
+
+// The most decals one scene can have. Kept in sync with RenderConstants::c_MaxDecals.
+#define TYR_MAX_DECALS 256
 
 // Kept in sync with SkeletonConstants::c_MaxBones.
 #define TYR_MAX_BONES 256
@@ -219,6 +226,33 @@ namespace tyr
 		float intensity;
 		TYR_SHADER_FLOAT3 colour;
 		float padding;
+	};
+
+	// A box that projects a material onto whatever is inside it, along its -Y axis.
+	TYR_SHADER_STRUCT(Decal)
+	{
+		// World space into the box, which runs from -0.5 to 0.5 on each axis.
+		TYR_SHADER_FLOAT4x4 worldToBox;
+		// The box's bounding sphere in world space, for culling.
+		TYR_SHADER_FLOAT3 boundsCentre;
+		float boundsRadius;
+		// The box's X axis in world space, along which the material's U runs.
+		TYR_SHADER_FLOAT3 tangent;
+		// One over the box's size along X and Z.
+		float invWidth;
+		// The box's Y axis in world space, which faces the surfaces it's projected onto.
+		TYR_SHADER_FLOAT3 normal;
+		float invLength;
+		uint materialIndex;
+		float opacity;
+		// One over how far from each end of the box it fades out, in box units.
+		float invFadeDepth;
+		// How much it replaces colour, the normal, and roughness and metallic, 0 or 1.
+		float colourWeight;
+		float normalWeight;
+		float roughnessWeight;
+		float _pad0;
+		float _pad1;
 	};
 
 	// A MaterialParams laid out in 16 byte rows.

@@ -28,6 +28,13 @@ namespace tyr
 			m_Position = position;
 		}
 
+		// Both must be unit length and at right angles.
+		void SetOrientation(const Vector3& forward, const Vector3& up)
+		{
+			m_Forward = forward;
+			m_Up = up;
+		}
+
 		const Vector3& GetPosition() const
 		{
 			return m_Position;

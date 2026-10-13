@@ -14,6 +14,7 @@ namespace tyr
 {
 	struct World;
 	struct ColliderComponent;
+	struct CharacterComponent;
 	class AssetManager;
 	struct PhysicsWorldData;
 	class PhysicsJobSystem;
@@ -41,6 +42,8 @@ namespace tyr
 
 		// The collider gets a new body on the next update, such as after its values changed.
 		void RemoveBody(Handle physicsWorld, ColliderComponent& collider);
+		// The same for a character, which is made again where its entity is.
+		void RemoveCharacter(Handle physicsWorld, CharacterComponent& character);
 
 		// The closest body hit along the ray, within maxDistance.
 		bool Raycast(Handle physicsWorld, const Vector3& origin, const Vector3& direction, float maxDistance, RaycastHit& outHit) const;
@@ -54,7 +57,9 @@ namespace tyr
 		};
 
 		void CreateBodies(PhysicsWorldData& data, World& world, const AssetManager& assetManager);
+		void CreateCharacters(PhysicsWorldData& data, World& world);
 		void Step(PhysicsWorldData& data, World& world);
+		void StepCharacters(PhysicsWorldData& data, World& world);
 
 		LocalObjectPool<PhysicsWorldEntry, c_MaxPhysicsWorlds> m_Worlds;
 		PhysicsJobSystem* m_JobSystem = nullptr;

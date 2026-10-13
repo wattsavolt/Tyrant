@@ -11,8 +11,19 @@
 #include "Level/LevelFile.h"
 #include "AssetSystem/AssetUtil.h"
 #include "Config/Config.h"
+#include "Input/InputModule.h"
+#include "Input/InputManager.h"
+#include "Actor/ActorRegistry.h"
+#include "ECS/Components.h"
+#include "Math/Math.h"
 
 using namespace tyr;
+
+namespace
+{
+	const Id64 c_PlayerStartType("PlayerStartActor");
+	const Id64 c_PlayerCharacterType("PlayerCharacterActor");
+}
 
 TYR_EXPORT AppBase* TYR_STDCALL CreateApp(bool embedded)
 {
@@ -41,8 +52,12 @@ void App::Initialize()
 	TYR_GET_MODULE(WorldModule, worldModule);
 	m_WorldManager = worldModule->GetWorldManager();
 
+	InputModule* inputModule;
+	TYR_GET_MODULE(InputModule, inputModule);
+	m_InputManager = inputModule->GetInputManager();
+
 	// Pulled back from the origin along -Z, looking down +Z toward it.
-	m_Camera = Camera(Vector3(0, 0, -3), Vector3::c_Up, Vector3::c_Forward, 90, 1.0f, 2000);
+	m_Camera = Camera(Vector3(0, 0, -3), Vector3::c_Up, Vector3::c_Forward, 90, 0.05f, 2000);
 
 	WorldConfig worldParams{};
 	worldParams.camera = &m_Camera;
@@ -67,6 +82,11 @@ void App::Initialize()
 
 		m_MainWorld = CreatePrimaryWorld(*m_WindowModule, *m_WorldManager, desc, worldParams, m_PrimaryWindow);
 
+		// The game has the mouse for as long as it runs.
+		m_InputManager->SetWindow(m_WindowModule, m_PrimaryWindow);
+		m_InputManager->SetGameInputEnabled(true);
+		m_InputManager->SetMouseCaptured(true);
+
 		char configPath[TYR_MAX_PATH_TOTAL_SIZE];
 		AssetUtil::CreateFullConfigPath(configPath, "GameConfig.ini");
 		const Config gameConfig(configPath);
@@ -80,15 +100,57 @@ void App::Initialize()
 	{
 		LevelFile::Load(m_StartLevel.CStr(), *m_WorldManager, m_MainWorld);
 	}
+	SpawnPlayer();
+}
+
+void App::SpawnPlayer()
+{
+	World& world = m_WorldManager->GetWorld(m_MainWorld);
+
+	Vector3 position = m_FallbackStartPosition;
+	float yaw = m_FallbackStartYaw;
+	bool found = false;
+	for (const ActorInstance& actor : world.actorInstances)
+	{
+		if (actor.typeID == c_PlayerStartType && world.entities.HasComponent<ComponentTransform>(actor.RootEntity()))
+		{
+			const Transform& start = world.entities.GetComponent<ComponentTransform>(actor.RootEntity()).world;
+			const Vector3 facing = start.rotation.Rotate(Vector3::c_Forward);
+			position = start.position;
+			yaw = Math::Atan2(facing.x, facing.z);
+			found = true;
+			break;
+		}
+	}
+	if (!found && !m_HasFallbackStart)
+	{
+		TYR_LOG_WARNING("The level has no PlayerStartActor, so the player starts at the origin.");
+	}
+
+	const LocalArray<Entity, c_MaxActorTypeEntities> entities = ActorRegistry::Instance().InstantiateActor(c_PlayerCharacterType, world.entities);
+	if (entities.IsEmpty())
+	{
+		TYR_LOG_ERROR("Couldn't make the player character.");
+		return;
+	}
+	m_WorldManager->AddActorInstance(m_MainWorld, WorldManager::CreateActorInstanceID(), c_PlayerCharacterType, "Player", "", entities);
+
+	Transform transform;
+	transform.position = position;
+	transform.rotation = Quaternion::c_Identity;
+	transform.scale = Vector3::c_One;
+	m_WorldManager->SetActorTransform(m_MainWorld, entities[0], transform);
+	m_Controller.Possess(world, entities[0], yaw);
 }
 
 void App::Update(float deltaTime)
 {
-
+	m_Controller.Update(m_WorldManager->GetWorld(m_MainWorld), *m_InputManager, deltaTime, m_InputManager->IsGameInputEnabled());
 }
 
 void App::Shutdown()
 {
+	m_Controller.Release(m_WorldManager->GetWorld(m_MainWorld));
 	if (m_Embedded)
 	{
 		m_WorldManager->RemoveWorld(m_MainWorld);

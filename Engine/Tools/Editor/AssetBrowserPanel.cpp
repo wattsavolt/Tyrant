@@ -11,6 +11,7 @@
 #include "imgui.h"
 #include <algorithm>
 #include <cfloat>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 
@@ -26,6 +27,8 @@ namespace tyr
 		constexpr float c_TileRounding = 4.0f;
 		// Label size relative to the normal font, shrunk further when the label doesn't fit.
 		constexpr float c_TileLabelScale = 1.6f;
+		constexpr const char* c_DeletePopup = "Delete##AssetBrowser";
+		constexpr const char* c_MessagePopup = "Asset Browser##Message";
 
 		enum class AssetKind : uint8
 		{
@@ -158,11 +161,13 @@ namespace tyr
 	{
 	}
 
-	AssetID AssetBrowserPanel::Draw(AssetID openLevel)
+	AssetID AssetBrowserPanel::Draw(AssetID openLevel, bool editing)
 	{
 		m_OpenLevel = openLevel;
+		m_Editing = editing;
 		m_LevelToOpen = {};
 		m_MaterialToEdit = {};
+		m_OpenLevelDeleted = false;
 		RefreshIfNeeded();
 
 		ImGui::BeginChild("##Folders", ImVec2(c_FolderTreeWidth, 0.0f), ImGuiChildFlags_Borders);
@@ -174,6 +179,20 @@ namespace tyr
 		ImGui::BeginChild("##Assets", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
 		DrawGrid();
 		ImGui::EndChild();
+
+		// Opened out here so they share an ID stack with where they're drawn.
+		if (m_OpenDeletePopup)
+		{
+			ImGui::OpenPopup(c_DeletePopup);
+			m_OpenDeletePopup = false;
+		}
+		DrawDeletePopup();
+		if (m_OpenMessagePopup)
+		{
+			ImGui::OpenPopup(c_MessagePopup);
+			m_OpenMessagePopup = false;
+		}
+		DrawMessagePopup();
 		return m_LevelToOpen;
 	}
 
@@ -328,6 +347,10 @@ namespace tyr
 		{
 			SelectFolder(folderPath, false);
 		}
+		if (!isRoot)
+		{
+			DrawFolderMenu(folderPath);
+		}
 		AcceptAssetDrop(folderPath);
 		return open && !isLeaf;
 	}
@@ -377,10 +400,6 @@ namespace tyr
 		{
 			SelectFolder(folderToOpen, true);
 		}
-		else if (AssetUtil::IsValidAssetID(edit.assetToDelete))
-		{
-			DeleteAsset(edit.assetToDelete);
-		}
 		else if (AssetUtil::IsValidAssetID(edit.assetToMove))
 		{
 			MoveAsset(edit.assetToMove, edit.moveFolder.CStr());
@@ -394,6 +413,7 @@ namespace tyr
 		const bool hovered = ImGui::IsItemHovered();
 		const bool open = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
 		ImGui::SetItemTooltip("%s", folderPath);
+		DrawFolderMenu(folderPath);
 		AcceptAssetDrop(folderPath);
 
 		const ImTextureID textureID = m_Icons.GetImTextureID(EditorIcons::Folder);
@@ -490,7 +510,21 @@ namespace tyr
 
 		if (ImGui::MenuItem("Delete"))
 		{
-			edit.assetToDelete = assetID;
+			RequestDelete(assetID, "");
+		}
+		ImGui::EndPopup();
+	}
+
+	void AssetBrowserPanel::DrawFolderMenu(const char* folderPath)
+	{
+		// Each tree node and tile has its own ID, which the menu uses.
+		if (!ImGui::BeginPopupContextItem(nullptr))
+		{
+			return;
+		}
+		if (ImGui::MenuItem("Delete"))
+		{
+			RequestDelete({}, folderPath);
 		}
 		ImGui::EndPopup();
 	}
@@ -543,7 +577,7 @@ namespace tyr
 			: snprintf(newPath, sizeof(newPath), "%s", fileName);
 		if (length < 0 || length >= static_cast<int>(sizeof(newPath)))
 		{
-			TYR_LOG_WARNING("Can't move %s, the new path would be too long.", fileName);
+			ShowMessage("Can't move %s, the new path would be too long.", fileName);
 			return;
 		}
 		RelocateAsset(assetID, newPath);
@@ -553,7 +587,7 @@ namespace tyr
 	{
 		if (newName[0] == '\0' || strpbrk(newName, c_InvalidFileNameCharacters))
 		{
-			TYR_LOG_WARNING("Can't rename an asset to \"%s\", names can't be empty or use any of %s", newName, c_InvalidFileNameCharacters);
+			ShowMessage("Can't rename an asset to \"%s\", names can't be empty or use any of %s", newName, c_InvalidFileNameCharacters);
 			return;
 		}
 
@@ -567,7 +601,7 @@ namespace tyr
 		const int length = snprintf(newPath, sizeof(newPath), "%.*s%s%s", folderLength, oldPath, newName, extension ? extension : "");
 		if (length < 0 || length >= static_cast<int>(sizeof(newPath)))
 		{
-			TYR_LOG_WARNING("Can't rename %s, the new path would be too long.", oldPath);
+			ShowMessage("Can't rename %s, the new path would be too long.", oldPath);
 			return;
 		}
 		RelocateAsset(assetID, newPath);
@@ -578,7 +612,7 @@ namespace tyr
 		// Its file is still being read.
 		if (m_AssetManager.GetLoadState(assetID) == AssetLoadState::Loading)
 		{
-			TYR_LOG_WARNING("Can't move or rename an asset while it's loading.");
+			ShowMessage("Can't move or rename an asset while it's loading.");
 			return;
 		}
 
@@ -595,7 +629,7 @@ namespace tyr
 		AssetUtil::CreateFullPath(absNewPath, newPath);
 		if (AssetUtil::IsValidAssetID(registry.GetAssetID(newPath)) || Platform::FileExists(absNewPath))
 		{
-			TYR_LOG_WARNING("Can't move %s, %s already exists.", oldPath.CStr(), newPath);
+			ShowMessage("Can't move %s, %s already exists.", oldPath.CStr(), newPath);
 			return;
 		}
 
@@ -603,7 +637,7 @@ namespace tyr
 		PathUtil::CreateDirectoriesInFilePath(absNewPath);
 		if (!Platform::RenameFile(absOldPath, absNewPath))
 		{
-			TYR_LOG_ERROR("Failed to move %s to %s.", absOldPath, absNewPath);
+			ShowMessage("Failed to move %s to %s.", absOldPath, absNewPath);
 			return;
 		}
 
@@ -611,42 +645,202 @@ namespace tyr
 		registry.Save();
 	}
 
-	void AssetBrowserPanel::DeleteAsset(AssetID assetID)
+	void AssetBrowserPanel::RequestDelete(AssetID assetID, const char* folderPath)
+	{
+		m_AssetToDelete = assetID;
+		m_FolderToDelete = folderPath;
+		GatherDeleteSet();
+		if (m_DeleteSet.IsEmpty())
+		{
+			ShowMessage("There's nothing in %s to delete.", folderPath);
+			return;
+		}
+		if (CanDeleteSet())
+		{
+			m_OpenDeletePopup = true;
+		}
+	}
+
+	void AssetBrowserPanel::GatherDeleteSet()
+	{
+		m_DeleteSet.Clear();
+		if (AssetUtil::IsValidAssetID(m_AssetToDelete))
+		{
+			m_DeleteSet.Add(m_AssetToDelete);
+			return;
+		}
+		for (std::pair<const AssetID&, const RegAssetData&> asset : AssetRegistry::Instance().GetAssets())
+		{
+			if (EditorPathUtil::IsSubfolder(asset.second.filePath.CStr(), m_FolderToDelete.CStr()))
+			{
+				m_DeleteSet.Add(asset.first);
+			}
+		}
+		std::sort(m_DeleteSet.begin(), m_DeleteSet.end());
+	}
+
+	bool AssetBrowserPanel::CanDeleteSet()
+	{
+		const AssetRegistry& registry = AssetRegistry::Instance();
+		for (const AssetID& assetID : m_DeleteSet)
+		{
+			const char* path = registry.GetAssetData(assetID).filePath.CStr();
+			if (assetID == m_OpenLevel && !m_Editing)
+			{
+				ShowMessage("Can't delete %s while it's being played.", path);
+				return false;
+			}
+			// Assets nothing uses may still be cached, which doesn't stop them being deleted.
+			m_AssetManager.EvictUnreferencedAsset(assetID);
+			if (m_AssetManager.GetLoadState(assetID) != AssetLoadState::Unloaded)
+			{
+				ShowMessage("Can't delete %s while it's in use, such as by an actor in the level or the material editor.", path);
+				return false;
+			}
+		}
+
+		// Nothing left behind can depend on what's deleted.
+		for (std::pair<const AssetID&, const RegAssetData&> asset : registry.GetAssets())
+		{
+			if (std::binary_search(m_DeleteSet.begin(), m_DeleteSet.end(), asset.first))
+			{
+				continue;
+			}
+			uint dependencyCount = 0;
+			const AssetID* dependencies = registry.GetAssetDependencies(asset.first, dependencyCount);
+			for (uint i = 0; i < dependencyCount; ++i)
+			{
+				if (std::binary_search(m_DeleteSet.begin(), m_DeleteSet.end(), dependencies[i]))
+				{
+					ShowMessage("Can't delete %s while %s uses it.", registry.GetAssetData(dependencies[i]).filePath.CStr(), asset.second.filePath.CStr());
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	void AssetBrowserPanel::DeleteSet()
 	{
 		AssetRegistry& registry = AssetRegistry::Instance();
-		const AssetPath path = registry.GetAssetData(assetID).filePath;
-
-		if (assetID == m_OpenLevel)
+		uint failedCount = 0;
+		for (const AssetID& assetID : m_DeleteSet)
 		{
-			TYR_LOG_WARNING("Can't delete %s while it's the open level.", path.CStr());
-			return;
+			// Copied, since removing the asset frees the registry's copy.
+			const AssetPath path = registry.GetAssetData(assetID).filePath;
+			char absPath[TYR_MAX_PATH_TOTAL_SIZE];
+			AssetUtil::CreateFullPath(absPath, path.CStr());
+			// A file already deleted outside the editor only needs its registry entry removed.
+			if (Platform::FileExists(absPath) && !Platform::RemoveFile(absPath))
+			{
+				TYR_LOG_ERROR("Failed to delete %s.", absPath);
+				++failedCount;
+				continue;
+			}
+
+			registry.RemoveAsset(assetID);
+			m_OpenLevelDeleted |= assetID == m_OpenLevel;
+			if (m_SelectedAsset == assetID)
+			{
+				m_SelectedAsset = {};
+			}
 		}
 
-		m_AssetManager.EvictUnreferencedAsset(assetID);
-		if (m_AssetManager.GetLoadState(assetID) != AssetLoadState::Unloaded)
+		if (m_FolderToDelete.Size() != 0)
 		{
-			TYR_LOG_WARNING("Can't delete %s while it's in use.", path.CStr());
-			return;
-		}
-		if (registry.GetAssetReferenceCount(path.CStr()) > 0)
-		{
-			TYR_LOG_WARNING("Can't delete %s while other assets use it.", path.CStr());
-			return;
+			// Subfolders sort after their parents, so going backwards empties them first. Only
+			// empty folders are removed, so a file the registry doesn't know about keeps its folder.
+			const char* folderPath = m_FolderToDelete.CStr();
+			for (uint i = m_Folders.Size(); i-- > 0;)
+			{
+				const char* path = m_Folders[i].CStr();
+				if (m_Folders[i] == m_FolderToDelete || EditorPathUtil::IsSubfolder(path, folderPath))
+				{
+					char absPath[TYR_MAX_PATH_TOTAL_SIZE];
+					AssetUtil::CreateFullPath(absPath, path);
+					Platform::RemoveEmptyDirectory(absPath);
+				}
+			}
+
+			// The grid moves up to the deleted folder's parent.
+			if (m_SelectedFolder == m_FolderToDelete || EditorPathUtil::IsSubfolder(m_SelectedFolder.CStr(), folderPath))
+			{
+				const char* parentEnd = strrchr(folderPath, '/');
+				m_SelectedFolder = parentEnd ? RelativePath(folderPath, static_cast<size_t>(parentEnd - folderPath)) : RelativePath();
+				m_RenamingAsset = {};
+			}
 		}
 
-		char absPath[TYR_MAX_PATH_TOTAL_SIZE];
-		AssetUtil::CreateFullPath(absPath, path.CStr());
-		if (!Platform::RemoveFile(absPath))
-		{
-			TYR_LOG_ERROR("Failed to delete %s.", absPath);
-			return;
-		}
-
-		registry.RemoveAsset(assetID);
 		registry.Save();
-		if (m_SelectedAsset == assetID)
+		if (failedCount > 0)
 		{
-			m_SelectedAsset = {};
+			ShowMessage("%u of %u assets couldn't be deleted. The log says which.", failedCount, m_DeleteSet.Size());
 		}
+	}
+
+	void AssetBrowserPanel::DrawDeletePopup()
+	{
+		if (!ImGui::BeginPopupModal(c_DeletePopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			return;
+		}
+
+		const AssetRegistry& registry = AssetRegistry::Instance();
+		if (m_FolderToDelete.Size() != 0)
+		{
+			ImGui::Text("Delete the folder %s and the %u assets in it?", m_FolderToDelete.CStr(), m_DeleteSet.Size());
+		}
+		else if (registry.GetAssets().Contains(m_AssetToDelete))
+		{
+			ImGui::Text("Delete %s?", registry.GetAssetData(m_AssetToDelete).filePath.CStr());
+		}
+		if (std::binary_search(m_DeleteSet.begin(), m_DeleteSet.end(), m_OpenLevel))
+		{
+			ImGui::TextUnformatted("This deletes the open level. Another level opens instead, and unsaved changes are lost.");
+		}
+		ImGui::TextDisabled("This can't be undone.");
+		ImGui::Spacing();
+
+		if (ImGui::Button("Delete"))
+		{
+			ImGui::CloseCurrentPopup();
+			// Gathered again, in case anything changed while the popup was open.
+			GatherDeleteSet();
+			if (CanDeleteSet())
+			{
+				DeleteSet();
+			}
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+		{
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+	}
+
+	void AssetBrowserPanel::ShowMessage(const char* format, ...)
+	{
+		va_list args;
+		va_start(args, format);
+		vsnprintf(m_Message, sizeof(m_Message), format, args);
+		va_end(args);
+		TYR_LOG_WARNING("%s", m_Message);
+		m_OpenMessagePopup = true;
+	}
+
+	void AssetBrowserPanel::DrawMessagePopup()
+	{
+		if (!ImGui::BeginPopupModal(c_MessagePopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			return;
+		}
+		ImGui::TextUnformatted(m_Message);
+		ImGui::Spacing();
+		if (ImGui::Button("OK") || ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_Enter, false))
+		{
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
 	}
 }

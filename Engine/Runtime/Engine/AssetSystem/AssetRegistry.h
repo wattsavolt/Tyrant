@@ -40,6 +40,8 @@ namespace tyr
 		void UpdateAssetPath(AssetID assetID, const char* assetPath);
 		void RemoveAsset(AssetID assetID);
 		bool RemoveAssetIfExists(const char* assetPath);
+		// Removes the assets whose files were deleted outside the editor. Returns how many.
+		uint RemoveMissingAssets();
 		// Locks, for calling from a thread other than the main thread.
 		AssetID GetAssetIDSafe(const char* assetPath) const;
 		// Returns the number of assets this asset depends on

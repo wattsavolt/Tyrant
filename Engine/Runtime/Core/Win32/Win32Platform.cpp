@@ -247,6 +247,11 @@ namespace tyr
 		return DeleteFileA(path) != 0;
 	}
 
+	bool Platform::RemoveEmptyDirectory(const char* path)
+	{
+		return RemoveDirectoryA(path) != 0;
+	}
+
 	bool Platform::GetFileWriteTime(const char* path, uint64& outWriteTime)
 	{
 		WIN32_FILE_ATTRIBUTE_DATA data;

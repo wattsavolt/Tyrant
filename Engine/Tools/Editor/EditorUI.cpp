@@ -95,7 +95,8 @@ namespace tyr
 
 		if (EditorLayout::BeginPanel("Asset Browser", panels.bottom, m_Layout.BottomCollapsed(), true))
 		{
-			const AssetID levelToOpen = m_AssetBrowserPanel.Draw(openLevel);
+			const AssetID levelToOpen = m_AssetBrowserPanel.Draw(openLevel, editing);
+			requests.levelDeleted = m_AssetBrowserPanel.WasOpenLevelDeleted();
 			if (editing && AssetUtil::IsValidAssetID(levelToOpen))
 			{
 				m_FileMenu.OpenLevel(levelToOpen, levelDirty, requests);

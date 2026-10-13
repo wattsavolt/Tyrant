@@ -22,6 +22,8 @@ namespace tyr
 
 		// Level commands, carried out in this order. Saving comes first so a level can be saved
 		// before another replaces it.
+		// The open level's file was deleted, so another has to be opened. Handled before the rest.
+		bool levelDeleted = false;
 		bool saveLevel = false;
 		// Everything with unsaved changes, which for now is the level.
 		bool saveAll = false;

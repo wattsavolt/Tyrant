@@ -128,6 +128,34 @@ namespace tyr
         return false;
     }
 
+    uint AssetRegistry::RemoveMissingAssets()
+    {
+        LockGuard guard(m_Mutex);
+        Array<AssetID> missing;
+        for (const std::pair<const AssetID&, const RegAssetData&> keyVal : m_RegistryFile.assets)
+        {
+            char absPath[TYR_MAX_PATH_TOTAL_SIZE];
+            AssetUtil::CreateFullPath(absPath, keyVal.second.filePath.CStr());
+            if (!Platform::FileExists(absPath))
+            {
+                TYR_LOG_WARNING("%s was deleted outside the editor, so it's been removed from the asset registry.", keyVal.second.filePath.CStr());
+                missing.Add(keyVal.first);
+            }
+        }
+
+        if (missing.IsEmpty())
+        {
+            return 0;
+        }
+        for (const AssetID& assetID : missing)
+        {
+            m_RegistryFile.assets.Erase(assetID);
+        }
+        RebuildDependencies();
+        ++m_Version;
+        return missing.Size();
+    }
+
     AssetID AssetRegistry::GetAssetIDSafe(const char* assetPath) const
     {
         LockGuard guard(m_Mutex);

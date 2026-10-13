@@ -86,7 +86,7 @@ namespace tyr
 		ViewportRay GetCameraRay() const;
 		static ActorName MakeUniqueActorName(const World& world, const char* baseName);
 
-		// Opens the default level, or the first one there is, or makes one.
+		// Opens the default level, or else the first one there is or a new one, which becomes the default.
 		void OpenStartLevel();
 		// Makes the level the one opened on startup.
 		void SetDefaultLevel(AssetID level);

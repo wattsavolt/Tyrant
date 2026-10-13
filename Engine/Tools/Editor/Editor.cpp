@@ -250,6 +250,10 @@ namespace tyr
 		m_EditorUI->ApplyRenderSettings(true);
 		m_UndoHistory = MakeURef<UndoHistory>(*m_WorldManager, m_LevelEditorWorld);
 
+		if (AssetRegistry::Instance().RemoveMissingAssets() > 0)
+		{
+			AssetRegistry::Instance().Save();
+		}
 		OpenStartLevel();
 
 		const uint16 mcpPort = m_Settings->GetMcpPort();
@@ -283,11 +287,13 @@ namespace tyr
 			TYR_LOG_WARNING("The default level %s no longer exists.", defaultLevel.CStr());
 		}
 
+		// Whatever opens instead becomes the default.
 		for (const std::pair<const AssetID&, const RegAssetData&> asset : registry.GetAssets())
 		{
 			if (HasExtension(asset.second.filePath.CStr(), AssetConstants::c_LevelFileExtension))
 			{
 				OpenLevel(asset.first);
+				SetDefaultLevel(m_Level);
 				return;
 			}
 		}
@@ -736,6 +742,12 @@ namespace tyr
 				Platform::Exit(true);
 			}
 			return;
+		}
+
+		if (requests.levelDeleted)
+		{
+			m_Level = {};
+			OpenStartLevel();
 		}
 
 		// Saving comes first, so choosing Save when asked about unsaved changes saves before exiting.

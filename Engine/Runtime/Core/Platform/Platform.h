@@ -79,6 +79,9 @@ namespace tyr
 
 		static bool RemoveFile(const char* path);
 
+		// Fails when the directory isn't empty.
+		static bool RemoveEmptyDirectory(const char* path);
+
 		// When the file was last written, comparable only with other values from this. False if it can't be read.
 		static bool GetFileWriteTime(const char* path, uint64& outWriteTime);
 

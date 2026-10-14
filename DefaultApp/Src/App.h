@@ -4,6 +4,7 @@
 #include "Window/WindowHandle.h"
 #include "World/Camera.h"
 #include "Gameplay/FirstPersonController.h"
+#include "Gameplay/Interaction.h"
 
 namespace tyr
 {
@@ -34,6 +35,7 @@ private:
 	tyr::WorldManager* m_WorldManager{};
 	tyr::InputManager* m_InputManager{};
 	tyr::FirstPersonController m_Controller;
+	tyr::InteractionController m_Interaction;
 	tyr::Handle m_MainWorld{};
 	bool m_Embedded;
 };

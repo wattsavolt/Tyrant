@@ -8,6 +8,7 @@
 #include "AssetSystem/AssetModule.h"
 #include "AssetSystem/AssetManager.h"
 #include "ECS/Components.h"
+#include "Gameplay/Doors.h"
 #include "AssetSystem/AssetRegistry.h"
 #include "AssetSystem/AssetUtil.h"
 #include "AssetSystem/AssetConstants.h"
@@ -217,6 +218,11 @@ namespace tyr
 
 		// TODO: Step physics and audio here once their components exist, only when world.simulate
 		// is set - a world open in the level editor must stay still and silent.
+
+		if (world.simulate && !world.paused)
+		{
+			UpdateDoors(world, deltaTime);
+		}
 
 		if (world.physicsWorld && !world.paused)
 		{
@@ -1031,6 +1037,29 @@ namespace tyr
 			m_AssetManager->DeleteCollisionMesh(collider.collisionMesh);
 			collider.collisionMesh = AssetConstants::c_InvalidAssetID;
 		}
+	}
+
+	void WorldManager::UpdateDoors(World& world, float deltaTime)
+	{
+		world.entities.ForEach<DoorComponent>([this, &world, deltaTime](Entity entity, DoorComponent& door)
+		{
+			if (!world.entities.HasComponent<ComponentTransform>(entity))
+			{
+				return;
+			}
+			Doors::CaptureClosedPose(world, entity);
+			if (door.openAmount == door.targetAmount)
+			{
+				return;
+			}
+
+			const float step = deltaTime / std::max(door.openTime, 0.01f);
+			door.openAmount = door.targetAmount > door.openAmount ? std::min(door.openAmount + step, door.targetAmount) : std::max(door.openAmount - step, door.targetAmount);
+			Vector3 position;
+			Quaternion rotation;
+			Doors::GetPose(door, position, rotation);
+			MoveEntity(world, entity, position, rotation);
+		});
 	}
 
 	void WorldManager::ApplyPhysicsTransforms(World& world)

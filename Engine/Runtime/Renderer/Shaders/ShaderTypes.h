@@ -309,6 +309,14 @@ namespace tyr
 		float occlusionStrength;
 		float heightScale;
 		float alphaCutoff;
+		// The layer's textures, TYR_INVALID_INDEX without a layer, in the same order as 0 to 2.
+		uint texture3;
+		uint texture4;
+		uint texture5;
+		float layerPatchSize;
+		TYR_SHADER_FLOAT2 layerUVScale;
+		float layerCoverage;
+		float layerSharpness;
 	};
 
 	TYR_SHADER_STRUCT(Vertex)

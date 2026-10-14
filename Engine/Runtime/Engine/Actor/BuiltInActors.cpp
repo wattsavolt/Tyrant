@@ -92,6 +92,58 @@ namespace tyr
 		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
 		root.AddComponent(CreateIdentityTransform());
 		root.AddComponent(CharacterComponent{});
+		root.AddComponent(InventoryComponent{});
+	TYR_ACTOR_END()
+
+	// A door that swings on its hinge, which is the actor's position. Its kinematic box, sized
+	// from the mesh, pushes the player out of the way.
+	TYR_ACTOR_START(DoorActor)
+		RigidBodyComponent body{};
+		body.motionType = static_cast<uint8>(MotionType::Kinematic);
+
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(MeshComponent{});
+		root.AddComponent(BoxComponent{});
+		root.AddComponent(ColliderComponent{});
+		root.AddComponent(body);
+		root.AddComponent(DoorComponent{});
+	TYR_ACTOR_END()
+
+	// A door that slides along its slide offset, such as an elevator or roller door.
+	TYR_ACTOR_START(SlidingDoorActor)
+		RigidBodyComponent body{};
+		body.motionType = static_cast<uint8>(MotionType::Kinematic);
+		DoorComponent door{};
+		door.motion = static_cast<uint8>(DoorMotion::Slide);
+
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(MeshComponent{});
+		root.AddComponent(BoxComponent{});
+		root.AddComponent(ColliderComponent{});
+		root.AddComponent(body);
+		root.AddComponent(door);
+	TYR_ACTOR_END()
+
+	// A key panel or button on a wall that opens the door it names.
+	TYR_ACTOR_START(DoorPanelActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(MeshComponent{});
+		root.AddComponent(BoxComponent{});
+		root.AddComponent(ColliderComponent{});
+		root.AddComponent(DoorPanelComponent{});
+	TYR_ACTOR_END()
+
+	// An item lying in the world, such as a key card, that the player can take.
+	TYR_ACTOR_START(PickupActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(MeshComponent{});
+		root.AddComponent(BoxComponent{});
+		root.AddComponent(ColliderComponent{});
+		root.AddComponent(PickupComponent{});
 	TYR_ACTOR_END()
 
 	// Projects its material down its -Y axis, so it lies flat on a floor until turned. Scaling it

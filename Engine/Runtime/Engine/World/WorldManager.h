@@ -114,6 +114,8 @@ namespace tyr
 		// once the mesh has loaded. Anything else lets go of it.
 		void SyncColliderMesh(World& world, Entity entity);
 		void ReleaseColliderMesh(World& world, ColliderComponent& collider);
+		// Moves opening and closing doors. Their kinematic bodies follow on the next physics step.
+		void UpdateDoors(World& world, float deltaTime);
 		// Moves entities with dynamic bodies to where physics put them, blended between steps.
 		void ApplyPhysicsTransforms(World& world);
 		// Moves an entity in world space, carrying the actor's entities under it along.

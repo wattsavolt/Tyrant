@@ -160,6 +160,12 @@ namespace tyr
 		CommandQueue* m_ComputeQueue;
 		CommandQueue* m_TransferQueue;
 
+		// A present taken off its queue before its own frame's submission arrived, kept until it has.
+		Optional<RenderPresentRequest> m_HeldPresent;
+		// The frame number of the last frame submission sent, valid once m_AnySubmitted is set.
+		uint64 m_LastSubmittedFrame = 0;
+		bool m_AnySubmitted = false;
+
 		MPSCRingBuffer<RenderSubmissionRequest, c_MaxPendingRequests> m_SubmissionQueue;
 		MPSCRingBuffer<RenderPresentRequest, c_MaxPendingRequests> m_PresentQueue;
 		MPSCRingBuffer<RenderNotification, c_MaxPendingNotifications> m_NotificationQueue;

@@ -27,10 +27,15 @@ namespace tyr
 
 	struct MaterialConstants
 	{
-		static constexpr uint8 c_MaxTextures = 4;
+		static constexpr uint8 c_MaxTextures = 6;
 		static constexpr uint8 c_PbrAlbedoIndex = 0;
 		static constexpr uint8 c_PbrNormalHeightIndex = 1;
 		static constexpr uint8 c_PbrAoRoughnessMetallicIndex = 2;
+		// An optional second texture set, blended over the first in patches, such as grass over gravel.
+		static constexpr uint8 c_PbrLayerAlbedoIndex = 3;
+		static constexpr uint8 c_PbrLayerNormalHeightIndex = 4;
+		static constexpr uint8 c_PbrLayerAoRoughnessMetallicIndex = 5;
+		static constexpr uint8 c_PbrLayerTextureCount = 3;
 	};
 
 	// Adjusts how a material shows its textures, so one texture set can make several materials.
@@ -52,6 +57,14 @@ namespace tyr
 		float heightScale = 0.03f;
 		// Masked only.
 		float alphaCutoff = 0.5f;
+		// The layer's textures repeat this many times per UV unit.
+		Vector2 layerUVScale = Vector2(1.0f, 1.0f);
+		// Roughly how wide the layer's patches are, in metres.
+		float layerPatchSize = 6.0f;
+		// How much of the surface the layer covers, from 0 to 1.
+		float layerCoverage = 0.5f;
+		// How quickly a patch's edge blends into the base, higher being harder.
+		float layerSharpness = 4.0f;
 		// A MaterialBlendMode: 0 opaque, 1 masked, 2 translucent.
 		uint8 blendMode = static_cast<uint8>(MaterialBlendMode::Opaque);
 	};

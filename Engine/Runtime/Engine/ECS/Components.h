@@ -7,6 +7,8 @@
 #include "ECS/EntitySystem.h"
 #include "RenderBase/RenderHandles.h"
 #include "Physics/PhysicsTypes.h"
+#include "Gameplay/GameplayTypes.h"
+#include "Actor/ActorTypes.h"
 
 namespace tyr
 {
@@ -220,6 +222,61 @@ namespace tyr
 		// The material it holds loaded, and the renderer's decal made once it has. Not saved.
 		AssetID loadedMaterial;
 		DecalHandle decalHandle;
+	};
+
+	// A door that opens and closes when used, moving its own entity. Swinging doors turn about
+	// their origin, so a door mesh's hinge goes there. Needs a kinematic body to push things aside.
+	struct DoorComponent
+	{
+		// A DoorMotion: 0 swing, 1 slide.
+		uint8 motion = static_cast<uint8>(DoorMotion::Swing);
+		// Swing only: how far it turns, in degrees.
+		float openAngle = 100.0f;
+		// Swing only: it turns away from whoever opens it. Otherwise it always turns the same way.
+		bool opensAway = true;
+		// Slide only: how far it moves when fully open, in its own space.
+		Vector3 slideOffset = Vector3(0.9f, 0.0f, 0.0f);
+		// Seconds to fully open or close.
+		float openTime = 0.8f;
+		// A DoorLock: 0 unlocked, 1 needs key, 2 locked from the back, 3 locked.
+		uint8 lock = static_cast<uint8>(DoorLock::Unlocked);
+		// The item that unlocks it when it needs a key.
+		ItemName key;
+		// Another door that opens and closes with this one, such as the other half of a double door.
+		ActorName linkedDoor;
+
+		// Worked out while playing. Not saved. Amounts go from 0 closed to 1 open.
+		float openAmount = 0.0f;
+		float targetAmount = 0.0f;
+		// 1 or -1, the way it turns this time.
+		float swingSign = 1.0f;
+		// Where it was placed, which is where it's closed.
+		bool closedPoseKnown = false;
+		Vector3 closedPosition;
+		Quaternion closedRotation;
+	};
+
+	// A wall panel or button that opens and closes a door. With a key, it unlocks the door for good
+	// once the user holds the key.
+	struct DoorPanelComponent
+	{
+		ActorName door;
+		// Empty for a button that needs no key.
+		ItemName key;
+		// Without power it does nothing.
+		bool powered = true;
+	};
+
+	// Something the player can pick up, such as a key card. It's removed from the world once taken.
+	struct PickupComponent
+	{
+		ItemName item;
+	};
+
+	// The items a character carries.
+	struct InventoryComponent
+	{
+		LocalArray<ItemName, GameplayConstants::c_MaxInventoryItems> items;
 	};
 
 }

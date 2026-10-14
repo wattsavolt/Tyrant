@@ -89,6 +89,9 @@ namespace tyr
 		void UpdatePendingMaterials(McpServer& server);
 		// Finds the material at args' path. Pending until it's loaded, when the tool is run again.
 		ToolResult FindLoadedMaterial(const simdjson::dom::object& args, AssetID& outMaterial);
+		// Replies once the material has loaded, by running the request again.
+		ToolResult WaitForMaterial(AssetID material);
+		void ReleaseHeldLayerMaterial();
 		void WriteMaterial(AssetID material);
 		// Downscales and converts the capture to sRGB, then writes its PNG into m_Png.
 		void EncodeCapture(uint width, uint height, uint maxWidth);
@@ -117,6 +120,11 @@ namespace tyr
 		ToolResult ListActorTypes(const simdjson::dom::object& args);
 		ToolResult ListActors(const simdjson::dom::object& args);
 		ToolResult GetActor(const simdjson::dom::object& args);
+		ToolResult SetMaterialLayer(const simdjson::dom::object& args);
+		ToolResult Interact(const simdjson::dom::object& args);
+		ToolResult GiveItem(const simdjson::dom::object& args);
+		// The running game's player, with the world it's in.
+		Entity FindGamePlayer(World*& outWorld, Handle& outWorldHandle);
 		ToolResult SpawnActor(const simdjson::dom::object& args);
 		ToolResult DeleteActor(const simdjson::dom::object& args);
 		ToolResult SetActorTransform(const simdjson::dom::object& args);
@@ -168,5 +176,7 @@ namespace tyr
 		Array<uint8> m_ImagePixels;
 		Array<uint8> m_Png;
 		PngEncoder m_PngEncoder;
+		// The layer material set_material_layer keeps loaded until it has taken its textures.
+		AssetID m_HeldLayerMaterial;
 	};
 }

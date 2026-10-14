@@ -65,11 +65,7 @@ namespace tyr
 			Copy(data, size);
 		}
 
-		LocalString(const LocalString& other)
-			: LocalString(other.m_Data)
-		{
-
-		}
+		LocalString(const LocalString& other) = default;
 
 		~LocalString() = default;
 
@@ -82,11 +78,7 @@ namespace tyr
 			return *this;
 		}
 
-		LocalString& operator=(const LocalString& other)
-		{
-			*this = other.m_Data;
-			return *this;
-		}
+		LocalString& operator=(const LocalString& other) = default;
 
 		LocalString& operator+=(const LocalString& other)
 		{

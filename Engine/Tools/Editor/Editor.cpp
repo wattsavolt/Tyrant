@@ -26,6 +26,7 @@
 #include "Level/LevelFile.h"
 #include "EditorSettings.h"
 #include "Debug/DebugDraw.h"
+#include "Gameplay/Doors.h"
 #include "AssetSystem/MeshAsset.h"
 #include "Utility/PathUtil.h"
 #include "Math/Math.h"
@@ -732,6 +733,24 @@ namespace tyr
 			DebugDraw::Arrow(transform.position, transform.position + down, colour);
 		});
 
+		// A selected door shows how it opens, and a selected panel points at its door.
+		if (m_SelectedActor != c_InvalidEntity && world.entities.HasComponent<ComponentTransform>(m_SelectedActor))
+		{
+			const Transform& transform = world.entities.GetComponent<ComponentTransform>(m_SelectedActor).world;
+			if (world.entities.HasComponent<DoorComponent>(m_SelectedActor))
+			{
+				DrawDoorMotion(world, m_SelectedActor, transform);
+			}
+			if (world.entities.HasComponent<DoorPanelComponent>(m_SelectedActor))
+			{
+				const Entity door = Doors::Find(world, world.entities.GetComponent<DoorPanelComponent>(m_SelectedActor).door);
+				if (door != c_InvalidEntity)
+				{
+					DebugDraw::Arrow(transform.position, world.entities.GetComponent<ComponentTransform>(door).world.position, DebugColour::c_Cyan);
+				}
+			}
+		}
+
 		// A player start shows the player's size and which way they'll face.
 		for (const ActorInstance& actor : world.actorInstances)
 		{
@@ -757,6 +776,45 @@ namespace tyr
 					DebugDraw::Text(world.entities.GetComponent<ComponentTransform>(root).world.position, actor.name.CStr(), DebugColour::c_White);
 				}
 			}
+		}
+	}
+
+	void Editor::DrawDoorMotion(const World& world, Entity entity, const Transform& transform)
+	{
+		const DoorComponent& door = world.entities.GetComponent<DoorComponent>(entity);
+		Vector3 leafMin(0.0f, 0.0f, 0.0f);
+		Vector3 leafMax(1.0f, 2.0f, 0.0f);
+		if (world.entities.HasComponent<BoxComponent>(entity))
+		{
+			const BoxComponent& box = world.entities.GetComponent<BoxComponent>(entity);
+			leafMin = box.center - box.halfExtents;
+			leafMax = box.center + box.halfExtents;
+		}
+
+		if (static_cast<DoorMotion>(door.motion) == DoorMotion::Slide)
+		{
+			const Vector3 centre = transform.position + transform.rotation.Rotate((leafMin + leafMax) * 0.5f);
+			DebugDraw::Arrow(centre, centre + transform.rotation.Rotate(door.slideOffset), DebugColour::c_Yellow);
+			return;
+		}
+
+		// The far edge's path at the bottom, both ways when it opens away from whoever uses it.
+		const float edgeX = Math::Abs(leafMin.x) > Math::Abs(leafMax.x) ? leafMin.x : leafMax.x;
+		const Vector3 edge(edgeX, 0.0f, 0.0f);
+		constexpr uint c_Segments = 12;
+		const uint directions = door.opensAway ? 2 : 1;
+		for (uint direction = 0; direction < directions; ++direction)
+		{
+			const float sign = direction == 0 ? 1.0f : -1.0f;
+			Vector3 previous = transform.position + transform.rotation.Rotate(edge);
+			for (uint i = 1; i <= c_Segments; ++i)
+			{
+				const float angle = door.openAngle * Math::c_DegToRad * sign * (float)i / (float)c_Segments;
+				const Vector3 point = transform.position + transform.rotation.Rotate(Quaternion(Vector3::c_Up, angle).Rotate(edge));
+				DebugDraw::Line(previous, point, DebugColour::c_Yellow);
+				previous = point;
+			}
+			DebugDraw::Line(transform.position, previous, DebugColour::c_Yellow);
 		}
 	}
 

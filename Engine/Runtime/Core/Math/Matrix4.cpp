@@ -358,7 +358,7 @@ namespace tyr
 		TYR_ASSERT(near != far && near > 0 && far > 0);
 
 		const float thetaX = Math::c_DegToRad * horzFOV * 0.5f;
-		const float width = Math::Tan(thetaX);
+		const float width = 1.0f / Math::Tan(thetaX);
 		const float height = width * aspect;
 		const float invD = 1.0f / (far - near);
 		const float range = far * invD;

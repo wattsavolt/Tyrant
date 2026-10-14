@@ -147,7 +147,9 @@ void App::SpawnPlayer()
 
 void App::Update(float deltaTime)
 {
-	m_Controller.Update(m_WorldManager->GetWorld(m_MainWorld), *m_InputManager, deltaTime, m_InputManager->IsGameInputEnabled());
+	const bool hasInput = m_InputManager->IsGameInputEnabled();
+	m_Controller.Update(m_WorldManager->GetWorld(m_MainWorld), *m_InputManager, deltaTime, hasInput);
+	m_Interaction.Update(*m_WorldManager, m_MainWorld, m_Controller.GetCharacter(), *m_InputManager, deltaTime, hasInput);
 }
 
 void App::Shutdown()

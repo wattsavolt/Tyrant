@@ -21,6 +21,8 @@
 #include "World/Camera.h"
 #include "World/World.h"
 #include "World/WorldManager.h"
+#include "ECS/Components.h"
+#include "Gameplay/Interaction.h"
 #include "Math/Math.h"
 #include "Platform/Platform.h"
 #include <algorithm>
@@ -179,6 +181,12 @@ namespace tyr
 			R"({"type":"object","properties":{}})", &McpTools::GetDisplay },
 		{ "set_display", "Changes the display settings get_display shows. Only the values given change.",
 			R"({"type":"object","properties":{"hdr":{"type":"boolean"},"paperWhiteNits":{"type":"number"},"uiNits":{"type":"number"},"peakNits":{"type":"number","description":"0 uses what the display reports"}}})", &McpTools::SetDisplay },
+		{ "set_material_layer", "Gives a material a layer: another material's albedo, normal and AO roughness metallic textures, blended over its own in patches, such as grass over gravel. set_material's Layer UV Scale, Layer Patch Size (metres), Layer Coverage (0 to 1) and Layer Sharpness shape it. An empty layerMaterial removes the layer. Saves the material.",
+			R"({"type":"object","properties":{"path":{"type":"string"},"layerMaterial":{"type":"string","description":"The .mat to take the textures from, or empty to remove the layer"}},"required":["path","layerMaterial"]})", &McpTools::SetMaterialLayer },
+		{ "interact", "While playing, uses an actor in the game as the player would with E: opens or closes a door, uses a door panel, or picks up an item. Returns whether it worked and the message the player would see.",
+			R"({"type":"object","properties":{"actor":{"type":"string"}},"required":["actor"]})", &McpTools::Interact },
+		{ "give_item", "While playing, puts an item such as a key card into the player's inventory.",
+			R"({"type":"object","properties":{"item":{"type":"string"}},"required":["item"]})", &McpTools::GiveItem },
 	};
 
 	McpTools::McpTools(Editor& editor)
@@ -1296,6 +1304,98 @@ namespace tyr
 		return GetEditorState(args);
 	}
 
+	Entity McpTools::FindGamePlayer(World*& outWorld, Handle& outWorldHandle)
+	{
+		if (m_Editor.m_PlayState == PlayState::Editing)
+		{
+			Fail("The game isn't running.");
+			return c_InvalidEntity;
+		}
+		outWorldHandle = m_Editor.m_WorldManager->GetActiveWorld();
+		outWorld = &m_Editor.m_WorldManager->GetWorld(outWorldHandle);
+		for (const ActorInstance& actor : outWorld->actorInstances)
+		{
+			if (outWorld->entities.HasComponent<InventoryComponent>(actor.RootEntity()))
+			{
+				return actor.RootEntity();
+			}
+		}
+		Fail("The game has no player with an inventory.");
+		return c_InvalidEntity;
+	}
+
+	McpTools::ToolResult McpTools::Interact(const dom::object& args)
+	{
+		char name[ActorName::c_Capacity + 1];
+		if (!GetString(args, "actor", name, sizeof(name)))
+		{
+			return Fail("actor is needed.");
+		}
+		World* world = nullptr;
+		Handle worldHandle;
+		const Entity player = FindGamePlayer(world, worldHandle);
+		if (player == c_InvalidEntity)
+		{
+			return ToolResult::Failed;
+		}
+		const ActorInstance* actor = FindActor(*world, name);
+		if (!actor)
+		{
+			return ToolResult::Failed;
+		}
+		Entity target = c_InvalidEntity;
+		for (Entity entity : actor->entities)
+		{
+			target = target == c_InvalidEntity ? Interaction::FindUsable(*world, entity) : target;
+		}
+		if (target == c_InvalidEntity)
+		{
+			return Fail("%s isn't something that can be used.", name);
+		}
+
+		InteractionText message;
+		const bool used = Interaction::Use(*m_Editor.m_WorldManager, worldHandle, target, player, message);
+		m_Result.BeginObject();
+		m_Result.Key("used");
+		m_Result.Bool(used);
+		m_Result.Key("message");
+		m_Result.String(message.CStr());
+		m_Result.EndObject();
+		return ToolResult::Done;
+	}
+
+	McpTools::ToolResult McpTools::GiveItem(const dom::object& args)
+	{
+		char item[ItemName::c_Capacity + 1];
+		if (!GetString(args, "item", item, sizeof(item)) || item[0] == 0 || strlen(item) > c_MaxItemName)
+		{
+			return Fail("item is needed, at most %u characters.", c_MaxItemName);
+		}
+		World* world = nullptr;
+		Handle worldHandle;
+		const Entity player = FindGamePlayer(world, worldHandle);
+		if (player == c_InvalidEntity)
+		{
+			return ToolResult::Failed;
+		}
+		InventoryComponent& inventory = world->entities.GetComponent<InventoryComponent>(player);
+		if (inventory.items.Size() >= GameplayConstants::c_MaxInventoryItems)
+		{
+			return Fail("The player's inventory is full.");
+		}
+		inventory.items.Add(ItemName(item));
+		m_Result.BeginObject();
+		m_Result.Key("items");
+		m_Result.BeginArray();
+		for (const ItemName& held : inventory.items)
+		{
+			m_Result.String(held.CStr());
+		}
+		m_Result.EndArray();
+		m_Result.EndObject();
+		return ToolResult::Done;
+	}
+
 	McpTools::ToolResult McpTools::Undo(const dom::object& args)
 	{
 		return UndoSteps(args, false);
@@ -1541,6 +1641,11 @@ namespace tyr
 			return ToolResult::Done;
 		}
 
+		return WaitForMaterial(outMaterial);
+	}
+
+	McpTools::ToolResult McpTools::WaitForMaterial(AssetID material)
+	{
 		if (m_PendingMaterials.Size() == c_MaxPendingMaterials)
 		{
 			return Fail("Too many materials are still loading.");
@@ -1550,10 +1655,19 @@ namespace tyr
 		pending.id = *m_CurrentID;
 		pending.body = m_CurrentBody;
 		pending.bodySize = m_CurrentBodySize;
-		pending.material = outMaterial;
+		pending.material = material;
 		pending.framesWaited = 0;
-		m_Editor.m_AssetManager->LoadMaterial(outMaterial);
+		m_Editor.m_AssetManager->LoadMaterial(material);
 		return ToolResult::Pending;
+	}
+
+	void McpTools::ReleaseHeldLayerMaterial()
+	{
+		if (AssetUtil::IsValidAssetID(m_HeldLayerMaterial))
+		{
+			m_Editor.m_AssetManager->DeleteMaterial(m_HeldLayerMaterial);
+			m_HeldLayerMaterial = {};
+		}
 	}
 
 	void McpTools::WriteMaterial(AssetID material)
@@ -1708,6 +1822,53 @@ namespace tyr
 		settings.peakNits = (float)Math::Clamp(peak, 0.0, 10000.0);
 		m_Editor.m_RendererAPI->SetDisplaySettings(settings);
 		WriteDisplay();
+		return ToolResult::Done;
+	}
+
+	McpTools::ToolResult McpTools::SetMaterialLayer(const dom::object& args)
+	{
+		char layerPath[PathConstants::c_MaxAssetPathTotalSize] = {};
+		if (!GetString(args, "layerMaterial", layerPath, sizeof(layerPath)) && !HasArgumentError())
+		{
+			return Fail("layerMaterial is needed.");
+		}
+		AssetID layer;
+		if (layerPath[0] != 0)
+		{
+			layer = AssetRegistry::Instance().GetAssetID(layerPath);
+			if (!AssetUtil::IsValidAssetID(layer) || !AssetUtil::HasExtension(layerPath, AssetConstants::c_MaterialFileExtension))
+			{
+				return Fail("There's no material at %s.", layerPath);
+			}
+			// Held loaded while waiting for the material itself, which runs this again.
+			if (layer != m_HeldLayerMaterial)
+			{
+				ReleaseHeldLayerMaterial();
+				m_Editor.m_AssetManager->LoadMaterial(layer);
+				m_HeldLayerMaterial = layer;
+			}
+		}
+
+		AssetID material;
+		ToolResult found = FindLoadedMaterial(args, material);
+		if (found == ToolResult::Done && AssetUtil::IsValidAssetID(layer) && !m_Editor.m_AssetManager->GetMaterialFile(layer))
+		{
+			// Waits on the layer the same way, keeping the material loaded with an extra reference.
+			m_Editor.m_AssetManager->LoadMaterial(material);
+			found = WaitForMaterial(layer);
+		}
+		if (found != ToolResult::Done)
+		{
+			return found;
+		}
+
+		const bool set = m_Editor.m_AssetManager->SetMaterialLayer(material, layer);
+		ReleaseHeldLayerMaterial();
+		if (!set)
+		{
+			return Fail("%s doesn't have the three textures a layer needs.", layerPath);
+		}
+		WriteMaterial(material);
 		return ToolResult::Done;
 	}
 

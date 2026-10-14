@@ -238,6 +238,12 @@ namespace tyr
             return column.At<T>(record.index);
         }
 
+        template<typename T>
+        const T& GetComponent(Entity entity) const
+        {
+            return *static_cast<const T*>(GetComponentData(entity, ComponentRegistry::GetComponentTypeID<T>()));
+        }
+
         // The component's bytes, for code that only knows its type by ID.
         void* GetComponentData(Entity entity, ComponentTypeID typeID)
         {

@@ -21,6 +21,7 @@ namespace tyr
 	class AssetManager;
 	class WorldManager;
 	struct World;
+	struct Transform;
 	class RendererAPI;
 	class GUIModule;
 	class InputManager;
@@ -78,6 +79,8 @@ namespace tyr
 		Entity SpawnMeshActor(const PendingMeshDrop& pending, const MeshHeader& header);
 		// Static colliders are grey, kinematic ones cyan and dynamic ones orange.
 		void DrawColliders(World& world) const;
+		// The path a door's far edge swings through, or the way it slides.
+		static void DrawDoorMotion(const World& world, Entity entity, const Transform& transform);
 		// Places an actor of a registered type in front of the camera, and selects it.
 		void PlaceActor(const Id64& actorType, const char* folderPath);
 		// Adds an actor of the type to the level, named after it, and returns its root entity.

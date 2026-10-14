@@ -4,6 +4,7 @@
 #include "EngineMacros.h"
 #include "Containers/LocalArray.h"
 #include "String/Name.h"
+#include "String/LocalString.h"
 #include "Identifiers/Identifiers.h"
 #include "Reflection/ReflectionUtil.h"
 #include "ECS/EntitySystem.h"
@@ -16,6 +17,10 @@ namespace tyr
 	// one of its entities can carry.
 	constexpr uint c_MaxActorTypeEntities = 32;
 	constexpr uint c_MaxActorEntityComponents = 8;
+
+	// A placed actor's name, which gameplay can also use to refer to it.
+	constexpr uint c_MaxActorName = 63;
+	using ActorName = LocalString<c_MaxActorName>;
 
 	// Largest component an actor type can attach via ActorEntityDesc::AddComponent - sized
 	// with headroom over today's largest component (MeshComponent). AddComponent's own

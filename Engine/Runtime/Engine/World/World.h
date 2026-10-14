@@ -10,6 +10,7 @@
 #include "Window/WindowHandle.h"
 #include "String/Path.h"
 #include "Level/LevelSettings.h"
+#include "Actor/ActorTypes.h"
 
 namespace tyr
 {
@@ -34,8 +35,6 @@ namespace tyr
 	};
 
 	constexpr uint c_MaxActorInstanceEntities = 32;
-	constexpr uint c_MaxActorName = 63;
-	using ActorName = LocalString<c_MaxActorName>;
 
 	// An actor placed in a world, with the name and folder it's shown under in the editor.
 	// Identify it by its root entity rather than its index, since indices change on removal.

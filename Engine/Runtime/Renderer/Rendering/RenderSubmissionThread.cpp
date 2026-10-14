@@ -164,6 +164,8 @@ namespace tyr
 
 			if (request->reportCompletion)
 			{
+				m_LastSubmittedFrame = request->frameNumber;
+				m_AnySubmitted = true;
 				const bool completionEnqueued = m_CompletionQueue.Enqueue({ request->renderFrameIndex, timelineValue, request->frameNumber });
 				TYR_ASSERT(completionEnqueued);
 				(void)completionEnqueued;
@@ -172,8 +174,23 @@ namespace tyr
 			processedAny = true;
 		}
 
-		while (Optional<RenderPresentRequest> request = m_PresentQueue.Dequeue())
+		// A frame's submission and present are queued one after the other, so its present can be
+		// taken before its submission. It waits until the submission has gone, since the present
+		// waits on the semaphore the submission signals.
+		while (true)
 		{
+			Optional<RenderPresentRequest> request = m_HeldPresent ? m_HeldPresent : m_PresentQueue.Dequeue();
+			m_HeldPresent.reset();
+			if (!request)
+			{
+				break;
+			}
+			if (!m_AnySubmitted || m_LastSubmittedFrame < request->frameNumber)
+			{
+				m_HeldPresent = request;
+				break;
+			}
+
 			if (request->present)
 			{
 				bool resizeNeeded = false;

@@ -5,6 +5,8 @@
 #include "AssetSystem/MaterialAsset.h"
 #include "Utility/PathUtil.h"
 #include "imgui.h"
+#include "AssetSystem/AssetConstants.h"
+#include <cfloat>
 #include <cstdio>
 
 namespace tyr
@@ -13,7 +15,7 @@ namespace tyr
 	{
 		const char* const c_BlendModeNames[] = { "Opaque", "Masked", "Translucent" };
 		const PropertiesReflector::EnumNames c_BlendModes = { c_BlendModeNames, 3 };
-		const char* const c_TextureLabels[] = { "Albedo", "Normal Height", "AO Roughness Metallic", "Texture 3" };
+		const char* const c_TextureLabels[] = { "Albedo", "Normal Height", "AO Roughness Metallic", "Layer Albedo", "Layer Normal Height", "Layer AO Roughness Metallic" };
 		const MaterialParams c_DefaultParams;
 	}
 
@@ -50,6 +52,11 @@ namespace tyr
 		if (m_Unsaved)
 		{
 			m_AssetManager.SaveMaterial(m_Material);
+		}
+		if (AssetUtil::IsValidAssetID(m_PendingLayer))
+		{
+			m_AssetManager.DeleteMaterial(m_PendingLayer);
+			m_PendingLayer = {};
 		}
 		m_AssetManager.DeleteMaterial(m_Material);
 		m_Material = {};
@@ -103,6 +110,8 @@ namespace tyr
 					ImGui::TextUnformatted(textureName);
 				}
 
+				DrawLayer(*file);
+
 				ImGui::SeparatorText("Parameters");
 				constexpr ImGuiTableFlags tableFlags = ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV;
 				if (ImGui::BeginTable("##MaterialParams", 2, tableFlags))
@@ -131,6 +140,35 @@ namespace tyr
 		if (!open)
 		{
 			Close();
+		}
+	}
+
+	void MaterialEditorWindow::DrawLayer(const MaterialAssetFile& file)
+	{
+		// The picked material is held loaded until its textures can be taken.
+		if (AssetUtil::IsValidAssetID(m_PendingLayer) && m_AssetManager.GetMaterialFile(m_PendingLayer))
+		{
+			if (!m_AssetManager.SetMaterialLayer(m_Material, m_PendingLayer))
+			{
+				TYR_LOG_WARNING("That material doesn't have the three textures a layer needs.");
+			}
+			m_AssetManager.DeleteMaterial(m_PendingLayer);
+			m_PendingLayer = {};
+		}
+
+		ImGui::SeparatorText("Layer");
+		ImGui::TextWrapped("Blends another material's textures over this one in patches, such as grass over gravel.");
+		AssetID picked;
+		ImGui::TextUnformatted("Take textures from");
+		ImGui::SameLine();
+		if (m_LayerPicker.Draw(picked, AssetConstants::c_MaterialFileExtension, -FLT_MIN) && picked != m_Material && !AssetUtil::IsValidAssetID(m_PendingLayer))
+		{
+			m_PendingLayer = picked;
+			m_AssetManager.LoadMaterial(picked);
+		}
+		if (file.textures.Size() > MaterialConstants::c_PbrLayerAlbedoIndex && ImGui::Button("Remove Layer"))
+		{
+			m_AssetManager.SetMaterialLayer(m_Material, AssetID());
 		}
 	}
 }

@@ -2,12 +2,14 @@
 
 #include "EditorMacros.h"
 #include "PropertiesReflector.h"
+#include "AssetPicker.h"
 #include "AssetSystem/AssetID.h"
 #include "RenderResource/MaterialDesc.h"
 
 namespace tyr
 {
 	class AssetManager;
+	struct MaterialAssetFile;
 
 	// A floating window for changing a material's parameters, opened from the asset browser.
 	// Changes show straight away and are saved once a drag or edit finishes.
@@ -23,6 +25,8 @@ namespace tyr
 
 	private:
 		void Close();
+		// Picks a material to take the layer's textures from, and removes the layer.
+		void DrawLayer(const MaterialAssetFile& file);
 
 		AssetManager& m_AssetManager;
 		PropertiesReflector m_Reflector;
@@ -32,5 +36,8 @@ namespace tyr
 		// Changed here but not saved yet, so the values above are newer than the material's.
 		bool m_Unsaved = false;
 		bool m_FocusPending = false;
+		// A material whose textures become the layer once it has loaded.
+		AssetID m_PendingLayer;
+		AssetPicker m_LayerPicker;
 	};
 }

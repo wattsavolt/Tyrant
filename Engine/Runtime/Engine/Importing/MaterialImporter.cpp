@@ -360,6 +360,12 @@ namespace tyr
 
 	bool MaterialImporter::CreateNormalHeight(const PbrMaterialImportDesc& desc, MaterialAssetFile& material)
 	{
+		// Without a height map there's nothing to shift the UVs by.
+		if (!desc.heightSource.IsPresent())
+		{
+			material.params.heightScale = 0.0f;
+		}
+
 		if (desc.normalHeightID != 0)
 		{
 			material.textures[MaterialConstants::c_PbrNormalHeightIndex] = desc.normalHeightID;
@@ -436,7 +442,7 @@ namespace tyr
 				ImageUtil::FillChannel<float>(normal, texelCount, 4, 3, 0.5f);
 			}
 			compDesc.image = normal;
-			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_16F;
+			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_32F;
 			break;
 		}
 		case ImageBitDepth::ThirtyTwoBit:
@@ -577,7 +583,7 @@ namespace tyr
 				}
 			}
 			compDesc.image = roughnessMetallic;
-			compDesc.inputFormat = bitDepth == ImageBitDepth::SixteenBit ? ImageCompressionInputFormat::RGBA_16F : ImageCompressionInputFormat::RGBA_32F;
+			compDesc.inputFormat = ImageCompressionInputFormat::RGBA_32F;
 		}
 
 		compDesc.width = roughnessMetallicInfo.width;

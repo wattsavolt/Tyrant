@@ -93,6 +93,9 @@ namespace tyr
 		// Changes a loaded material's parameters, drawn from the next frame. SaveMaterial keeps them.
 		void SetMaterialParams(AssetID assetID, const MaterialParams& params);
 		void SaveMaterial(AssetID assetID);
+		// Uses another material's albedo, normal and AO roughness metallic textures as this one's
+		// layer, or removes the layer when layerMaterial is invalid, then saves it. Both must be loaded.
+		bool SetMaterialLayer(AssetID assetID, AssetID layerMaterial);
 #endif
 
 	private:
@@ -210,6 +213,9 @@ namespace tyr
 		Array<PendingAssetDelete> m_PendingMeshDeletes;
 		// Oldest release first.
 		Array<UnreferencedAsset> m_UnreferencedAssets;
+		// The textures each loaded material holds, at its renderer handle's index. They're what it
+		// releases, even if the material's file or the registry changed since it loaded.
+		Array<LocalArray<AssetID, MaterialConstants::c_MaxTextures>> m_MaterialTextures;
 #if TYR_EDITOR
 		// Each loaded material's file at its renderer handle's index, so it can be edited and saved.
 		Array<MaterialAssetFile> m_MaterialFiles;

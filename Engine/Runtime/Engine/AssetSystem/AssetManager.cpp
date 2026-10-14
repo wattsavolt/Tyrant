@@ -77,6 +77,7 @@ namespace tyr
 		m_PendingMaterialDeletes.Reserve(16);
 		m_PendingMeshDeletes.Reserve(16);
 		m_UnreferencedAssets.Reserve(c_MaxUnreferencedAssets);
+		m_MaterialTextures.Resize(RenderConstants::c_MaxMaterials);
 #if TYR_EDITOR
 		m_MaterialFiles.Resize(RenderConstants::c_MaxMaterials);
 #endif
@@ -623,11 +624,11 @@ namespace tyr
 	{
 		// Read first, since freeing a texture below erases from the map that holds assetData.
 		const MaterialHandle material(assetData.resourceHandle);
-		uint depCount;
-		const AssetID* dependencies = AssetRegistry::Instance().GetAssetDependencies(assetID, depCount);
-		for (uint i = 0; i < depCount; ++i)
+		const LocalArray<AssetID, MaterialConstants::c_MaxTextures> textures = m_MaterialTextures[material.h.index];
+		m_MaterialTextures[material.h.index].Clear();
+		for (AssetID texture : textures)
 		{
-			DeleteTexture(dependencies[i], policy);
+			DeleteTexture(texture, policy);
 		}
 		m_RendererAPI->DeleteMaterial(material);
 		m_AssetMap.Erase(assetID);
@@ -688,6 +689,7 @@ namespace tyr
 
 		asset.loadState = AssetLoadState::Loaded;
 		asset.resourceHandle = m_RendererAPI->CreateMaterial(desc).h;
+		m_MaterialTextures[asset.resourceHandle.index] = ld->file.textures;
 #if TYR_EDITOR
 		m_MaterialFiles[asset.resourceHandle.index] = ld->file;
 #endif
@@ -716,6 +718,50 @@ namespace tyr
 			desc.textures.Add(m_AssetMap[id].resourceHandle);
 		}
 		m_RendererAPI->UpdateMaterial(material, desc);
+	}
+
+	bool AssetManager::SetMaterialLayer(AssetID assetID, AssetID layerMaterial)
+	{
+		const MaterialHandle material = GetMaterial(assetID);
+		TYR_ASSERT(material);
+		MaterialAssetFile& file = m_MaterialFiles[material.h.index];
+		LocalArray<AssetID, MaterialConstants::c_PbrLayerTextureCount> layerTextures;
+		if (AssetUtil::IsValidAssetID(layerMaterial))
+		{
+			const MaterialAssetFile* layerFile = GetMaterialFile(layerMaterial);
+			if (!layerFile || layerFile->textures.Size() < MaterialConstants::c_PbrLayerTextureCount)
+			{
+				return false;
+			}
+			for (uint i = 0; i < MaterialConstants::c_PbrLayerTextureCount; ++i)
+			{
+				layerTextures.Add(layerFile->textures[i]);
+			}
+		}
+
+		// The new textures are already loaded by the layer material, so these only add references.
+		for (AssetID texture : layerTextures)
+		{
+			LoadTexture(texture);
+		}
+		for (uint i = MaterialConstants::c_PbrLayerAlbedoIndex; i < file.textures.Size(); ++i)
+		{
+			DeleteTexture(file.textures[i], AssetDeletePolicy::KeepUnreferenced);
+		}
+		file.textures.Resize(std::min<uint>(file.textures.Size(), MaterialConstants::c_PbrLayerAlbedoIndex));
+		for (AssetID texture : layerTextures)
+		{
+			file.textures.Add(texture);
+		}
+		m_MaterialTextures[material.h.index] = file.textures;
+
+		// Deleting the material later releases whatever the registry lists it as depending on.
+		AssetRegistry& registry = AssetRegistry::Instance();
+		registry.AddOrUpdateAsset(registry.GetAssetData(assetID).filePath.CStr(), file.textures.Data(), file.textures.Size());
+		registry.Save();
+		SetMaterialParams(assetID, file.params);
+		SaveMaterial(assetID);
+		return true;
 	}
 
 	void AssetManager::SaveMaterial(AssetID assetID)

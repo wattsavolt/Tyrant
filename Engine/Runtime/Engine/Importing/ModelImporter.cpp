@@ -21,6 +21,19 @@
 
 namespace tyr
 {
+	namespace
+	{
+		// The same file, or the same bytes inside the model.
+		bool IsSameSource(const TextureSource& a, const TextureSource& b)
+		{
+			if (a.path || b.path)
+			{
+				return a.path && b.path && strcmp(a.path, b.path) == 0;
+			}
+			return a.data == b.data && a.dataSize == b.dataSize;
+		}
+	}
+
 	ModelImporter& ModelImporter::Instance()
 	{
 		static ModelImporter importer;
@@ -225,6 +238,33 @@ namespace tyr
 		for (uint i = 0; i < result.materials.Size(); ++i)
 		{
 			PbrMaterialImportDesc desc = result.materials[i];
+			// Materials made from the same images, such as one texture set in several colours,
+			// share the textures the first of them imported.
+			for (uint j = 0; j < i; ++j)
+			{
+				const PbrMaterialImportDesc& earlier = result.materials[j];
+				uint dependencyCount;
+				const AssetID* textures = AssetRegistry::Instance().GetAssetDependencies(outMaterialIDs[j], dependencyCount);
+				if (dependencyCount <= MaterialConstants::c_PbrAoRoughnessMetallicIndex)
+				{
+					continue;
+				}
+				const bool sameAlpha = earlier.params.blendMode == desc.params.blendMode && earlier.params.alphaCutoff == desc.params.alphaCutoff;
+				if (desc.albedoID == 0 && desc.albedoSource.IsPresent() && sameAlpha && IsSameSource(earlier.albedoSource, desc.albedoSource))
+				{
+					desc.albedoID = textures[MaterialConstants::c_PbrAlbedoIndex];
+				}
+				if (desc.normalHeightID == 0 && desc.normalSource.IsPresent() && IsSameSource(earlier.normalSource, desc.normalSource)
+					&& IsSameSource(earlier.heightSource, desc.heightSource))
+				{
+					desc.normalHeightID = textures[MaterialConstants::c_PbrNormalHeightIndex];
+				}
+				if (desc.aoRoughnessMetallicID == 0 && desc.roughnessMetallicSource.IsPresent()
+					&& IsSameSource(earlier.roughnessMetallicSource, desc.roughnessMetallicSource) && IsSameSource(earlier.occlusionSource, desc.occlusionSource))
+				{
+					desc.aoRoughnessMetallicID = textures[MaterialConstants::c_PbrAoRoughnessMetallicIndex];
+				}
+			}
 
 			char materialName[PathConstants::c_MaxAssetNameTotalSize];
 			snprintf(materialName, sizeof(materialName), "%s_Material%u", modelName, i);
@@ -254,13 +294,23 @@ namespace tyr
 		m_Header.aabbMin = mesh.aabbMin;
 		m_Header.aabbMax = mesh.aabbMax;
 
-		// Every submesh's material slot maps 1:1 onto the model's flat material list -
-		// GltfModelLoader already dedupes glTF materials into that same flat list, so we
-		// just carry every material we imported over as a slot, used or not.
-		m_Header.materials.Reserve(materialIDs.Size());
-		for (const AssetID& materialID : materialIDs)
+		// Slots are given out in the order the mesh first uses each of the model's materials, so a
+		// mesh only holds the materials it draws with.
+		constexpr uint c_NoSlot = ~0u;
+		m_MaterialSlots.Clear();
+		m_MaterialSlots.Resize(materialIDs.Size(), c_NoSlot);
+		for (const ModelImportSubmesh& submesh : mesh.submeshes)
 		{
-			m_Header.materials.Add(materialID);
+			if (m_MaterialSlots[submesh.materialIndex] == c_NoSlot)
+			{
+				m_MaterialSlots[submesh.materialIndex] = m_Header.materials.Size();
+				m_Header.materials.Add(materialIDs[submesh.materialIndex]);
+			}
+		}
+		if (m_Header.materials.Size() > MeshConstants::c_MaxSubmeshes)
+		{
+			TYR_LOG_ERROR("Mesh %s uses %u materials - at most %u are supported.", meshName, m_Header.materials.Size(), (uint)MeshConstants::c_MaxSubmeshes);
+			return false;
 		}
 
 		// m_Header.lods/submeshes/chunks are filled in by ImportMeshGeometry below, one LOD at a
@@ -286,15 +336,15 @@ namespace tyr
 		// The header points at the collision mesh, so it's written first.
 		ImportCollisionMesh(mesh, outputFolderPath, meshName, m_Header.collision);
 
-		if (!ImportMeshGeometry(mesh, m_Header, options, absMeshFilePath))
+		if (!ImportMeshGeometry(mesh, m_Header, options, absMeshFilePath, m_MaterialSlots.Data()))
 		{
 			TYR_LOG_ERROR("Failed to export geometry for mesh %s.", meshName);
 			return false;
 		}
 
 		m_Dependencies.Clear();
-		m_Dependencies.Reserve(materialIDs.Size() + 1);
-		for (const AssetID& materialID : materialIDs)
+		m_Dependencies.Reserve(m_Header.materials.Size() + 1);
+		for (const AssetID& materialID : m_Header.materials)
 		{
 			m_Dependencies.Add(materialID);
 		}

@@ -100,4 +100,29 @@ namespace tyr
 		TYR_COMPONENT_FIELD(&SpotLightComponent::attenuation, "Attenuation", true, true, true);
 		TYR_COMPONENT_FIELD(&SpotLightComponent::castsShadow, "Casts Shadow", true, true, true);
 	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(DoorComponent, 0);
+		TYR_COMPONENT_FIELD(&DoorComponent::motion, "Motion", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorComponent::openAngle, "Open Angle", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorComponent::opensAway, "Opens Away", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorComponent::slideOffset, "Slide Offset", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorComponent::openTime, "Open Time", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorComponent::lock, "Lock", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorComponent::key, "Key", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorComponent::linkedDoor, "Linked Door", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(DoorPanelComponent, 0);
+		TYR_COMPONENT_FIELD(&DoorPanelComponent::door, "Door", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorPanelComponent::key, "Key", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorPanelComponent::powered, "Powered", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(PickupComponent, 0);
+		TYR_COMPONENT_FIELD(&PickupComponent::item, "Item", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(InventoryComponent, 0);
+		TYR_COMPONENT_FIELD(&InventoryComponent::items, "Items", true, true, true);
+	TYR_COMPONENT_END();
 }

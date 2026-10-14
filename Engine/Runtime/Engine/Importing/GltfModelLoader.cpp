@@ -209,7 +209,9 @@ namespace tyr
 						TYR_LOG_ERROR("A texture's path is too long - skipping it.");
 						return false;
 					}
-					Path& stored = resolvedPaths.ExpandOne();
+					// One slot per image, sized up front, so the pointer stays valid however many
+					// materials use the image.
+					Path& stored = resolvedPaths[static_cast<uint>(*texture.imageIndex)];
 					stored = resolved;
 					outSource.path = stored.CStr();
 					return true;
@@ -309,10 +311,9 @@ namespace tyr
 		}
 		m_Asset = std::move(assetExpected.get());
 
-		// Reserved up front so the pointers we hand out via TextureSource::path later stay
-		// valid - if this Array ever had to grow, it would move its existing entries and
-		// invalidate any pointer already taken into them.
-		m_ResolvedImagePaths.Reserve(static_cast<uint>(m_Asset.images.size()));
+		// One path per image, sized up front so the pointers handed out in TextureSource::path
+		// stay valid.
+		m_ResolvedImagePaths.Resize(static_cast<uint>(m_Asset.images.size()));
 
 		// TODO: node transforms aren't baked into the vertices yet, so every mesh is
 		// imported as if its owning node were at the origin with no rotation or scale. Fine

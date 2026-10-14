@@ -32,6 +32,26 @@ TYR_VK_BINDING(TYR_BINDING_MATERIAL, 0) StructuredBuffer<Material> materials : r
 TYR_VK_BINDING(TYR_BINDING_TEXTURES, 0) Texture2D textures[] : register(t11);
 TYR_VK_BINDING(TYR_BINDING_SAMPLERS, 0) SamplerState samplers[] : register(s12);
 
+// Smooth noise from 0 to 1 that changes about once per unit.
+float ValueNoise(float2 p)
+{
+	const float2 cell = floor(p);
+	const float2 f = p - cell;
+	const float2 u = f * f * (3.0f - 2.0f * f);
+	const float4 corners = cell.xyxy + float4(0.0f, 0.0f, 1.0f, 1.0f);
+	const float4 hashes = frac(sin(float4(dot(corners.xy, float2(127.1f, 311.7f)), dot(corners.zy, float2(127.1f, 311.7f)),
+		dot(corners.xw, float2(127.1f, 311.7f)), dot(corners.zw, float2(127.1f, 311.7f)))) * 43758.5453f);
+	return lerp(lerp(hashes.x, hashes.y, u.x), lerp(hashes.z, hashes.w, u.x), u.y);
+}
+
+// How much the layer covers this point, from patches of noise across the ground.
+float LayerWeight(float3 worldPos, Material material)
+{
+	const float2 p = worldPos.xz / max(material.layerPatchSize, 0.01f);
+	const float noise = ValueNoise(p) * 0.65f + ValueNoise(p * 2.7f + 17.3f) * 0.35f;
+	return saturate((noise - (1.0f - material.layerCoverage)) * material.layerSharpness + 0.5f);
+}
+
 struct GBufferOutput
 {
 	// rgb = albedo, a = ambient occlusion
@@ -75,17 +95,31 @@ GBufferOutput main(VS_OUTPUT input)
 	const float height = textures[material.texture1].Sample(samplers[0], baseUV).a;
 	const float2 uv = baseUV - viewDirTS.xy * ((height - 0.5f) * material.heightScale);
 
+	float3 normalSample = textures[material.texture1].Sample(samplers[0], uv).rgb;
+	float4 albedoSample = textures[material.texture0].Sample(samplers[0], uv);
+	float3 aoRoughMetalSample = textures[material.texture2].Sample(samplers[0], uv).rgb;
+
+	// A layer, when the material has one, is blended over the base in patches.
+	if (material.texture3 != TYR_INVALID_INDEX)
+	{
+		const float2 layerUV = input.uv * material.layerUVScale;
+		const float weight = LayerWeight(pixelPos, material);
+		normalSample = lerp(normalSample, textures[material.texture4].Sample(samplers[0], layerUV).rgb, weight);
+		albedoSample = lerp(albedoSample, textures[material.texture3].Sample(samplers[0], layerUV), weight);
+		aoRoughMetalSample = lerp(aoRoughMetalSample, textures[material.texture5].Sample(samplers[0], layerUV).rgb, weight);
+		// Broad, gentle changes in brightness hide the textures repeating across large areas.
+		const float broad = ValueNoise(pixelPos.xz / max(material.layerPatchSize * 5.0f, 0.01f) + 41.7f);
+		albedoSample.rgb *= lerp(0.8f, 1.12f, broad);
+	}
+
 	// Strength scales the normal's tilt away from the surface, as glTF's normal scale does.
-	const float3 normalSample = textures[material.texture1].Sample(samplers[0], uv).rgb;
 	const float3 tangentSpaceNormal = (normalSample * 2.0f - 1.0f) * float3(material.normalStrength, material.normalStrength, 1.0f);
 	const float3 perturbedNormal = normalize(mul(tangentSpaceNormal, TBN));
 
-	const float4 albedoSample = textures[material.texture0].Sample(samplers[0], uv);
 #if TYR_MASKED_PASS
 	clip(albedoSample.a * material.albedoTint.a - material.alphaCutoff);
 #endif
 	const float3 albedo = albedoSample.rgb * material.albedoTint.rgb;
-	const float3 aoRoughMetalSample = textures[material.texture2].Sample(samplers[0], uv).rgb;
 	const float ao = lerp(1.0f, aoRoughMetalSample.r, material.occlusionStrength);
 	const float roughness = lerp(material.roughnessRange.x, material.roughnessRange.y, aoRoughMetalSample.g);
 	const float metallic = lerp(material.metallicRange.x, material.metallicRange.y, aoRoughMetalSample.b);

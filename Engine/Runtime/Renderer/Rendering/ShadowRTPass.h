@@ -75,9 +75,11 @@ namespace tyr
 			PointLightHandle pointHandle;
 			SpotLightHandle spotHandle;
 			// The light's position in the scene's point or spot list, which is the index
-			// DeferredLightingCS's own point/spot light loops use.
+			// DeferredLightingRTCS's own point/spot light loops use.
 			uint lightIndex;
 			uint slot;
+			// Frames the light has held its slot, so its soft shadow can fade in as its history builds.
+			uint age;
 		};
 
 		ShadowRTPass(const ShadowRTPassArgs& args);
@@ -94,7 +96,7 @@ namespace tyr
 
 		void Execute(CommandList& cmdList, uint renderFrameIndex, uint width, uint height, float lodErrorPerDistance);
 
-		// Valid after Setup - consumed by Renderer to build DeferredLightingCS's per-tick
+		// Valid after Setup - consumed by Renderer to build DeferredLightingRTCS's per-tick
 		// light-to-slot lookup.
 		const LocalArray<SelectedLocalLight, RenderConstants::c_MaxShadowCastingLocalLights>& GetSelectedLocalLights() const
 		{
@@ -116,7 +118,11 @@ namespace tyr
 			bool isSpot = false;
 			PointLightHandle pointHandle;
 			SpotLightHandle spotHandle;
+			uint age = 0;
 		};
+
+		// True when the light held a slot last tick.
+		bool OwnsSlot(bool isSpot, PointLightHandle pointHandle, SpotLightHandle spotHandle) const;
 
 		RenderRegistry* m_Registry;
 		RenderResources* m_Resources;
@@ -131,7 +137,7 @@ namespace tyr
 		DirLightHandle m_ActiveDirLights[RenderConstants::c_MaxDirLights] = {};
 		// Every shadow slot with a directional light present this tick, shadow-casting or not -
 		// Execute only ever dispatches for these (a real trace, or a cheap "fully lit" fallback),
-		// never for a slot with no light at all, since DeferredLightingCS's dirLightCount-bounded
+		// never for a slot with no light at all, since DeferredLightingRTCS's dirLightCount-bounded
 		// loop will never read a slot beyond the active light count anyway.
 		LocalArray<uint, RenderConstants::c_MaxDirLights> m_PresentDirLightSlots;
 		LocalArray<uint, RenderConstants::c_MaxShadowSlots> m_ActiveSlots;

@@ -132,11 +132,11 @@ namespace tyr
 
 		if (m_ShowImportOptions)
 		{
-			DrawImportOptionsWindow();
+			DrawImportOptionsWindow(requests);
 		}
 		if (m_ShowSkyImportOptions)
 		{
-			DrawSkyImportOptionsWindow();
+			DrawSkyImportOptionsWindow(requests);
 		}
 	}
 
@@ -392,7 +392,7 @@ namespace tyr
 		m_ShowImportOptions = true;
 	}
 
-	void FileMenu::DrawSkyImportOptionsWindow()
+	void FileMenu::DrawSkyImportOptionsWindow(EditorRequests& requests)
 	{
 		ImGui::SetNextWindowSize(ImVec2(380, 160), ImGuiCond_FirstUseEver);
 		if (ImGui::Begin("Import Sky", &m_ShowSkyImportOptions))
@@ -412,6 +412,7 @@ namespace tyr
 				MaterialImporter::Instance().ImportSkyCubemap(m_PendingFilePath, m_PendingOutputFolder, m_PendingModelName, faceSizes[m_SkyFaceSizeIndex], textureID);
 				// Saved straight away so the import is never lost if the editor doesn't close cleanly.
 				AssetRegistry::Instance().Save();
+				requests.refreshAssets = true;
 				m_ShowSkyImportOptions = false;
 			}
 			ImGui::SameLine();
@@ -423,7 +424,7 @@ namespace tyr
 		ImGui::End();
 	}
 
-	void FileMenu::DrawImportOptionsWindow()
+	void FileMenu::DrawImportOptionsWindow(EditorRequests& requests)
 	{
 		ImGui::SetNextWindowSize(ImVec2(380, 180), ImGuiCond_FirstUseEver);
 		if (ImGui::Begin("Import Model", &m_ShowImportOptions))
@@ -451,6 +452,7 @@ namespace tyr
 				ModelImporter::Instance().ImportModel(m_PendingFilePath, m_PendingOutputFolder, m_PendingModelName, options);
 				// Saved straight away so the import is never lost if the editor doesn't close cleanly.
 				AssetRegistry::Instance().Save();
+				requests.refreshAssets = true;
 				m_ShowImportOptions = false;
 			}
 			ImGui::SameLine();

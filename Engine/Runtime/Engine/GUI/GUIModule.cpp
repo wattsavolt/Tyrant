@@ -356,16 +356,19 @@ namespace tyr
 		const InputManager* input = m_InputModule->GetInputManager();
 		ImGuiIO& io = ImGui::GetIO();
 
+		// While the game has the input, every button and key reads as up apart from Escape, and
+		// nothing is typed or scrolled.
+		const bool blocked = input->IsUIInputBlocked();
 		const Vector2& mousePos = input->GetMousePosition();
 		io.AddMousePosEvent(mousePos.x, mousePos.y);
-		io.AddMouseButtonEvent(ImGuiMouseButton_Left, input->IsMouseButtonDown(MouseButton::Left));
-		io.AddMouseButtonEvent(ImGuiMouseButton_Right, input->IsMouseButtonDown(MouseButton::Right));
-		io.AddMouseButtonEvent(ImGuiMouseButton_Middle, input->IsMouseButtonDown(MouseButton::Middle));
-		io.AddMouseWheelEvent(0.0f, input->GetScrollDelta());
+		io.AddMouseButtonEvent(ImGuiMouseButton_Left, !blocked && input->IsMouseButtonDown(MouseButton::Left));
+		io.AddMouseButtonEvent(ImGuiMouseButton_Right, !blocked && input->IsMouseButtonDown(MouseButton::Right));
+		io.AddMouseButtonEvent(ImGuiMouseButton_Middle, !blocked && input->IsMouseButtonDown(MouseButton::Middle));
+		io.AddMouseWheelEvent(0.0f, blocked ? 0.0f : input->GetScrollDelta());
 
 		for (const KeyMapping& mapping : g_KeyMappings)
 		{
-			io.AddKeyEvent(mapping.imguiKey, input->IsKeyDown(mapping.vk));
+			io.AddKeyEvent(mapping.imguiKey, (!blocked || mapping.imguiKey == ImGuiKey_Escape) && input->IsKeyDown(mapping.vk));
 		}
 		// 'A'-'Z'/'0'-'9'/F1-F12 follow a simple contiguous range each, so map them here
 		// instead of listing all of them individually. Loop counter must be wider than
@@ -375,11 +378,11 @@ namespace tyr
 			const ImGuiKey key = VkDigitOrLetterToImGuiKey((KeyCode)vk);
 			if (key != ImGuiKey_None)
 			{
-				io.AddKeyEvent(key, input->IsKeyDown((KeyCode)vk));
+				io.AddKeyEvent(key, !blocked && input->IsKeyDown((KeyCode)vk));
 			}
 		}
 
-		uint charCount = input->GetTypedCharCount();
+		const uint charCount = blocked ? 0 : input->GetTypedCharCount();
 		const char* chars = input->GetTypedChars();
 		for (uint i = 0; i < charCount; ++i)
 		{

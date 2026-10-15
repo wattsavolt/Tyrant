@@ -5,11 +5,13 @@
 #include "World.h"
 #include "RenderInstance/RenderInstances.h"
 #include "Animation/AnimationSystem.h"
-#include "Physics/PhysicsManager.h"
+#include "Physics/PhysicsComponentsManager.h"
+#include "Navigation/NavmeshComponentsManager.h"
 
 namespace tyr
 {
 	class RendererAPI;
+	class AudioAPI;
 	class WindowModule;
 	class AssetManager;
 	struct MeshComponent;
@@ -85,7 +87,10 @@ namespace tyr
 		AnimationSystem& GetAnimationSystem() { return m_AnimationSystem; }
 
 		// Raycasts and other queries against a simulated world's physics.
-		PhysicsManager& GetPhysicsManager() { return m_PhysicsManager; }
+		PhysicsComponentsManager& GetPhysicsComponentsManager() { return m_PhysicsComponentsManager; }
+
+		// Building, loading and finding paths across worlds' navmeshes.
+		NavmeshComponentsManager& GetNavmeshComponentsManager() { return m_NavmeshComponentsManager; }
 
 	private:
 		// Only called from AddWorld/RemoveWorld(s), which keep the pool and m_Worlds in step.
@@ -114,6 +119,10 @@ namespace tyr
 		// once the mesh has loaded. Anything else lets go of it.
 		void SyncColliderMesh(World& world, Entity entity);
 		void ReleaseColliderMesh(World& world, ColliderComponent& collider);
+		// Works out the world's power, then switches its light fixtures' lights and glow to match.
+		void UpdateLightFixtures(World& world, float deltaTime);
+		// Keeps held flashlights at the camera, once it's been placed this frame.
+		void UpdateFlashlights(World& world, float deltaTime);
 		// Moves opening and closing doors. Their kinematic bodies follow on the next physics step.
 		void UpdateDoors(World& world, float deltaTime);
 		// Moves entities with dynamic bodies to where physics put them, blended between steps.
@@ -139,10 +148,12 @@ namespace tyr
 		bool SetMeshComponent(Handle worldHandle, Entity entity, const MeshComponent& meshComponent);
 
 		RendererAPI* m_RendererAPI;
+		AudioAPI* m_AudioAPI = nullptr;
 		WindowModule* m_WindowModule;
 		AssetManager* m_AssetManager;
 		AnimationSystem m_AnimationSystem;
-		PhysicsManager m_PhysicsManager;
+		PhysicsComponentsManager m_PhysicsComponentsManager;
+		NavmeshComponentsManager m_NavmeshComponentsManager;
 		LocalObjectPool<World, c_MaxWorlds, ResetObjectPolicy> m_WorldPool;
 		LocalArray<Handle, c_MaxWorlds> m_Worlds;
 		Handle m_ActiveWorld;

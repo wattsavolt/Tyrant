@@ -16,6 +16,9 @@ namespace tyr
 		// Space between the buttons and the image's edges, and between the two button groups.
 		constexpr float c_GizmoButtonMargin = 8.0f;
 		constexpr float c_GizmoButtonGroupGap = 8.0f;
+		// How long frames are averaged over before the frame rate shown changes.
+		constexpr float c_StatsInterval = 0.5f;
+		constexpr float c_StatsMargin = 8.0f;
 	}
 
 	EditorViewport::EditorViewport(RendererAPI& rendererAPI, const EditorIcons& icons)
@@ -46,6 +49,10 @@ namespace tyr
 		ImGui::Image(texID, ImVec2((float)width, (float)height));
 		const bool imageHovered = ImGui::IsItemHovered();
 		DrawDebugTexts(world, imageMin.x, imageMin.y, width, height);
+		if (state.showStats)
+		{
+			DrawStats(deltaTime, imageMin.x, imageMin.y);
+		}
 
 		if (!state.editing && imageHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
 		{
@@ -97,6 +104,27 @@ namespace tyr
 		view = Matrix4::CreateView(camera.GetPosition(), camera.GetForward(), camera.GetUp());
 		// Reverse-Z, the same as the renderer.
 		projection = Matrix4::CreatePerspective(camera.GetFOV(), aspect, camera.GetFarZ(), camera.GetNearZ());
+	}
+
+	void EditorViewport::DrawStats(float deltaTime, float imageX, float imageY)
+	{
+		++m_StatsFrames;
+		m_StatsTime += deltaTime;
+		if (m_StatsTime >= c_StatsInterval)
+		{
+			m_ShownFps = (float)m_StatsFrames / m_StatsTime;
+			m_ShownFrameMs = m_StatsTime * 1000.0f / (float)m_StatsFrames;
+			m_StatsFrames = 0;
+			m_StatsTime = 0.0f;
+		}
+
+		char text[64];
+		snprintf(text, sizeof(text), "%.0f FPS  %.2f ms", m_ShownFps, m_ShownFrameMs);
+		const ImVec2 position(imageX + c_StatsMargin, imageY + c_StatsMargin);
+		const ImVec2 size = ImGui::CalcTextSize(text);
+		ImDrawList* drawList = ImGui::GetWindowDrawList();
+		drawList->AddRectFilled(ImVec2(position.x - 4.0f, position.y - 2.0f), ImVec2(position.x + size.x + 4.0f, position.y + size.y + 2.0f), IM_COL32(0, 0, 0, 160));
+		drawList->AddText(position, IM_COL32(255, 255, 255, 255), text);
 	}
 
 	void EditorViewport::DrawDebugTexts(const World& world, float imageX, float imageY, uint width, uint height)

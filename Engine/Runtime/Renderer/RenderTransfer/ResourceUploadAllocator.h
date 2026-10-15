@@ -40,6 +40,9 @@ namespace tyr
 		// Returns false if not enough contiguous free chunks
 		bool Allocate(size_t size, size_t alignment, Allocation& allocation);
 
+		// True when allocations of these sizes, made in order, would all succeed.
+		bool CanAllocate(const size_t* sizes, uint count) const;
+
 		// Marks an allocation as submitted, along with the timeline value the GPU will
 		// have reached once it's actually finished with it. Only ever called from the
 		// main thread.
@@ -55,6 +58,9 @@ namespace tyr
 		void ReclaimAll();
 
 	private:
+		// The first run of free chunks long enough for size, or false when there isn't one.
+		static bool FindFreeRun(const bool* chunkFree, uint chunkCount, size_t size, uint& outStart, uint& outLength);
+
 		struct InFlightAllocation
 		{
 			uint startChunk = 0;

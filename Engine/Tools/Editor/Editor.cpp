@@ -27,6 +27,7 @@
 #include "EditorSettings.h"
 #include "Debug/DebugDraw.h"
 #include "Gameplay/Doors.h"
+#include "Gameplay/Noise.h"
 #include "AssetSystem/MeshAsset.h"
 #include "Utility/PathUtil.h"
 #include "Math/Math.h"
@@ -345,6 +346,87 @@ namespace tyr
 		m_UndoHistory->Reset();
 	}
 
+	void Editor::RefreshAssets()
+	{
+		if (m_PlayState != PlayState::Editing || m_RefreshStage != RefreshStage::None)
+		{
+			return;
+		}
+
+		const World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
+		constexpr uint c_ChunkSize = 1024 * 1024;
+		m_RefreshData.Resize(c_ChunkSize);
+		m_RefreshActorOffsets.Clear();
+		uint size = LevelFile::WriteLevelState(world, m_RefreshData.Data(), m_RefreshData.Size());
+		TYR_ASSERT(size > 0);
+		for (const ActorInstance& actor : world.actorInstances)
+		{
+			uint written = 0;
+			while ((written = LevelFile::WriteActorState(world, actor, m_RefreshData.Data() + size, m_RefreshData.Size() - size)) == 0)
+			{
+				m_RefreshData.Resize(m_RefreshData.Size() + c_ChunkSize);
+			}
+			m_RefreshActorOffsets.Add(size);
+			size += written;
+		}
+		m_RefreshActorOffsets.Add(size);
+		m_RefreshDirty = IsLevelDirty();
+		m_RefreshSelectedActor = {};
+		for (const ActorInstance& actor : world.actorInstances)
+		{
+			if (actor.RootEntity() == m_SelectedActor)
+			{
+				m_RefreshSelectedActor = actor.id;
+			}
+		}
+
+		// Everything the level holds is let go of, so it can be loaded again from its file.
+		m_EditorUI->CloseMaterialEditor();
+		m_WorldManager->ClearWorld(m_LevelEditorWorld);
+		m_SelectedActor = c_InvalidEntity;
+		m_RefreshStage = RefreshStage::Cleared;
+	}
+
+	void Editor::UpdateAssetRefresh()
+	{
+		if (m_RefreshStage == RefreshStage::Cleared)
+		{
+			m_RefreshStage = RefreshStage::Restoring;
+			return;
+		}
+		if (m_RefreshStage != RefreshStage::Restoring)
+		{
+			return;
+		}
+		m_AssetManager->EvictAllUnreferencedAssets();
+		if (m_AssetManager->HasPendingDeletes())
+		{
+			return;
+		}
+
+		World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
+		LevelFile::ReadLevelState(m_RefreshData.Data(), m_RefreshActorOffsets.IsEmpty() ? 0 : m_RefreshActorOffsets[0], world);
+		for (uint i = 0; i + 1 < m_RefreshActorOffsets.Size(); ++i)
+		{
+			const uint offset = m_RefreshActorOffsets[i];
+			const Entity root = LevelFile::AddActorFromState(m_RefreshData.Data() + offset, m_RefreshActorOffsets[i + 1] - offset, *m_WorldManager, m_LevelEditorWorld);
+			for (const ActorInstance& actor : world.actorInstances)
+			{
+				if (actor.RootEntity() == root && actor.id == m_RefreshSelectedActor)
+				{
+					m_SelectedActor = root;
+				}
+			}
+		}
+
+		// Restoring counts as edits, so the saved state and undo history are put back as they were.
+		m_SavedChangeCount = m_RefreshDirty ? world.changeCount - 1 : world.changeCount;
+		m_UndoHistory->Reset();
+		m_RefreshData.Clear();
+		m_RefreshActorOffsets.Clear();
+		m_RefreshStage = RefreshStage::None;
+	}
+
 	void Editor::SaveAll()
 	{
 		// Only the level can have unsaved changes for now.
@@ -452,6 +534,8 @@ namespace tyr
 			m_McpTools->Update(*m_McpServer);
 		}
 
+		UpdateAssetRefresh();
+
 		PlayState requestedState = m_PlayState;
 		EditorRequests requests;
 		const PanelRect viewportRect = m_EditorUI->Draw(requestedState, m_SelectedActor, m_Level, IsLevelDirty(), m_UndoHistory->CanUndo(), m_UndoHistory->CanRedo(), requests);
@@ -466,6 +550,10 @@ namespace tyr
 		}
 		HandleRequests(requests);
 		HandleLevelRequests(requests);
+		if (requests.refreshAssets)
+		{
+			RefreshAssets();
+		}
 
 		if (m_PlayState == PlayState::Playing)
 		{
@@ -481,6 +569,14 @@ namespace tyr
 		{
 			DrawColliders(m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld()));
 		}
+		if (m_EditorUI->GetViewSettings().showNoise)
+		{
+			DrawNoises(m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld()));
+		}
+		if (m_EditorUI->GetViewSettings().showNavmesh)
+		{
+			DrawNavmesh(m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld()));
+		}
 
 		const ViewSettings& viewSettings = m_EditorUI->GetViewSettings();
 		EditorViewport::EditState editState;
@@ -488,6 +584,7 @@ namespace tyr
 		editState.selectedActor = m_SelectedActor;
 		editState.snapToGrid = viewSettings.snapToGrid;
 		editState.gridCellSize = m_Grid.cellSize;
+		editState.showStats = viewSettings.showStats;
 
 		// Shows whichever world is active - the game's while playing, the level's otherwise.
 		World& activeWorld = m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld());
@@ -670,6 +767,18 @@ namespace tyr
 		const ViewSettings& viewSettings = m_EditorUI->GetViewSettings();
 		World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
 
+		// Navmesh bounds show with the navmesh, and while selected.
+		world.entities.ForEach<NavmeshBoundsComponent>([&world, &viewSettings, this](Entity entity, NavmeshBoundsComponent& bounds)
+		{
+			if ((!viewSettings.showNavmesh && entity != m_SelectedActor) || !world.entities.HasComponent<ComponentTransform>(entity))
+			{
+				return;
+			}
+			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+			DebugDraw::Box(transform.position, bounds.halfExtents * transform.scale, transform.rotation,
+				entity == m_SelectedActor ? DebugColour::c_Yellow : DebugColour::c_Green);
+		});
+
 		if (viewSettings.showActorBounds)
 		{
 			world.entities.ForEach<BoxComponent>([&world, this](Entity entity, BoxComponent& box)
@@ -749,6 +858,18 @@ namespace tyr
 					DebugDraw::Arrow(transform.position, world.entities.GetComponent<ComponentTransform>(door).world.position, DebugColour::c_Cyan);
 				}
 			}
+			if (world.entities.HasComponent<LightSwitchComponent>(m_SelectedActor))
+			{
+				const CircuitName& circuit = world.entities.GetComponent<LightSwitchComponent>(m_SelectedActor).circuit;
+				for (const ActorInstance& actor : world.actorInstances)
+				{
+					const Entity root = actor.RootEntity();
+					if (world.entities.HasComponent<LightFixtureComponent>(root) && world.entities.GetComponent<LightFixtureComponent>(root).circuit == circuit)
+					{
+						DebugDraw::Arrow(transform.position, world.entities.GetComponent<ComponentTransform>(root).world.position, DebugColour::c_Yellow);
+					}
+				}
+			}
 		}
 
 		// A player start shows the player's size and which way they'll face.
@@ -823,6 +944,15 @@ namespace tyr
 		if (m_PlayState != PlayState::Editing)
 		{
 			return;
+		}
+
+		if (requests.frameSelected)
+		{
+			FrameSelectedActor();
+		}
+		if (requests.buildNavmesh)
+		{
+			BuildNavmesh();
 		}
 
 		if (requests.undo)
@@ -969,6 +1099,106 @@ namespace tyr
 			}
 		}
 		return position;
+	}
+
+	void Editor::DrawNavmesh(const World& world)
+	{
+		// Only around the camera, since the whole level's would be more lines than can be drawn.
+		constexpr float c_DrawRadius = 30.0f;
+		m_NavmeshLines.Clear();
+		m_WorldManager->GetNavmeshComponentsManager().AddDebugLines(world, world.camera->GetPosition(), c_DrawRadius, m_NavmeshLines);
+		for (uint i = 0; i + 1 < m_NavmeshLines.Size(); i += 2)
+		{
+			DebugDraw::Line(m_NavmeshLines[i], m_NavmeshLines[i + 1], DebugColour::c_Cyan);
+		}
+	}
+
+	bool Editor::BuildNavmesh()
+	{
+		const bool built = m_WorldManager->GetNavmeshComponentsManager().Build(m_WorldManager->GetWorld(m_LevelEditorWorld), *m_AssetManager);
+		TYR_LOG_INFO(built ? "Built the level's navmesh." : "The level has nothing to walk on, so it has no navmesh.");
+		return built;
+	}
+
+	void Editor::DrawNoises(const World& world)
+	{
+		constexpr uint c_Segments = 32;
+		for (const NoiseEvent& noise : world.noises)
+		{
+			// Brightest when made, and gone by the time it's forgotten.
+			const float strength = 1.0f - noise.age / Noise::c_Lifetime;
+			const uint alpha = static_cast<uint>(Math::Clamp(strength, 0.0f, 1.0f) * 255.0f);
+			const uint colour = (DebugColour::c_Orange & 0x00FFFFFFu) | (alpha << 24);
+			const Vector3 centre = noise.position + Vector3(0.0f, 0.05f, 0.0f);
+			Vector3 previous = centre + Vector3(noise.radius, 0.0f, 0.0f);
+			for (uint i = 1; i <= c_Segments; ++i)
+			{
+				const float angle = static_cast<float>(i) / c_Segments * Math::c_TwoPi;
+				const Vector3 point = centre + Vector3(Math::Cos(angle) * noise.radius, 0.0f, Math::Sin(angle) * noise.radius);
+				DebugDraw::Line(previous, point, colour);
+				previous = point;
+			}
+		}
+	}
+
+	void Editor::FrameSelectedActor()
+	{
+		World& world = m_WorldManager->GetWorld(m_LevelEditorWorld);
+		const ActorInstance* selected = nullptr;
+		for (const ActorInstance& actor : world.actorInstances)
+		{
+			if (actor.RootEntity() == m_SelectedActor)
+			{
+				selected = &actor;
+				break;
+			}
+		}
+		if (!selected || !world.camera || !world.entities.HasComponent<ComponentTransform>(m_SelectedActor))
+		{
+			return;
+		}
+
+		// The box around every bounded entity's corners, or a small one at the actor's position.
+		const Vector3 position = world.entities.GetComponent<ComponentTransform>(m_SelectedActor).world.position;
+		Vector3 boundsMin = position - Vector3(0.5f, 0.5f, 0.5f);
+		Vector3 boundsMax = position + Vector3(0.5f, 0.5f, 0.5f);
+		bool hasBounds = false;
+		for (Entity entity : selected->entities)
+		{
+			const bool hasBox = world.entities.HasComponent<BoxComponent>(entity);
+			if ((!hasBox && !world.entities.HasComponent<NavmeshBoundsComponent>(entity)) || !world.entities.HasComponent<ComponentTransform>(entity))
+			{
+				continue;
+			}
+			BoxComponent box;
+			if (hasBox)
+			{
+				box = world.entities.GetComponent<BoxComponent>(entity);
+			}
+			else
+			{
+				box.center = Vector3::c_Zero;
+				box.halfExtents = world.entities.GetComponent<NavmeshBoundsComponent>(entity).halfExtents;
+			}
+			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+			for (uint corner = 0; corner < 8; ++corner)
+			{
+				const Vector3 offset((corner & 1) ? box.halfExtents.x : -box.halfExtents.x, (corner & 2) ? box.halfExtents.y : -box.halfExtents.y,
+					(corner & 4) ? box.halfExtents.z : -box.halfExtents.z);
+				const Vector3 point = transform.position + transform.rotation.Rotate((box.center + offset) * transform.scale);
+				boundsMin = hasBounds ? Vector3(std::min(boundsMin.x, point.x), std::min(boundsMin.y, point.y), std::min(boundsMin.z, point.z)) : point;
+				boundsMax = hasBounds ? Vector3(std::max(boundsMax.x, point.x), std::max(boundsMax.y, point.y), std::max(boundsMax.z, point.z)) : point;
+				hasBounds = true;
+			}
+		}
+
+		const Vector3 centre = (boundsMin + boundsMax) * 0.5f;
+		const Vector3 extent = boundsMax - centre;
+		const float radius = std::max(std::sqrt(extent.Dot(extent)), 0.25f);
+		// The field of view is in degrees. A little extra distance leaves a margin around the actor.
+		const float halfAngle = world.camera->GetFOV() * 0.5f * Math::c_Pi / 180.0f;
+		const float distance = radius / std::sin(halfAngle) * 1.1f;
+		world.camera->SetPosition(centre - world.camera->GetForward() * distance);
 	}
 
 	ViewportRay Editor::GetCameraRay() const
@@ -1141,6 +1371,7 @@ namespace tyr
 	{
 		m_GameInputCaptured = captured;
 		m_InputManager->SetGameInputEnabled(captured);
+		m_InputManager->SetUIInputBlocked(captured);
 		m_InputManager->SetMouseCaptured(captured);
 	}
 

@@ -1,5 +1,6 @@
 #include "Interaction.h"
 #include "Doors.h"
+#include "Power.h"
 #include "ECS/Components.h"
 #include "World/World.h"
 #include "World/WorldManager.h"
@@ -18,7 +19,8 @@ namespace tyr
 		bool IsUsable(const World& world, Entity entity)
 		{
 			return world.entities.HasComponent<DoorComponent>(entity) || world.entities.HasComponent<DoorPanelComponent>(entity)
-				|| world.entities.HasComponent<PickupComponent>(entity);
+				|| world.entities.HasComponent<PickupComponent>(entity) || world.entities.HasComponent<LightSwitchComponent>(entity)
+				|| world.entities.HasComponent<GeneratorComponent>(entity);
 		}
 
 		bool HasItem(const World& world, Entity user, const ItemName& item)
@@ -84,7 +86,7 @@ namespace tyr
 		bool UsePanel(World& world, Entity target, Entity user, InteractionText& outMessage)
 		{
 			const DoorPanelComponent& panel = world.entities.GetComponent<DoorPanelComponent>(target);
-			if (!panel.powered)
+			if (!panel.powered && !Power::IsOn(world))
 			{
 				outMessage = "No power.";
 				return false;
@@ -105,6 +107,28 @@ namespace tyr
 				Doors::Unlock(world, door);
 			}
 			Doors::Toggle(world, door, GetPosition(world, user));
+			return true;
+		}
+
+		bool UseLightSwitch(World& world, Entity target, InteractionText& outMessage)
+		{
+			Power::ToggleSwitch(world, target);
+			if (!Power::IsOn(world))
+			{
+				outMessage = "Nothing happens. No power.";
+			}
+			return true;
+		}
+
+		bool UseGenerator(World& world, Entity target, InteractionText& outMessage)
+		{
+			if (world.entities.GetComponent<GeneratorComponent>(target).running)
+			{
+				outMessage = "It's already running.";
+				return false;
+			}
+			Power::StartGenerator(world, target);
+			outMessage = "The generator starts.";
 			return true;
 		}
 
@@ -165,6 +189,14 @@ namespace tyr
 			{
 				outText = "[E] Use";
 			}
+			else if (world.entities.HasComponent<LightSwitchComponent>(target))
+			{
+				outText = world.entities.GetComponent<LightSwitchComponent>(target).switchedOn ? "[E] Lights off" : "[E] Lights on";
+			}
+			else if (world.entities.HasComponent<GeneratorComponent>(target))
+			{
+				outText = world.entities.GetComponent<GeneratorComponent>(target).running ? "Generator running" : "[E] Start generator";
+			}
 			else if (world.entities.HasComponent<DoorComponent>(target))
 			{
 				outText = Doors::IsOpening(world, target) ? "[E] Close" : "[E] Open";
@@ -187,6 +219,14 @@ namespace tyr
 			{
 				return UsePanel(world, target, user, outMessage);
 			}
+			if (world.entities.HasComponent<LightSwitchComponent>(target))
+			{
+				return UseLightSwitch(world, target, outMessage);
+			}
+			if (world.entities.HasComponent<GeneratorComponent>(target))
+			{
+				return UseGenerator(world, target, outMessage);
+			}
 			if (world.entities.HasComponent<DoorComponent>(target))
 			{
 				return UseDoor(world, target, user, outMessage);
@@ -208,9 +248,9 @@ namespace tyr
 			return;
 		}
 
-		RaycastHit hit;
+		RayCastEntityHit hit;
 		const Vector3 eye = world.camera->GetPosition();
-		if (!worldManager.GetPhysicsManager().Raycast(world.physicsWorld, eye, world.camera->GetForward(), GameplayConstants::c_InteractDistance, hit))
+		if (!worldManager.GetPhysicsComponentsManager().Raycast(world.physicsWorld, eye, world.camera->GetForward(), GameplayConstants::c_InteractDistance, hit))
 		{
 			return;
 		}

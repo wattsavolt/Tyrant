@@ -31,6 +31,8 @@ namespace tyr
 		constexpr uint c_FoldersSection = MakeFourCC('F', 'O', 'L', 'D');
 		constexpr uint c_DependenciesSection = MakeFourCC('D', 'E', 'P', 'S');
 		constexpr uint c_ActorsSection = MakeFourCC('A', 'C', 'T', 'R');
+		// The level's navmesh, as NavmeshBuilder made it. Only there once one has been built.
+		constexpr uint c_NavmeshSection = MakeFourCC('N', 'A', 'V', 'M');
 		constexpr uint16 c_RootFolder = 0xFFFF;
 
 		// Writes into a reused buffer that grows to fit, or a fixed one that's marked full once
@@ -575,6 +577,10 @@ namespace tyr
 			case c_ActorsSection:
 				ReadActors(section, worldManager, worldHandle, s_Folders);
 				break;
+			case c_NavmeshSection:
+				world.navmeshData.Resize(sectionSize);
+				memcpy(world.navmeshData.Data(), sectionData, sectionSize);
+				break;
 			default:
 				break;
 			}
@@ -634,6 +640,13 @@ namespace tyr
 		section = BeginSection(writer, c_ActorsSection);
 		WriteActors(writer, world, s_Folders);
 		EndSection(writer, section);
+
+		if (!world.navmeshData.IsEmpty())
+		{
+			section = BeginSection(writer, c_NavmeshSection);
+			writer.WriteBytes(world.navmeshData.Data(), world.navmeshData.Size());
+			EndSection(writer, section);
+		}
 
 		// Written beside the level first, so a failed save never leaves it half written.
 		char absPath[TYR_MAX_PATH_TOTAL_SIZE];

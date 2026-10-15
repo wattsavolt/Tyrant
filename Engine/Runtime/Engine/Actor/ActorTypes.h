@@ -72,6 +72,9 @@ namespace tyr
 		Id64 typeId;
 		// Display name, for the future editor dropdown - not used to key the registry.
 		Name name;
+		// False for actors only the game spawns, such as the player's character, which the
+		// editor doesn't offer for placing.
+		bool placeable = true;
 		LocalArray<ActorEntityDesc, c_MaxActorTypeEntities> entities;
 
 		ActorEntityDesc& AddEntity(const char* localName, const char* parentLocalName = nullptr)

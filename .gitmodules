@@ -16,3 +16,6 @@
 [submodule "ThirdParty/Submodule/JoltPhysics"]
 	path = ThirdParty/Submodule/JoltPhysics
 	url = https://github.com/jrouwe/JoltPhysics.git
+[submodule "ThirdParty/Submodule/recastnavigation"]
+	path = ThirdParty/Submodule/recastnavigation
+	url = https://github.com/recastnavigation/recastnavigation.git

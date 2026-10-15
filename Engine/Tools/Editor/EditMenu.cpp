@@ -27,6 +27,10 @@ namespace tyr
 				requests.redo = true;
 			}
 			ImGui::Separator();
+			if (ImGui::MenuItem("Build Navmesh", nullptr, false, editing))
+			{
+				requests.buildNavmesh = true;
+			}
 			if (ImGui::MenuItem("Level Settings"))
 			{
 				m_ShowLevelSettings = true;

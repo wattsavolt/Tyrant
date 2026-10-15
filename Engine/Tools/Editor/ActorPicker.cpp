@@ -16,6 +16,10 @@ namespace tyr
 		m_Entries.Reserve(actorTypes.Size());
 		for (std::pair<const Id64&, const ActorTypeDesc&> actorType : actorTypes)
 		{
+			if (!actorType.second.placeable)
+			{
+				continue;
+			}
 			Entry& entry = m_Entries.ExpandOne();
 			entry.typeID = actorType.first;
 			EditorWidgets::MakeDisplayName(actorType.second.name.CStr(), entry.displayName, sizeof(entry.displayName));

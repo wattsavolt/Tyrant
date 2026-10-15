@@ -39,6 +39,7 @@ namespace tyr
 
 		// Sends the level editor's or the game's render settings to the renderer.
 		void ApplyRenderSettings(bool editing) { m_EditMenu.ApplyRenderSettings(editing); }
+		void CloseMaterialEditor() { m_MaterialEditor.Close(); }
 
 		const ViewSettings& GetViewSettings() const { return m_ViewSettings; }
 		const EditorIcons& GetIcons() const { return m_Icons; }

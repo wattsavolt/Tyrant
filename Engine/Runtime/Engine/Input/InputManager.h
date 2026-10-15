@@ -105,6 +105,11 @@ namespace tyr
 		void SetGameInputEnabled(bool enabled) { m_GameInputEnabled = enabled; }
 		bool IsGameInputEnabled() const { return m_GameInputEnabled; }
 
+		// While the game has the input, the UI only gets Escape, so keys meant for the game don't
+		// also drive menus and panels.
+		void SetUIInputBlocked(bool blocked) { m_UIInputBlocked = blocked; }
+		bool IsUIInputBlocked() const { return m_UIInputBlocked; }
+
 		// This tick's typed characters (WM_CHAR order), for text fields - cleared every Update().
 		const char* GetTypedChars() const { return m_TypedChars; }
 		uint GetTypedCharCount() const { return m_TypedCharCount; }
@@ -151,6 +156,7 @@ namespace tyr
 		uint m_TypedCharCount = 0;
 		GamepadState m_Gamepads[c_MaxGamepads]{};
 		bool m_GameInputEnabled = true;
+		bool m_UIInputBlocked = false;
 
 	private:
 		const GamepadState& GetGamepad(uint gamepadIndex) const

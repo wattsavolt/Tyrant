@@ -37,7 +37,7 @@
 // sampled/filtered, so a single storage-image binding covers every pass that touches them.
 #define TYR_BINDING_SHADOW_MASKS_RAW 20
 #define TYR_BINDING_SHADOW_MASKS 21
-// DeferredLightingCS's light-index -> shadow-slot lookup for point/spot lights, rebuilt and
+// DeferredLightingRTCS's light-index -> shadow-slot lookup for point/spot lights, rebuilt and
 // re-uploaded every tick. Point entries first, then spot - see
 // RenderConstants::c_ShadowLightSlotMapEntryCount.
 #define TYR_BINDING_SHADOW_LIGHT_SLOT_MAP 22
@@ -70,6 +70,10 @@
 #define TYR_BINDING_EXPOSURE 33
 // The tone mapped image a viewport shows, one storage image per buffered RenderFrame slot.
 #define TYR_BINDING_DISPLAY_OUTPUT 34
+// Bloom's chain of ever smaller images, TYR_BLOOM_LEVELS per buffered frame.
+#define TYR_BINDING_BLOOM 35
+// The first is half the viewport's size, and each after it half the one before.
+#define TYR_BLOOM_LEVELS 6
 
 // How many copies of the per-frame render targets TYR_BINDING_LIGHTING_OUTPUT holds, one
 // per buffered frame slot - kept in sync with the matching C++ constant.
@@ -77,7 +81,9 @@
 
 // Where spot-light entries start in TYR_BINDING_SHADOW_LIGHT_SLOT_MAP (point entries come
 // first) - kept in sync with RenderConstants::c_MaxPointLights.
-#define TYR_MAX_POINT_LIGHTS 16
+#define TYR_MAX_POINT_LIGHTS 256
+// The most spot lights one scene can have. Kept in sync with RenderConstants::c_MaxSpotLights.
+#define TYR_MAX_SPOT_LIGHTS 256
 // Where point-light entries start in TYR_BINDING_LIGHT_INDICES - kept in sync with
 // RenderConstants::c_MaxDirLights.
 #define TYR_MAX_DIR_LIGHTS 2
@@ -156,9 +162,12 @@ namespace tyr
 	#ifdef TYR_VULKAN
 		#define TYR_VK_BINDING(slot, space) [[vk::binding(slot, space)]]
 		#define TYR_VK_PUSH_CONSTANT [[vk::push_constant]]
+		// Lets a storage image be read as well as written.
+		#define TYR_VK_IMAGE_FORMAT(format) [[vk::image_format(format)]]
 	#else
 		#define TYR_VK_BINDING(slot, space)
 		#define TYR_VK_PUSH_CONSTANT
+		#define TYR_VK_IMAGE_FORMAT(format)
 	#endif
 #endif
 
@@ -248,7 +257,8 @@ namespace tyr
 		TYR_SHADER_FLOAT3 attenuation;
 		float intensity;
 		TYR_SHADER_FLOAT3 colour;
-		float padding;
+		// 1 when it casts shadows, otherwise 0.
+		float castsShadow;
 	};
 
 	TYR_SHADER_STRUCT(SpotLight)
@@ -260,7 +270,8 @@ namespace tyr
 		TYR_SHADER_FLOAT3 attenuation;
 		float intensity;
 		TYR_SHADER_FLOAT3 colour;
-		float padding;
+		// 1 when it casts shadows, otherwise 0.
+		float castsShadow;
 	};
 
 	// A box that projects a material onto whatever is inside it, along its -Y axis.
@@ -317,6 +328,9 @@ namespace tyr
 		TYR_SHADER_FLOAT2 layerUVScale;
 		float layerCoverage;
 		float layerSharpness;
+		// Colour times intensity.
+		TYR_SHADER_FLOAT3 emissive;
+		float _emissivePad;
 	};
 
 	TYR_SHADER_STRUCT(Vertex)
@@ -423,6 +437,11 @@ namespace tyr
 		uint prevSkinnedVertexOffset;
 		// Skinned instances only: the posed mesh's local bounds, used in place of the mesh's.
 		TYR_SHADER_FLOAT4 skinnedSphere;
+		// Scales its materials' emissive, such as 0 for a lamp that's switched off.
+		float emissiveScale;
+		float _pad0;
+		float _pad1;
+		float _pad2;
 	};
 
 	// One skinned mesh instance's skinning work for SkinningCS.hlsl.
@@ -485,6 +504,29 @@ namespace tyr
 		float peakBrightness;
 		// Scales the output into the units the display pass expects.
 		float outputScale;
+		// The first bloom level, and how much of the image it makes up.
+		uint bloomIndex;
+		float bloomIntensity;
+		// Fading to black, and a coloured flash strongest at the edges.
+		float fade;
+		float flash;
+		float flashR;
+		float flashG;
+		float flashB;
+	};
+
+	TYR_SHADER_STRUCT(BloomPushConstants)
+	{
+		// The texture read, and the bloom level written.
+		uint sourceIndex;
+		uint level;
+		uint renderFrameIndex;
+		// 1 to weigh down very bright pixels, so single pixels don't flicker as big blobs.
+		uint karisAverage;
+		uint sourceWidth;
+		uint sourceHeight;
+		uint width;
+		uint height;
 	};
 
 #ifdef __cplusplus

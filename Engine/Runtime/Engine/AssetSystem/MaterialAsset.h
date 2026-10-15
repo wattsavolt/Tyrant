@@ -10,8 +10,9 @@ namespace tyr
 	struct MaterialAssetFile
 	{
 		// Written first. Files from before it start with their texture count, which is never this.
-		static constexpr uint c_FileVersion = 0x544D4102;
-		// Before the layer parameters.
+		static constexpr uint c_FileVersion = 0x544D4103;
+		// Before the emissive parameters, and before the layer parameters.
+		static constexpr uint c_FileVersionNoEmissive = 0x544D4102;
 		static constexpr uint c_FileVersionNoLayer = 0x544D4101;
 
 		LocalArray<AssetID, MaterialConstants::c_MaxTextures> textures;

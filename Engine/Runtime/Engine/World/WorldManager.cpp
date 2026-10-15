@@ -2,13 +2,17 @@
 #include "BuildConfig.h"
 #include "Camera.h"
 #include "RendererModule.h"
+#include "AudioModule.h"
+#include "AudioAPI.h"
 #include "Rendering/RendererAPI.h"
 #include "RenderInstance/RenderInstanceDescs.h"
 #include "Window/WindowModule.h"
 #include "AssetSystem/AssetModule.h"
 #include "AssetSystem/AssetManager.h"
 #include "ECS/Components.h"
+#include "Gameplay/Noise.h"
 #include "Gameplay/Doors.h"
+#include "Gameplay/Power.h"
 #include "AssetSystem/AssetRegistry.h"
 #include "AssetSystem/AssetUtil.h"
 #include "AssetSystem/AssetConstants.h"
@@ -71,19 +75,34 @@ namespace tyr
 			return desc;
 		}
 
-		PointLightDesc CreateLightDesc(const PointLightComponent& light, const Transform& transform)
+		// A light fixture's brightness, 0 for a flashlight that's off, or 1 for anything else.
+		float GetLightBrightness(const EntitySystem& entities, Entity entity)
+		{
+			if (entities.HasComponent<FlashlightComponent>(entity))
+			{
+				return entities.GetComponent<FlashlightComponent>(entity).on ? 1.0f : 0.0f;
+			}
+			if (!entities.HasComponent<LightFixtureComponent>(entity))
+			{
+				return 1.0f;
+			}
+			const float brightness = entities.GetComponent<LightFixtureComponent>(entity).brightness;
+			return brightness < 0.0f ? 1.0f : brightness;
+		}
+
+		PointLightDesc CreateLightDesc(const PointLightComponent& light, const Transform& transform, float brightness)
 		{
 			PointLightDesc desc{};
 			desc.info.position = transform.position;
 			desc.info.attenuation = light.attenuation;
 			desc.info.colour = light.colour;
-			desc.info.intensity = light.intensity;
+			desc.info.intensity = light.intensity * brightness;
 			desc.info.range = light.range;
 			desc.info.castsShadow = light.castsShadow;
 			return desc;
 		}
 
-		SpotLightDesc CreateLightDesc(const SpotLightComponent& light, const Transform& transform)
+		SpotLightDesc CreateLightDesc(const SpotLightComponent& light, const Transform& transform, float brightness)
 		{
 			// Shines along the transform's Z axis, which is the rotation's third row like Matrix4::SetTRS.
 			Matrix3 rotation;
@@ -94,7 +113,7 @@ namespace tyr
 			desc.info.direction = Vector3::SafeNormalize(Vector3(rotation[2][0], rotation[2][1], rotation[2][2]));
 			desc.info.colour = light.colour;
 			desc.info.attenuation = light.attenuation;
-			desc.info.intensity = light.intensity;
+			desc.info.intensity = light.intensity * brightness;
 			desc.info.range = light.range;
 			desc.info.cone = light.coneFalloff;
 			desc.info.castsShadow = light.castsShadow;
@@ -129,11 +148,17 @@ namespace tyr
 		}
 	}
 
+	static_assert(PhysicsConstants::c_MaxPhysicsWorlds >= RenderConstants::c_MaxScenes, "Every world can have a physics world.");
+
 	WorldManager::WorldManager()
 	{
 		RendererModule* rendererModule;
 		TYR_GET_MODULE(RendererModule, rendererModule);
 		m_RendererAPI = rendererModule->GetRendererAPI();
+
+		AudioModule* audioModule;
+		TYR_GET_MODULE(AudioModule, audioModule);
+		m_AudioAPI = audioModule->GetAudioAPI();
 
 		TYR_GET_MODULE(WindowModule, m_WindowModule);
 
@@ -162,6 +187,10 @@ namespace tyr
 
 	void WorldManager::UpdateWorld(Handle worldHandle, World& world, float deltaTime)
 	{
+		// Before lights and meshes are made below, so a fixture that's off never shows lit.
+		UpdateLightFixtures(world, deltaTime);
+		m_NavmeshComponentsManager.Sync(world);
+
 		// Creates renderer-side mesh instances and lights for any components added since last time.
 		if (world.syncedEntitiesVersion != world.entities.GetVersion())
 		{
@@ -196,7 +225,8 @@ namespace tyr
 			{
 				if (!light.lightHandle)
 				{
-					light.lightHandle = m_RendererAPI->CreatePointLight(world.sceneHandle, CreateLightDesc(light, GetWorldTransform(world.entities, entity)));
+					light.lightHandle = m_RendererAPI->CreatePointLight(world.sceneHandle,
+						CreateLightDesc(light, GetWorldTransform(world.entities, entity), GetLightBrightness(world.entities, entity)));
 				}
 			});
 
@@ -204,7 +234,8 @@ namespace tyr
 			{
 				if (!light.lightHandle)
 				{
-					light.lightHandle = m_RendererAPI->CreateSpotLight(world.sceneHandle, CreateLightDesc(light, GetWorldTransform(world.entities, entity)));
+					light.lightHandle = m_RendererAPI->CreateSpotLight(world.sceneHandle,
+						CreateLightDesc(light, GetWorldTransform(world.entities, entity), GetLightBrightness(world.entities, entity)));
 				}
 			});
 
@@ -222,11 +253,12 @@ namespace tyr
 		if (world.simulate && !world.paused)
 		{
 			UpdateDoors(world, deltaTime);
+			Noise::Update(world, deltaTime);
 		}
 
 		if (world.physicsWorld && !world.paused)
 		{
-			m_PhysicsManager.Update(world.physicsWorld, world, *m_AssetManager, deltaTime);
+			m_PhysicsComponentsManager.Update(world.physicsWorld, world, *m_AssetManager, deltaTime);
 			ApplyPhysicsTransforms(world);
 		}
 
@@ -239,6 +271,17 @@ namespace tyr
 		if (world.cameraEntity != c_InvalidEntity && world.entities.HasComponent<ComponentTransform>(world.cameraEntity))
 		{
 			world.camera->SetPosition(world.entities.GetComponent<ComponentTransform>(world.cameraEntity).world.position + world.cameraOffset);
+		}
+		UpdateFlashlights(world, deltaTime);
+
+		// Only a world being played is heard. One open in the editor stays silent.
+		if (world.simulate)
+		{
+			AudioListener listener;
+			listener.position = world.camera->GetPosition();
+			listener.forward = world.camera->GetForward();
+			listener.up = world.camera->GetUp();
+			m_AudioAPI->SetListener(listener);
 		}
 
 		// The other way a resize can be detected - externally, by the OS/windowing system -
@@ -255,7 +298,8 @@ namespace tyr
 		// world's data up once the buffered slot it was last written to gets reused.
 		m_RendererAPI->SetActiveScene(world.sceneHandle, world.visible);
 
-		m_RendererAPI->SetSceneAmbient(world.sceneHandle, world.settings.ambient);
+		m_RendererAPI->SetSceneAmbient(world.sceneHandle, world.settings.ambient, world.settings.skyAmbient);
+		m_RendererAPI->SetSceneScreenEffects(world.sceneHandle, world.screenEffects);
 		UpdateSkyAndExposure(world);
 
 		SceneView view;
@@ -289,7 +333,7 @@ namespace tyr
 		world.windowHandle = config.osWindowHandle;
 		if (world.simulate)
 		{
-			world.physicsWorld = m_PhysicsManager.CreatePhysicsWorld();
+			world.physicsWorld = m_PhysicsComponentsManager.CreatePhysicsWorld();
 		}
 
 		world.sceneHandle = m_RendererAPI->AddScene(world.name.CStr());
@@ -399,6 +443,7 @@ namespace tyr
 				desc.info.transform = Matrix4::CreateTRS(transform.position, transform.rotation, transform.scale);
 				desc.info.mesh = assets.mesh;
 				desc.info.materials = assets.materials;
+				desc.info.emissiveScale = world.entities.GetComponent<MeshComponent>(entity).emissiveScale * GetLightBrightness(world.entities, entity);
 
 				MeshComponent& comp = world.entities.GetComponent<MeshComponent>(entity);
 				comp.meshInstance = m_RendererAPI->CreateMeshInstance(world.sceneHandle, desc);
@@ -442,7 +487,7 @@ namespace tyr
 			ColliderComponent& collider = world.entities.GetComponent<ColliderComponent>(entity);
 			if (world.physicsWorld)
 			{
-				m_PhysicsManager.RemoveBody(world.physicsWorld, collider);
+				m_PhysicsComponentsManager.RemoveBody(world.physicsWorld, collider);
 			}
 			// The collision mesh stays held until the new shape is known not to need it.
 			const AssetID collisionMesh = collider.collisionMesh;
@@ -458,7 +503,7 @@ namespace tyr
 			world.entities.GetComponent<RigidBodyComponent>(entity) = *static_cast<const RigidBodyComponent*>(data);
 			if (world.physicsWorld && world.entities.HasComponent<ColliderComponent>(entity))
 			{
-				m_PhysicsManager.RemoveBody(world.physicsWorld, world.entities.GetComponent<ColliderComponent>(entity));
+				m_PhysicsComponentsManager.RemoveBody(world.physicsWorld, world.entities.GetComponent<ColliderComponent>(entity));
 			}
 			return true;
 		}
@@ -479,7 +524,8 @@ namespace tyr
 			const PointLightComponent& light = ReplaceLight<PointLightComponent>(world.entities, entity, data);
 			if (light.lightHandle)
 			{
-				m_RendererAPI->UpdatePointLight(light.lightHandle, CreateLightDesc(light, GetWorldTransform(world.entities, entity)));
+				m_RendererAPI->UpdatePointLight(light.lightHandle,
+					CreateLightDesc(light, GetWorldTransform(world.entities, entity), GetLightBrightness(world.entities, entity)));
 			}
 			return true;
 		}
@@ -489,7 +535,8 @@ namespace tyr
 			const SpotLightComponent& light = ReplaceLight<SpotLightComponent>(world.entities, entity, data);
 			if (light.lightHandle)
 			{
-				m_RendererAPI->UpdateSpotLight(light.lightHandle, CreateLightDesc(light, GetWorldTransform(world.entities, entity)));
+				m_RendererAPI->UpdateSpotLight(light.lightHandle,
+					CreateLightDesc(light, GetWorldTransform(world.entities, entity), GetLightBrightness(world.entities, entity)));
 			}
 			return true;
 		}
@@ -500,7 +547,7 @@ namespace tyr
 			CharacterComponent& character = world.entities.GetComponent<CharacterComponent>(entity);
 			if (world.physicsWorld)
 			{
-				m_PhysicsManager.RemoveCharacter(world.physicsWorld, character);
+				m_PhysicsComponentsManager.RemoveCharacter(world.physicsWorld, character);
 			}
 			const CharacterComponent& edited = *static_cast<const CharacterComponent*>(data);
 			character.radius = edited.radius;
@@ -576,6 +623,11 @@ namespace tyr
 			materialsChanged = !(current.materials[i] == meshComponent.materials[i]);
 		}
 		const bool meshChanged = !(current.mesh == meshComponent.mesh);
+		if (current.emissiveScale != meshComponent.emissiveScale)
+		{
+			current.emissiveScale = meshComponent.emissiveScale;
+			UpdateEntityTransform(world, entity);
+		}
 		if (!meshChanged && !materialsChanged)
 		{
 			return true;
@@ -640,6 +692,7 @@ namespace tyr
 				{
 					desc.info.materials.Add(m_AssetManager->GetMaterial(materialID));
 				}
+				desc.info.emissiveScale = meshComponent.emissiveScale * GetLightBrightness(world.entities, entity);
 				m_RendererAPI->UpdateMeshInstance(meshComponent.meshInstance, desc);
 			}
 		}
@@ -665,7 +718,7 @@ namespace tyr
 			const PointLightComponent& light = world.entities.GetComponent<PointLightComponent>(entity);
 			if (light.lightHandle)
 			{
-				m_RendererAPI->UpdatePointLight(light.lightHandle, CreateLightDesc(light, transform));
+				m_RendererAPI->UpdatePointLight(light.lightHandle, CreateLightDesc(light, transform, GetLightBrightness(world.entities, entity)));
 			}
 		}
 
@@ -674,7 +727,7 @@ namespace tyr
 			const SpotLightComponent& light = world.entities.GetComponent<SpotLightComponent>(entity);
 			if (light.lightHandle)
 			{
-				m_RendererAPI->UpdateSpotLight(light.lightHandle, CreateLightDesc(light, transform));
+				m_RendererAPI->UpdateSpotLight(light.lightHandle, CreateLightDesc(light, transform, GetLightBrightness(world.entities, entity)));
 			}
 		}
 
@@ -923,7 +976,7 @@ namespace tyr
 		}
 		if (world.physicsWorld && world.entities.HasComponent<CharacterComponent>(entity))
 		{
-			m_PhysicsManager.RemoveCharacter(world.physicsWorld, world.entities.GetComponent<CharacterComponent>(entity));
+			m_PhysicsComponentsManager.RemoveCharacter(world.physicsWorld, world.entities.GetComponent<CharacterComponent>(entity));
 		}
 		if (world.cameraEntity == entity)
 		{
@@ -982,7 +1035,7 @@ namespace tyr
 				collider.halfExtents = Vector3::c_Zero;
 				if (world.physicsWorld)
 				{
-					m_PhysicsManager.RemoveBody(world.physicsWorld, collider);
+					m_PhysicsComponentsManager.RemoveBody(world.physicsWorld, collider);
 				}
 			}
 			// The new mesh's collision mesh is taken once it loads.
@@ -1030,13 +1083,73 @@ namespace tyr
 	{
 		if (world.physicsWorld)
 		{
-			m_PhysicsManager.RemoveBody(world.physicsWorld, collider);
+			m_PhysicsComponentsManager.RemoveBody(world.physicsWorld, collider);
 		}
 		if (AssetUtil::IsValidAssetID(collider.collisionMesh))
 		{
 			m_AssetManager->DeleteCollisionMesh(collider.collisionMesh);
 			collider.collisionMesh = AssetConstants::c_InvalidAssetID;
 		}
+	}
+
+	void WorldManager::UpdateLightFixtures(World& world, float deltaTime)
+	{
+		Power::Update(world);
+		const bool powered = Power::IsOn(world);
+		const bool animate = world.simulate && !world.paused;
+		world.entities.ForEach<LightFixtureComponent>([this, &world, powered, animate, deltaTime](Entity entity, LightFixtureComponent& fixture)
+		{
+			// Fixtures flicker out of step with each other.
+			if (fixture.flickerSeed == 0)
+			{
+				fixture.flickerSeed = entity * 2654435761u + 1u;
+			}
+			const float brightness = Power::UpdateFixture(fixture, powered, animate, deltaTime);
+			if (brightness == fixture.brightness)
+			{
+				return;
+			}
+			fixture.brightness = brightness;
+			UpdateEntityTransform(world, entity);
+		});
+
+		// A flipped switch turns half a turn about the wall's normal, which shows its rocker the other way up.
+		if (!world.simulate)
+		{
+			return;
+		}
+		world.entities.ForEach<LightSwitchComponent>([this, &world](Entity entity, LightSwitchComponent& lightSwitch)
+		{
+			if (lightSwitch.shownOn == lightSwitch.switchedOn || !world.entities.HasComponent<ComponentTransform>(entity))
+			{
+				return;
+			}
+			lightSwitch.shownOn = lightSwitch.switchedOn;
+			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+			MoveEntity(world, entity, transform.position, transform.rotation * Quaternion(Vector3::c_Forward, Math::c_Pi));
+		});
+	}
+
+	void WorldManager::UpdateFlashlights(World& world, float deltaTime)
+	{
+		const Vector3 forward = world.camera->GetForward();
+		const Vector3 up = world.camera->GetUp();
+		const Vector3 right = up.Cross(forward);
+		Quaternion aim;
+		aim.FromAxes(right, up, forward);
+		const Vector3 eyes = world.camera->GetPosition();
+
+		world.entities.ForEach<FlashlightComponent>([this, &world, &aim, &eyes, &right, &up, &forward, deltaTime](Entity entity, FlashlightComponent& flashlight)
+		{
+			if (!flashlight.held || !world.entities.HasComponent<ComponentTransform>(entity))
+			{
+				return;
+			}
+			const Quaternion current = world.entities.GetComponent<ComponentTransform>(entity).world.rotation;
+			const float blend = 1.0f - Math::Exp(-flashlight.followSpeed * deltaTime);
+			const Vector3 position = eyes + right * flashlight.offset.x + up * flashlight.offset.y + forward * flashlight.offset.z;
+			MoveEntity(world, entity, position, Quaternion::Slerp(blend, current, aim));
+		});
 	}
 
 	void WorldManager::UpdateDoors(World& world, float deltaTime)
@@ -1064,7 +1177,7 @@ namespace tyr
 
 	void WorldManager::ApplyPhysicsTransforms(World& world)
 	{
-		const float alpha = m_PhysicsManager.GetInterpolation(world.physicsWorld);
+		const float alpha = m_PhysicsComponentsManager.GetInterpolation(world.physicsWorld);
 		world.entities.ForEach<RigidBodyComponent>([this, &world, alpha](Entity entity, RigidBodyComponent& rigidBody)
 		{
 			if (static_cast<MotionType>(rigidBody.motionType) != MotionType::Dynamic || !world.entities.HasComponent<ColliderComponent>(entity)
@@ -1191,6 +1304,8 @@ namespace tyr
 		}
 		world.folders.Clear();
 		world.settings = {};
+		m_NavmeshComponentsManager.Release(world);
+		world.navmeshData.Clear();
 		++world.changeCount;
 	}
 
@@ -1226,6 +1341,7 @@ namespace tyr
 
 	void WorldManager::ShutdownWorld(World& world)
 	{
+		m_NavmeshComponentsManager.Release(world);
 		world.entities.ForEach<MeshComponent>([this](Entity /*entity*/, MeshComponent& meshComponent)
 		{
 			RemoveMeshInstance(meshComponent);
@@ -1262,7 +1378,7 @@ namespace tyr
 
 		if (world.physicsWorld)
 		{
-			m_PhysicsManager.DestroyPhysicsWorld(world.physicsWorld);
+			m_PhysicsComponentsManager.DestroyPhysicsWorld(world.physicsWorld);
 			world.physicsWorld = {};
 		}
 
@@ -1313,6 +1429,10 @@ namespace tyr
 		exposure.brightenSpeed = settings.exposureBrightenSpeed;
 		exposure.darkenSpeed = settings.exposureDarkenSpeed;
 		m_RendererAPI->SetSceneExposure(world.sceneHandle, exposure);
+
+		BloomSettings bloom;
+		bloom.intensity = settings.bloomIntensity;
+		m_RendererAPI->SetSceneBloom(world.sceneHandle, bloom);
 	}
 
 	void WorldManager::ReleaseLight(const World& world, DirLightComponent& light)

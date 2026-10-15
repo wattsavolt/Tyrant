@@ -15,6 +15,12 @@ namespace tyr
 		bool showActorNames = false;
 		// Drawn while playing too, where they follow the physics.
 		bool showColliders = false;
+		// Noises enemies can hear, as rings out to how far they carry.
+		bool showNoise = false;
+		// The navmesh's polygons around the camera.
+		bool showNavmesh = false;
+		// The frame rate in the viewport's corner, while editing and playing.
+		bool showStats = false;
 	};
 
 	// Draws the View menu, which opens and closes the editor's tabs and viewport aids.

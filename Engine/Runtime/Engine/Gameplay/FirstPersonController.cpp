@@ -4,6 +4,8 @@
 #include "World/Camera.h"
 #include "Input/InputManager.h"
 #include "Math/Math.h"
+#include "Gameplay/Noise.h"
+#include <algorithm>
 
 namespace tyr
 {
@@ -12,7 +14,8 @@ namespace tyr
 		// Win32 virtual-key codes, which InputManager's key codes are on PC.
 		constexpr KeyCode c_KeyShift = 0x10;
 		constexpr KeyCode c_KeyControl = 0x11;
-		constexpr KeyCode c_KeySpace = 0x20;
+		// Further than this in a frame is a teleport, not walking.
+		constexpr float c_MaxStepPerFrame = 1.0f;
 
 		Vector3 MoveTowards(const Vector3& current, const Vector3& target, float maxDistance)
 		{
@@ -39,6 +42,8 @@ namespace tyr
 		m_Pitch = 0.0f;
 		m_Velocity = Vector3::c_Zero;
 		m_CrouchToggled = false;
+		m_HasLastPosition = false;
+		m_StrideProgress = 0.0f;
 		if (world.entities.HasComponent<CharacterComponent>(character))
 		{
 			m_EyeHeight = GetEyeHeight(world.entities.GetComponent<CharacterComponent>(character), settings.eyeDepth);
@@ -96,10 +101,6 @@ namespace tyr
 			{
 				m_CrouchToggled = !m_CrouchToggled;
 			}
-			if ((input.IsKeyPressed(c_KeySpace) || input.IsGamepadButtonPressed(GamepadButton::A)) && character.grounded && !character.crouched)
-			{
-				character.jumpSpeed = settings.jumpSpeed;
-			}
 		}
 		const float inputLength = Math::Sqrt(right * right + forward * forward);
 		if (inputLength > 1.0f)
@@ -120,6 +121,30 @@ namespace tyr
 		const float acceleration = character.grounded ? settings.acceleration : settings.airAcceleration;
 		m_Velocity = MoveTowards(m_Velocity, targetVelocity, acceleration * deltaTime);
 		character.moveVelocity = m_Velocity;
+
+		// A footstep every stride walked on the ground.
+		if (world.entities.HasComponent<ComponentTransform>(m_Character))
+		{
+			const Vector3 position = world.entities.GetComponent<ComponentTransform>(m_Character).world.position;
+			const Vector3 moved = position - m_LastPosition;
+			const float distance = Math::Sqrt(moved.x * moved.x + moved.z * moved.z);
+			if (m_HasLastPosition && character.grounded && distance < c_MaxStepPerFrame)
+			{
+				m_StrideProgress += distance;
+			}
+			m_LastPosition = position;
+			m_HasLastPosition = true;
+
+			const bool sprinting = !character.crouched && sprint;
+			const float stride = character.crouched ? settings.crouchStride : (sprinting ? settings.sprintStride : settings.walkStride);
+			if (m_StrideProgress >= stride)
+			{
+				m_StrideProgress = std::min(m_StrideProgress - stride, stride);
+				m_LastStepRadius = character.crouched ? settings.crouchNoise : (sprinting ? settings.sprintNoise : settings.walkNoise);
+				++m_StepCount;
+				Noise::Emit(world, position, m_LastStepRadius, m_Character);
+			}
+		}
 
 		// The world puts the camera at the character's eyes once physics has moved it this frame.
 		m_EyeHeight = MoveTowards(m_EyeHeight, GetEyeHeight(character, settings.eyeDepth), settings.crouchCameraSpeed * deltaTime);

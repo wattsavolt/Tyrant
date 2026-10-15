@@ -89,10 +89,12 @@ namespace tyr
 
 	// The character the game spawns for the player at a PlayerStartActor.
 	TYR_ACTOR_START(PlayerCharacterActor)
+		actorTypeDesc.placeable = false;
 		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
 		root.AddComponent(CreateIdentityTransform());
 		root.AddComponent(CharacterComponent{});
 		root.AddComponent(InventoryComponent{});
+		root.AddComponent(HealthComponent{});
 	TYR_ACTOR_END()
 
 	// A door that swings on its hinge, which is the actor's position. Its kinematic box, sized
@@ -136,6 +138,46 @@ namespace tyr
 		root.AddComponent(DoorPanelComponent{});
 	TYR_ACTOR_END()
 
+	// A ceiling light or lamp. Its light shines from the actor's position along its Z axis, over
+	// the half of the world in front of it, so its mesh sits behind its origin. The mesh's emissive
+	// materials glow while it's lit.
+	TYR_ACTOR_START(LightFixtureActor)
+		SpotLightComponent light{};
+		light.colour = Vector3(1.0f, 0.95f, 0.88f);
+		light.intensity = 8.0f;
+		light.range = 8.0f;
+		light.coneFalloff = 1.0f;
+		light.attenuation = Vector3(1.0f, 0.0f, 1.0f);
+		light.castsShadow = true;
+
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(MeshComponent{});
+		root.AddComponent(BoxComponent{});
+		root.AddComponent(light);
+		root.AddComponent(LightFixtureComponent{});
+	TYR_ACTOR_END()
+
+	// A wall switch for the light fixtures on its circuit.
+	TYR_ACTOR_START(LightSwitchActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(MeshComponent{});
+		root.AddComponent(BoxComponent{});
+		root.AddComponent(ColliderComponent{});
+		root.AddComponent(LightSwitchComponent{});
+	TYR_ACTOR_END()
+
+	// Gives the world power for its lights and door panels once the player starts it.
+	TYR_ACTOR_START(GeneratorActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(MeshComponent{});
+		root.AddComponent(BoxComponent{});
+		root.AddComponent(ColliderComponent{});
+		root.AddComponent(GeneratorComponent{});
+	TYR_ACTOR_END()
+
 	// An item lying in the world, such as a key card, that the player can take.
 	TYR_ACTOR_START(PickupActor)
 		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
@@ -160,6 +202,30 @@ namespace tyr
 	TYR_ACTOR_END()
 
 	// Shines along its Z axis, so it's turned with the rotate gizmo.
+	// A box the navmesh is built in. Its bounds don't take clicks in the viewport, since they're
+	// usually big enough to hold the camera, so it's picked from the hierarchy.
+	TYR_ACTOR_START(NavmeshBoundsActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(NavmeshBoundsComponent{});
+	TYR_ACTOR_END()
+
+	// A torch, with a narrow beam and a dim spill around it. The game gives the player one.
+	TYR_ACTOR_START(FlashlightActor)
+		SpotLightComponent light{};
+		light.colour = Vector3(1.0f, 0.93f, 0.82f);
+		light.intensity = 250.0f;
+		light.range = 30.0f;
+		light.coneFalloff = 16.0f;
+		light.attenuation = Vector3(1.0f, 0.0f, 1.0f);
+		light.castsShadow = true;
+
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(light);
+		root.AddComponent(FlashlightComponent{});
+	TYR_ACTOR_END()
+
 	TYR_ACTOR_START(SpotLightActor)
 		SpotLightComponent light{};
 		light.colour = Vector3::c_One;

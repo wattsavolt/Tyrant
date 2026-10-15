@@ -11,6 +11,8 @@
 #include "String/Path.h"
 #include "Level/LevelSettings.h"
 #include "Actor/ActorTypes.h"
+#include "Gameplay/GameplayTypes.h"
+#include "Rendering/PostProcessSettings.h"
 
 namespace tyr
 {
@@ -73,6 +75,8 @@ namespace tyr
 		bool simulate = true;
 		// Holds physics and animation still, such as while the editor has the game paused.
 		bool paused = false;
+		// Whether its lights and door panels have power, worked out each update.
+		bool powered = true;
 		EntitySystem entities;
 		// The entities version the renderer-side mesh instances and lights were last synced at.
 		uint syncedEntitiesVersion = 0;
@@ -90,6 +94,13 @@ namespace tyr
 		AssetID loadedSkyTexture;
 		// Goes up with every edit to the level, so the editor can tell when there are unsaved changes.
 		uint changeCount = 0;
+		// The level's navmesh as it's saved, and the one loaded from it. The data is empty without one.
+		Array<uint8> navmeshData;
+		Handle navmesh;
+		// Recent noises, for anything listening.
+		LocalArray<NoiseEvent, c_MaxNoiseEvents> noises;
+		// Set by gameplay, such as fading out or flashing red when the player is hurt.
+		ScreenEffects screenEffects;
 
 		// Puts a recycled pool slot back to a blank state before it's filled in again for a
 		// new world. entities.Reset() drops every entity/archetype from whatever level was
@@ -117,6 +128,10 @@ namespace tyr
 			cameraEntity = c_InvalidEntity;
 			cameraOffset = Vector3::c_Zero;
 			actorInstances.Clear();
+			noises.Clear();
+			screenEffects = {};
+			navmeshData.Clear();
+			navmesh = {};
 		}
 	};
 }

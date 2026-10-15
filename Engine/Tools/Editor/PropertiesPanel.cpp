@@ -34,6 +34,8 @@ namespace tyr
 		const char* const c_DoorLockNames[] = { "Unlocked", "Needs Key", "Locked From Back", "Locked" };
 		const PropertiesReflector::EnumNames c_DoorMotions = { c_DoorMotionNames, 2 };
 		const PropertiesReflector::EnumNames c_DoorLocks = { c_DoorLockNames, 4 };
+		const char* const c_LightFixtureStateNames[] = { "Working", "Broken", "Flickering" };
+		const PropertiesReflector::EnumNames c_LightFixtureStates = { c_LightFixtureStateNames, 3 };
 
 		// An invalid material makes the slot use the mesh's own. Trailing ones are dropped, so a
 		// mesh with no overrides has an empty list, the same as its actor type.
@@ -79,6 +81,8 @@ namespace tyr
 		m_Reflector.RegisterFieldReflector(GetTypeID<RigidBodyComponent>(), MakeFieldKey("motionType"), &PropertiesReflector::ReflectEnum, const_cast<PropertiesReflector::EnumNames*>(&c_MotionTypes));
 		m_Reflector.RegisterFieldReflector(GetTypeID<DoorComponent>(), MakeFieldKey("motion"), &PropertiesReflector::ReflectEnum, const_cast<PropertiesReflector::EnumNames*>(&c_DoorMotions));
 		m_Reflector.RegisterFieldReflector(GetTypeID<DoorComponent>(), MakeFieldKey("lock"), &PropertiesReflector::ReflectEnum, const_cast<PropertiesReflector::EnumNames*>(&c_DoorLocks));
+		m_Reflector.RegisterFieldReflector(GetTypeID<LightFixtureComponent>(), MakeFieldKey("state"), &PropertiesReflector::ReflectEnum,
+			const_cast<PropertiesReflector::EnumNames*>(&c_LightFixtureStates));
 		m_Reflector.RegisterFieldReflector(GetTypeID<AnimatorComponent>(), MakeFieldKey("clip"), &ReflectAsset, animationExtension);
 		m_Reflector.RegisterFieldReflector(GetTypeID<DecalComponent>(), MakeFieldKey("material"), &ReflectAsset, materialExtension);
 		m_Reflector.RegisterFieldReflector(GetTypeID<AnimatorComponent>(), MakeFieldKey("layerClip"), &ReflectAsset, animationExtension);

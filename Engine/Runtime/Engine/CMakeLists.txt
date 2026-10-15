@@ -80,6 +80,8 @@ target_link_libraries(TyrantEngine PUBLIC TyrantCore)
 
 target_link_libraries(TyrantEngine PUBLIC TyrantRenderer)
 
+target_link_libraries(TyrantEngine PUBLIC TyrantAudio)
+
 if (TYR_EDITOR_MODE)
 	# NVTT
 	target_link_libraries(TyrantEngine PRIVATE ${TYR_THIRD_PARTY_COMPILED_LIBS_DIR}/nvtt/lib/${TYR_ARCHITECTURE}/nvtt30205${CMAKE_IMPORT_LIBRARY_SUFFIX})
@@ -112,8 +114,11 @@ endif()
 # Nuklear - always-on runtime GUI (in-game HUD/menu), driven by GUIModule
 target_link_libraries(TyrantEngine PRIVATE nuklear)
 
-# Jolt - physics. Private, so only the engine's physics sources see its headers.
-target_link_libraries(TyrantEngine PRIVATE Jolt)
+# Physics, through TyrantPhysics, which keeps Jolt to itself.
+target_link_libraries(TyrantEngine PUBLIC TyrantPhysics)
+
+# Navmeshes, through TyrantNavmesh, which keeps Recast and Detour to itself.
+target_link_libraries(TyrantEngine PUBLIC TyrantNavmesh)
 
 if(LINUX)
 	## External lib: X11, LibUUID, LibICU

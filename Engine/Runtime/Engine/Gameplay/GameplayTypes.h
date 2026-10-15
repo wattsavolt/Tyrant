@@ -2,9 +2,24 @@
 
 #include "Core.h"
 #include "String/LocalString.h"
+#include "Math/Vector3.h"
+#include "ECS/EntitySystem.h"
 
 namespace tyr
 {
+	// A sound something made that enemies can hear, out to its radius.
+	struct NoiseEvent
+	{
+		Vector3 position;
+		// Metres it carries.
+		float radius = 0.0f;
+		// Seconds since it was made.
+		float age = 0.0f;
+		// What made it, or c_InvalidEntity.
+		Entity source = c_InvalidEntity;
+	};
+	constexpr uint c_MaxNoiseEvents = 64;
+
 	// How a door moves between closed and open. Stored as uint8 in DoorComponent.
 	enum class DoorMotion : uint8
 	{
@@ -26,9 +41,21 @@ namespace tyr
 		Locked
 	};
 
+	// How a light fixture works. Stored as uint8 in LightFixtureComponent.
+	enum class LightFixtureState : uint8
+	{
+		Working = 0,
+		// Never lights.
+		Broken,
+		// Lights, but keeps dropping out.
+		Flickering
+	};
+
 	// Names for keys and other items, such as "Red Keycard".
 	constexpr uint c_MaxItemName = 31;
 	using ItemName = LocalString<c_MaxItemName>;
+	// Names the light fixtures and switches that go together, such as "Lobby".
+	using CircuitName = LocalString<c_MaxItemName>;
 
 	struct GameplayConstants
 	{

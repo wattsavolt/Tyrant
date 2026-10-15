@@ -1,5 +1,5 @@
-#ifndef DEFERRED_LIGHTING_CS_HLSli
-#define DEFERRED_LIGHTING_CS_HLSli
+#ifndef DEFERRED_LIGHTING_RTCS_HLSli
+#define DEFERRED_LIGHTING_RTCS_HLSli
 
 #include "Common.hlsli"
 #include "LightUtility.hlsli"
@@ -32,6 +32,12 @@ TYR_VK_BINDING(TYR_BINDING_SPOT_LIGHT, 0) StructuredBuffer<SpotLight> spotLights
 // spot. Lights from other scenes stay in the buffers but aren't listed.
 TYR_VK_BINDING(TYR_BINDING_LIGHT_INDICES, 0) StructuredBuffer<uint> lightIndices : register(t1, space1);
 
+TYR_VK_BINDING(TYR_BINDING_MESH, 0) StructuredBuffer<Mesh> meshes : register(t1);
+TYR_VK_BINDING(TYR_BINDING_MESH_LOD, 0) StructuredBuffer<MeshLOD> meshLODs : register(t2);
+TYR_VK_BINDING(TYR_BINDING_MESHLET, 0) StructuredBuffer<Meshlet> meshlets : register(t3);
+TYR_VK_BINDING(TYR_BINDING_VERTEX, 0) StructuredBuffer<Vertex> vertices : register(t4);
+TYR_VK_BINDING(TYR_BINDING_INDEX, 0) StructuredBuffer<uint> indices : register(t5);
+TYR_VK_BINDING(TYR_BINDING_MESH_INSTANCE, 0) StructuredBuffer<MeshInstance> meshInstances : register(t6);
 TYR_VK_BINDING(TYR_BINDING_MATERIAL, 0) StructuredBuffer<Material> materials : register(t7);
 TYR_VK_BINDING(TYR_BINDING_TEXTURES, 0) Texture2D textures[] : register(t11);
 // The same bindless textures, for the ones that are cubemaps.
@@ -53,6 +59,7 @@ TYR_VK_BINDING(TYR_BINDING_SHADOW_MASKS, 0) RWTexture2DArray<float2> shadowMasks
 // distinct space, the same reason ShadowRTCS.hlsl's tlas does. The real Vulkan binding slot
 // comes entirely from [[vk::binding]].
 TYR_VK_BINDING(TYR_BINDING_SHADOW_LIGHT_SLOT_MAP, 0) StructuredBuffer<uint> shadowLightSlotMap : register(t0, space1);
+TYR_VK_BINDING(TYR_BINDING_TLAS, 0) RaytracingAccelerationStructure tlas[TYR_BUFFERED_FRAME_COUNT] : register(t4, space1);
 
 // Matches Renderer.cpp's LightingPushConstants byte-for-byte.
 struct PushConstants
@@ -66,12 +73,76 @@ struct PushConstants
 	uint decalCount;
 	// How wide a pixel is one unit from the camera.
 	float pixelSizePerDistance;
+	uint gbufferEmissiveIndex;
+	// 1 when point and spot lights cast shadows at this quality.
+	uint localShadows;
+	// Ambient added only where a surface can see the sky.
+	float skyAmbient;
 };
 TYR_VK_PUSH_CONSTANT PushConstants g_PushConstants;
+
+#include "ShadowRay.hlsli"
+
+static const uint c_ShadowSlotNone = 0xFFFFFFFFu;
+// How far shadow rays start off the surface.
+static const float c_ShadowBias = 0.02f;
+// Rays to a point or spot light stop this far short of it, so a fixture's own mesh around its
+// light never shadows it.
+static const float c_LightClearance = 0.05f;
+static const float c_ShadowTMin = 0.001f;
+// A light's soft shadow fades in over this many frames of holding its slot, as its history builds.
+static const float c_SoftShadowFadeFrames = 8.0f;
+// Whether a surface sees the sky is judged by one ray, up and tilted this much away from the
+// surface, so walls facing out see the sky and ceilings don't.
+static const float c_SkyRayTilt = 0.6f;
+static const float c_SkyRayDistance = 500.0f;
+
+// 1 if nothing blocks the way to the light, otherwise 0.
+float TraceShadow(float3 origin, float3 direction, float distance)
+{
+	RayDesc ray;
+	ray.Origin = origin;
+	ray.Direction = direction;
+	ray.TMin = c_ShadowTMin;
+	ray.TMax = max(distance, c_ShadowTMin);
+
+	RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+	query.TraceRayInline(tlas[g_PushConstants.renderFrameIndex], RAY_FLAG_NONE, 0xFF, ray);
+	while (query.Proceed())
+	{
+		if (BlocksLight(query.CandidateInstanceID(), query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics()))
+		{
+			query.CommitNonOpaqueTriangleHit();
+		}
+	}
+	return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0.0f : 1.0f;
+}
+
+// A point or spot light's shadow: its denoised soft shadow when it holds a slot, otherwise a hard
+// shadow ray. A light that has only just taken a slot blends from the ray to the soft shadow.
+// No ray is traced where the light adds nothing.
+float LocalLightShadow(uint slotEntry, float castsShadow, float3 lightPosition, float3 shadowOrigin, uint2 pixel, float3 effect)
+{
+	const bool hasSlot = slotEntry != c_ShadowSlotNone;
+	const uint slot = hasSlot ? (slotEntry & 0xFFFFu) : 0u;
+	const float softWeight = hasSlot ? saturate(float(slotEntry >> 24) / c_SoftShadowFadeFrames) : 0.0f;
+	const float soft = shadowMasks[g_PushConstants.renderFrameIndex][uint3(pixel, slot)].r;
+
+	float hard = 1.0f;
+	if (castsShadow * g_PushConstants.localShadows * max(effect.r, max(effect.g, effect.b)) > 0.0f && softWeight < 1.0f)
+	{
+		const float3 toLight = lightPosition - shadowOrigin;
+		const float lightDistance = length(toLight);
+		hard = TraceShadow(shadowOrigin, toLight / max(lightDistance, 1e-4f), lightDistance - c_LightClearance);
+	}
+	return lerp(hard, soft, softWeight);
+}
 
 static const uint c_TileSize = 8;
 static const uint c_TileThreadCount = c_TileSize * c_TileSize;
 static const uint c_DecalMaskWords = TYR_MAX_DECALS / 32;
+static const uint c_PointMaskWords = TYR_MAX_POINT_LIGHTS / 32;
+static const uint c_SpotMaskWords = TYR_MAX_SPOT_LIGHTS / 32;
 static const float c_FloatMax = 3.402823466e+38f;
 // Decals fade out on surfaces turning away from them, between these cosines of the angle.
 static const float c_DecalFadeStartCos = 0.5f;
@@ -83,6 +154,9 @@ groupshared uint gs_MaxDepth;
 groupshared float3 gs_TileCorners[8];
 // Bit i is set when visible decal i may touch the tile, so the bits keep the decals' order.
 groupshared uint gs_DecalMask[c_DecalMaskWords];
+// Bit i is set when the scene's point or spot light i may reach the tile.
+groupshared uint gs_PointMask[c_PointMaskWords];
+groupshared uint gs_SpotMask[c_SpotMaskWords];
 
 float2 PixelToNDC(float2 pixel)
 {
@@ -97,8 +171,25 @@ float3 NDCToWorld(float2 ndc, float deviceDepth)
 	return worldPosH.xyz / worldPosH.w;
 }
 
-// Marks the visible decals whose bounds reach the box of world space the tile's pixels cover.
-void CullDecals(uint3 groupId, uint groupIndex, float deviceDepth)
+// True when a sphere reaches the box.
+uint SphereTouchesBox(float3 centre, float radius, float3 boxMin, float3 boxMax)
+{
+	const float3 outside = max(boxMin - centre, 0.0f) + max(centre - boxMax, 0.0f);
+	return dot(outside, outside) <= radius * radius ? 1u : 0u;
+}
+
+// True when a spot light's range reaches the box and some of the box is in front of the light,
+// the only side it lights.
+uint SpotTouchesBox(float3 centre, float radius, float3 direction, float3 boxMin, float3 boxMax)
+{
+	const float3 furthestCorner = lerp(boxMin, boxMax, step(0.0f, direction));
+	const uint inFront = dot(furthestCorner - centre, direction) > 0.0f ? 1u : 0u;
+	return SphereTouchesBox(centre, radius, boxMin, boxMax) & inFront;
+}
+
+// Marks the visible decals and the lights whose bounds reach the box of world space the tile's
+// pixels cover. Lights turned down to nothing, such as broken or switched off ones, are skipped.
+void CullTile(uint3 groupId, uint groupIndex, float deviceDepth)
 {
 	if (groupIndex == 0)
 	{
@@ -108,6 +199,14 @@ void CullDecals(uint3 groupId, uint groupIndex, float deviceDepth)
 	if (groupIndex < c_DecalMaskWords)
 	{
 		gs_DecalMask[groupIndex] = 0;
+	}
+	if (groupIndex < c_PointMaskWords)
+	{
+		gs_PointMask[groupIndex] = 0;
+	}
+	if (groupIndex < c_SpotMaskWords)
+	{
+		gs_SpotMask[groupIndex] = 0;
 	}
 	GroupMemoryBarrierWithGroupSync();
 
@@ -141,6 +240,18 @@ void CullDecals(uint3 groupId, uint groupIndex, float deviceDepth)
 		const float3 outside = max(boundsMin - decal.boundsCentre, 0.0f) + max(decal.boundsCentre - boundsMax, 0.0f);
 		const uint overlaps = dot(outside, outside) <= decal.boundsRadius * decal.boundsRadius ? hasGeometry : 0u;
 		InterlockedOr(gs_DecalMask[i >> 5], overlaps << (i & 31));
+	}
+	for (uint p = groupIndex; p < pointLightCount; p += c_TileThreadCount)
+	{
+		const PointLight light = pointLights[lightIndices[TYR_MAX_DIR_LIGHTS + p]];
+		const uint lit = light.intensity > 0.0f ? 1u : 0u;
+		InterlockedOr(gs_PointMask[p >> 5], (SphereTouchesBox(light.position, light.range, boundsMin, boundsMax) & hasGeometry & lit) << (p & 31));
+	}
+	for (uint s = groupIndex; s < spotLightCount; s += c_TileThreadCount)
+	{
+		const SpotLight light = spotLights[lightIndices[TYR_MAX_DIR_LIGHTS + TYR_MAX_POINT_LIGHTS + s]];
+		const uint lit = light.intensity > 0.0f ? 1u : 0u;
+		InterlockedOr(gs_SpotMask[s >> 5], (SpotTouchesBox(light.position, light.range, light.direction, boundsMin, boundsMax) & hasGeometry & lit) << (s & 31));
 	}
 	GroupMemoryBarrierWithGroupSync();
 }
@@ -187,7 +298,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID, uint3 groupId : SV_Group
 	const int3 pixelCoord = int3(min(dispatchThreadId.xy, uint2(g_PushConstants.width - 1, g_PushConstants.height - 1)), 0);
 	const float deviceDepth = textures[g_PushConstants.depthIndex].Load(pixelCoord).r;
 
-	CullDecals(groupId, groupIndex, deviceDepth);
+	CullTile(groupId, groupIndex, deviceDepth);
 
 	if (dispatchThreadId.x >= g_PushConstants.width || dispatchThreadId.y >= g_PushConstants.height)
 	{
@@ -236,12 +347,15 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID, uint3 groupId : SV_Group
 		}
 	}
 
-	float3 colour = materialData.albedo * ambient * materialData.ambientOcclusion;
-
-	// Slot map entries hold this, meaning "not shadowed this tick" (not currently ray-traced at
-	// all, or no shadow-casting light at this index) - matches Renderer.cpp's c_ShadowSlotNone.
-	const uint c_ShadowSlotNone = 0xFFFFFFFFu;
 	const uint3 shadowPixelCoord = uint3(dispatchThreadId.xy, 0);
+	const float3 shadowOrigin = pixelPos + normal * c_ShadowBias;
+
+	float skyVisibility = 0.0f;
+	if (g_PushConstants.skyAmbient > 0.0f)
+	{
+		skyVisibility = TraceShadow(shadowOrigin, normalize(float3(0.0f, 1.0f, 0.0f) + normal * c_SkyRayTilt), c_SkyRayDistance);
+	}
+	float3 colour = materialData.albedo * (ambient + g_PushConstants.skyAmbient * skyVisibility) * materialData.ambientOcclusion;
 
 	for (uint i = 0; i < dirLightCount; ++i)
 	{
@@ -252,23 +366,34 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID, uint3 groupId : SV_Group
 		colour += ComputeDirectionalLightEffect(dirLights[lightIndices[i]], materialData, pixelPos, normal, viewDir) * shadow;
 	}
 
-	for (uint j = 0; j < pointLightCount; ++j)
+	// Only the lights that reach this tile.
+	for (uint pointWord = 0; pointWord * 32 < pointLightCount; ++pointWord)
 	{
-		const uint shadowSlot = shadowLightSlotMap[j];
-		const float shadow = (shadowSlot != c_ShadowSlotNone)
-			? shadowMasks[g_PushConstants.renderFrameIndex][uint3(shadowPixelCoord.xy, shadowSlot)].r
-			: 1.0f;
-		colour += ComputePointLightEffect(pointLights[lightIndices[TYR_MAX_DIR_LIGHTS + j]], materialData, pixelPos, normal, viewDir) * shadow;
+		uint bits = gs_PointMask[pointWord];
+		while (bits != 0)
+		{
+			const uint j = pointWord * 32 + firstbitlow(bits);
+			bits &= bits - 1;
+			const PointLight light = pointLights[lightIndices[TYR_MAX_DIR_LIGHTS + j]];
+			const float3 effect = ComputePointLightEffect(light, materialData, pixelPos, normal, viewDir);
+			colour += effect * LocalLightShadow(shadowLightSlotMap[j], light.castsShadow, light.position, shadowOrigin, shadowPixelCoord.xy, effect);
+		}
 	}
 
-	for (uint k = 0; k < spotLightCount; ++k)
+	for (uint spotWord = 0; spotWord * 32 < spotLightCount; ++spotWord)
 	{
-		const uint shadowSlot = shadowLightSlotMap[TYR_MAX_POINT_LIGHTS + k];
-		const float shadow = (shadowSlot != c_ShadowSlotNone)
-			? shadowMasks[g_PushConstants.renderFrameIndex][uint3(shadowPixelCoord.xy, shadowSlot)].r
-			: 1.0f;
-		colour += ComputeSpotLightEffect(spotLights[lightIndices[TYR_MAX_DIR_LIGHTS + TYR_MAX_POINT_LIGHTS + k]], materialData, pixelPos, normal, viewDir) * shadow;
+		uint bits = gs_SpotMask[spotWord];
+		while (bits != 0)
+		{
+			const uint k = spotWord * 32 + firstbitlow(bits);
+			bits &= bits - 1;
+			const SpotLight light = spotLights[lightIndices[TYR_MAX_DIR_LIGHTS + TYR_MAX_POINT_LIGHTS + k]];
+			const float3 effect = ComputeSpotLightEffect(light, materialData, pixelPos, normal, viewDir);
+			colour += effect * LocalLightShadow(shadowLightSlotMap[TYR_MAX_POINT_LIGHTS + k], light.castsShadow, light.position, shadowOrigin, shadowPixelCoord.xy, effect);
+		}
 	}
+
+	colour += textures[g_PushConstants.gbufferEmissiveIndex].Load(pixelCoord).rgb;
 
 	// Linear HDR colour, exposed and tone mapped later.
 	outputImages[g_PushConstants.renderFrameIndex][dispatchThreadId.xy] = float4(colour, 1.0f);

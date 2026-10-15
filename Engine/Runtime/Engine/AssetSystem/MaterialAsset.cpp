@@ -22,9 +22,11 @@ namespace tyr
 			Serialize<float>(stream, params.layerPatchSize);
 			Serialize<float>(stream, params.layerCoverage);
 			Serialize<float>(stream, params.layerSharpness);
+			Serialize<Vector3>(stream, params.emissiveColour);
+			Serialize<float>(stream, params.emissiveIntensity);
 		}
 
-		void DeserializeParams(BufferedFileStream& stream, MaterialParams& params, bool hasLayer)
+		void DeserializeParams(BufferedFileStream& stream, MaterialParams& params, bool hasLayer, bool hasEmissive)
 		{
 			Deserialize<Vector4>(stream, params.albedoTint);
 			Deserialize<Vector2>(stream, params.uvScale);
@@ -44,6 +46,11 @@ namespace tyr
 				Deserialize<float>(stream, params.layerPatchSize);
 				Deserialize<float>(stream, params.layerCoverage);
 				Deserialize<float>(stream, params.layerSharpness);
+			}
+			if (hasEmissive)
+			{
+				Deserialize<Vector3>(stream, params.emissiveColour);
+				Deserialize<float>(stream, params.emissiveIntensity);
 			}
 		}
 	}
@@ -66,7 +73,8 @@ namespace tyr
 
 		// A file from before versioning starts with its texture count and has no parameters.
 		const bool unversioned = version <= MaterialConstants::c_MaxTextures;
-		TYR_ASSERT(unversioned || version == MaterialAssetFile::c_FileVersion || version == MaterialAssetFile::c_FileVersionNoLayer);
+		TYR_ASSERT(unversioned || version == MaterialAssetFile::c_FileVersion || version == MaterialAssetFile::c_FileVersionNoEmissive
+			|| version == MaterialAssetFile::c_FileVersionNoLayer);
 		if (unversioned)
 		{
 			for (uint i = 0; i < version; ++i)
@@ -84,7 +92,7 @@ namespace tyr
 		file.type = static_cast<MaterialType>(type);
 		if (!unversioned)
 		{
-			DeserializeParams(stream, file.params, version == MaterialAssetFile::c_FileVersion);
+			DeserializeParams(stream, file.params, version != MaterialAssetFile::c_FileVersionNoLayer, version == MaterialAssetFile::c_FileVersion);
 		}
 	}
 }

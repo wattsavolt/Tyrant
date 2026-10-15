@@ -56,6 +56,7 @@ void main(
 		output.tangent = float4(normalize(mul(float4(tangentDir, 0.0f), instance.transform).xyz), bitangentSign);
 		output.uv = (float2)v.uv;
 		output.materialIndex = materialIndex;
+		output.emissiveScale = instance.emissiveScale;
 		verts[groupThreadId.x] = output;
 	}
 

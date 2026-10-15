@@ -6,7 +6,7 @@
 #include "AssetSystem/AssetDataTypes.h"
 #include "ECS/EntitySystem.h"
 #include "RenderBase/RenderHandles.h"
-#include "Physics/PhysicsTypes.h"
+#include "PhysicsTypes.h"
 #include "Gameplay/GameplayTypes.h"
 #include "Actor/ActorTypes.h"
 
@@ -39,6 +39,8 @@ namespace tyr
 		MeshInstanceHandle meshInstance;
 		// True once the mesh instance has been asked for, even if it hasn't been created yet.
 		bool meshInstanceRequested = false;
+		// Scales the glow of its materials' emissive, such as 0 for a lamp that's switched off.
+		float emissiveScale = 1.0f;
 	};
 
 	// A skinned mesh, posed by the AnimatorComponent on the same entity if it has one, otherwise
@@ -118,12 +120,10 @@ namespace tyr
 		float crouchHeight = 1.15f;
 		// The steepest slope it can walk up, in degrees.
 		float maxSlope = 50.0f;
-		// The tallest step it walks up without jumping.
+		// The tallest step it walks up.
 		float stepHeight = 0.35f;
-		// Set by gameplay. Not saved. moveVelocity is horizontal, in metres per second, and a
-		// jump speed is used by the next physics step on the ground, then cleared.
+		// Set by gameplay. Not saved. moveVelocity is horizontal, in metres per second.
 		Vector3 moveVelocity;
-		float jumpSpeed = 0.0f;
 		bool wantsCrouch = false;
 		// Set by physics. Not saved. Standing up waits until there's room overhead.
 		bool grounded = false;
@@ -263,8 +263,71 @@ namespace tyr
 		ActorName door;
 		// Empty for a button that needs no key.
 		ItemName key;
-		// Without power it does nothing.
+		// Has its own power. Otherwise it only works while the world has power, such as from a generator.
 		bool powered = true;
+	};
+
+	// A light fitting whose mesh glows and whose light shines while it's switched on and the world
+	// has power. Light switches on the same circuit turn it on and off.
+	struct LightFixtureComponent
+	{
+		CircuitName circuit;
+		// A LightFixtureState: 0 working, 1 broken, 2 flickering.
+		uint8 state = static_cast<uint8>(LightFixtureState::Working);
+		bool switchedOn = true;
+
+		// Worked out while running. Not saved. Brightness goes from 0 off to 1 fully on.
+		float brightness = -1.0f;
+		float flickerTimer = 0.0f;
+		uint flickerSeed = 0;
+		bool flickerLit = true;
+	};
+
+	// A wall switch that turns the light fixtures on its circuit on and off.
+	struct LightSwitchComponent
+	{
+		CircuitName circuit;
+		bool switchedOn = true;
+
+		// Worked out while running. Not saved. Whether its mesh is turned to show it on, as placed.
+		bool shownOn = true;
+	};
+
+	// A light the player can carry, with a spot light on the same entity. While held, the world
+	// keeps it at the camera, offset from the eyes, turning after the view a little behind it.
+	// Its light is dark while it's off.
+	struct FlashlightComponent
+	{
+		bool on = true;
+		// Right, up and forward from the eyes, in metres.
+		Vector3 offset = Vector3(0.2f, -0.25f, 0.15f);
+		// How quickly it turns after the view. Higher keeps it closer.
+		float followSpeed = 16.0f;
+		// Set by gameplay. Not saved.
+		bool held = false;
+	};
+
+	// How much harm something can take before it dies.
+	struct HealthComponent
+	{
+		float maxHealth = 100.0f;
+		// Not saved. Starts full.
+		float health = 100.0f;
+		// Not saved. Damage adds to it, up to 1, and whatever shows being hurt fades it back down.
+		float hurt = 0.0f;
+	};
+
+	// Where the navmesh is built: a box around the entity, stretched by its scale. Only floors
+	// inside one are walkable for enemies. A level without any has its navmesh built everywhere.
+	struct NavmeshBoundsComponent
+	{
+		Vector3 halfExtents = Vector3(10.0f, 5.0f, 10.0f);
+	};
+
+	// Gives the world power once started. A world without one always has power.
+	struct GeneratorComponent
+	{
+		bool running = false;
 	};
 
 	// Something the player can pick up, such as a key card. It's removed from the world once taken.

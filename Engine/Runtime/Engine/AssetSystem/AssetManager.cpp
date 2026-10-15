@@ -129,9 +129,20 @@ namespace tyr
 			ResolveMaterialTextures(ld.value());
 		}
 
+		// Meshes wait for upload space the same way, in load order.
+		uint meshesCreated = 0;
+		while (meshesCreated < m_MeshesAwaitingUploadSpace.Size() && CreateMesh(m_MeshesAwaitingUploadSpace[meshesCreated]))
+		{
+			++meshesCreated;
+		}
+		m_MeshesAwaitingUploadSpace.EraseFromFront(meshesCreated);
+
 		while (Optional<MeshHeaderLoadData*> ld = m_MeshHeadersLoadedQueue.Dequeue())
 		{
-			CreateMesh(ld.value());
+			if (!m_MeshesAwaitingUploadSpace.IsEmpty() || !CreateMesh(ld.value()))
+			{
+				m_MeshesAwaitingUploadSpace.Add(ld.value());
+			}
 		}
 
 		while (Optional<MeshGeometryLoadData*> ld = m_MeshesLoadedQueue.Dequeue())
@@ -207,6 +218,11 @@ namespace tyr
 		{
 			TempDelete<MeshHeaderLoadData>(ld.value());
 		}
+		for (MeshHeaderLoadData* ld : m_MeshesAwaitingUploadSpace)
+		{
+			TempDelete<MeshHeaderLoadData>(ld);
+		}
+		m_MeshesAwaitingUploadSpace.Clear();
 
 		while (Optional<MeshGeometryLoadData*> ld = m_MeshesLoadedQueue.Dequeue())
 		{
@@ -314,6 +330,20 @@ namespace tyr
 				return;
 			}
 		}
+	}
+
+	void AssetManager::EvictAllUnreferencedAssets()
+	{
+		for (const UnreferencedAsset& entry : m_UnreferencedAssets)
+		{
+			DeleteUnreferencedAssetResources(entry);
+		}
+		m_UnreferencedAssets.Clear();
+	}
+
+	bool AssetManager::HasPendingDeletes() const
+	{
+		return !m_PendingTextureDeletes.IsEmpty() || !m_PendingMaterialDeletes.IsEmpty() || !m_PendingMeshDeletes.IsEmpty();
 	}
 
 	void AssetManager::AddPendingDelete(Array<PendingAssetDelete>& pendingDeletes, AssetID assetID, AssetDeletePolicy policy)
@@ -866,9 +896,28 @@ namespace tyr
 		}
 	}
 
-	void AssetManager::CreateMesh(MeshHeaderLoadData* ld)
+	bool AssetManager::CreateMesh(MeshHeaderLoadData* ld)
 	{
 		MeshHeader& header = m_MeshHeaderPool[ld->header];
+
+		// Every upload allocation below must fit, so nothing is made for a mesh that has to wait.
+		LocalArray<size_t, MeshConstants::c_MaxLods * 5> uploadSizes;
+		for (uint chunkIndex = 0; chunkIndex < header.chunks.Size(); ++chunkIndex)
+		{
+			const MeshChunkHeader& chunkHeader = header.chunks[chunkIndex];
+			uploadSizes.Add(chunkHeader.decompressedVerticesSize);
+			uploadSizes.Add(chunkHeader.decompressedIndicesSize);
+			uploadSizes.Add(chunkHeader.decompressedMeshletsSize);
+			if (header.IsSkinned() && header.chunkSkins[chunkIndex].decompressedSkinSize > 0)
+			{
+				uploadSizes.Add(header.chunkSkins[chunkIndex].decompressedSkinSize);
+			}
+			uploadSizes.Add(sizeof(ShaderMeshLOD));
+		}
+		if (!m_RendererAPI->CanRequestResourceUploadAllocations(uploadSizes.Data(), uploadSizes.Size()))
+		{
+			return false;
+		}
 
 		MeshDesc desc;
 		desc.sphere = header.sphere;
@@ -1047,6 +1096,7 @@ namespace tyr
 		}
 
 		TempDelete<MeshHeaderLoadData>(ld);
+		return true;
 	}
 
 	void AssetManager::UploadMeshGeometry(MeshGeometryLoadData* ld)

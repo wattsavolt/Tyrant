@@ -89,6 +89,15 @@ namespace tyr
 		// snapped to the grid when snapping is on.
 		Vector3 GetBackgroundDropPosition(const ViewportRay& ray) const;
 		ViewportRay GetCameraRay() const;
+		// Like Unreal's F: keeps the camera's direction and backs it off until the selected
+		// actor's bounds fill the view.
+		void FrameSelectedActor();
+		// Rings on the ground out to how far each recent noise carries, fading as it ages.
+		static void DrawNoises(const World& world);
+		// The navmesh's polygons around the camera.
+		void DrawNavmesh(const World& world);
+		// Builds the level's navmesh from its colliders. False when it has nothing to walk on.
+		bool BuildNavmesh();
 		static ActorName MakeUniqueActorName(const World& world, const char* baseName);
 
 		// Opens the default level, or else the first one there is or a new one, which becomes the default.
@@ -104,11 +113,19 @@ namespace tyr
 		bool WriteLevel(const char* levelPath);
 		bool IsLevelDirty() const;
 
+		// Loads the open level's assets again from their files, such as after a reimport, keeping
+		// the level as it is, unsaved changes included. Takes a few frames.
+		void RefreshAssets();
+		bool IsRefreshingAssets() const { return m_RefreshStage != RefreshStage::None; }
+		void UpdateAssetRefresh();
+
 		// The root entity of the level actor the ray hits first, or c_InvalidEntity.
 		Entity PickActor(const ViewportRay& ray);
 
 		// Undoes or redoes a step, keeping the same actor selected. Returns false if there wasn't one.
 		bool ApplyUndo(bool redo);
+		// Reused each frame for drawing the navmesh.
+		Array<Vector3> m_NavmeshLines;
 		// Records the level's edits as an undo step once nothing is being dragged or typed.
 		void CommitUndoWhenIdle();
 
@@ -142,6 +159,21 @@ namespace tyr
 		// Lets Claude, or any MCP client on this machine, use the editor. Null when turned off.
 		URef<McpServer> m_McpServer;
 		URef<McpTools> m_McpTools;
+
+		enum class RefreshStage : uint8
+		{
+			None,
+			// The level was cleared this frame. Its world lets go of the sky on its next update.
+			Cleared,
+			// Waiting for everything released to be freed, then the level comes back.
+			Restoring
+		};
+		RefreshStage m_RefreshStage = RefreshStage::None;
+		// The level as it was before the refresh: its settings, then each actor.
+		Array<uint8> m_RefreshData;
+		Array<uint> m_RefreshActorOffsets;
+		bool m_RefreshDirty = false;
+		Id64 m_RefreshSelectedActor;
 	};
 
 }

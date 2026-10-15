@@ -233,7 +233,7 @@ namespace tyr
 
 	void RendererAPI::UploadMaterial(MaterialHandle handle, const MaterialDesc& desc)
 	{
-		TYR_STATIC_ASSERT(sizeof(ShaderMaterial) == 112, "ShaderMaterial must match the shaders' 16 byte rows.");
+		TYR_STATIC_ASSERT(sizeof(ShaderMaterial) == 128, "ShaderMaterial must match the shaders' 16 byte rows.");
 		TYR_STATIC_ASSERT(static_cast<uint>(MaterialBlendMode::Masked) == TYR_MATERIAL_BLEND_MODE_MASKED, "Keep in sync with ShaderTypes.h.");
 		TYR_ASSERT(desc.type == MaterialType::PBR);
 		const MaterialParams& params = desc.params;
@@ -260,6 +260,8 @@ namespace tyr
 		shaderMaterial.layerUVScale = params.layerUVScale;
 		shaderMaterial.layerCoverage = params.layerCoverage;
 		shaderMaterial.layerSharpness = params.layerSharpness;
+		shaderMaterial.emissive = params.emissiveColour * params.emissiveIntensity;
+		shaderMaterial._emissivePad = 0.0f;
 
 		m_Renderer.GetRecords().materials.Set(handle.h.index, shaderMaterial);
 		m_Renderer.GetRenderFrame().materialBlendModeUpdates.Add({ handle.h.index, params.blendMode });
@@ -566,6 +568,7 @@ namespace tyr
 		shaderMeshInstance.prevSkinnedVertexOffset = instance.prevOutputVertexOffset;
 		const BoundingSphere& sphere = instance.skinnedSphere;
 		shaderMeshInstance.skinnedSphere = Vector4(sphere.m_Centre.x, sphere.m_Centre.y, sphere.m_Centre.z, sphere.m_Radius);
+		shaderMeshInstance.emissiveScale = 1.0f;
 		WriteMeshInstance(shaderMeshInstance, instance.meshInstance.h.index);
 	}
 
@@ -581,6 +584,7 @@ namespace tyr
 		shaderMeshInstance.skinnedVertexOffset = TYR_INVALID_INDEX;
 		shaderMeshInstance.prevSkinnedVertexOffset = TYR_INVALID_INDEX;
 		shaderMeshInstance.skinnedSphere = Vector4(0.0f, 0.0f, 0.0f, 0.0f);
+		shaderMeshInstance.emissiveScale = info.emissiveScale;
 		WriteMeshInstance(shaderMeshInstance, index);
 	}
 
@@ -602,9 +606,11 @@ namespace tyr
 		renderFrame.sceneFrame.views.Add(view);
 	}
 
-	void RendererAPI::SetSceneAmbient(SceneHandle scene, float ambient)
+	void RendererAPI::SetSceneAmbient(SceneHandle scene, float ambient, float skyAmbient)
 	{
-		m_Renderer.GetImmediateSceneData(scene).ambient = ambient;
+		ImmediateSceneData& data = m_Renderer.GetImmediateSceneData(scene);
+		data.ambient = ambient;
+		data.skyAmbient = skyAmbient;
 	}
 
 	void RendererAPI::SetSceneSky(SceneHandle scene, const SkySettings& sky)
@@ -615,6 +621,16 @@ namespace tyr
 	void RendererAPI::SetSceneExposure(SceneHandle scene, const ExposureSettings& exposure)
 	{
 		m_Renderer.GetImmediateSceneData(scene).exposure = exposure;
+	}
+
+	void RendererAPI::SetSceneBloom(SceneHandle scene, const BloomSettings& bloom)
+	{
+		m_Renderer.GetImmediateSceneData(scene).bloom = bloom;
+	}
+
+	void RendererAPI::SetSceneScreenEffects(SceneHandle scene, const ScreenEffects& effects)
+	{
+		m_Renderer.GetImmediateSceneData(scene).screenEffects = effects;
 	}
 
 	void RendererAPI::SetRenderViewportPresented(RenderViewportHandle viewport, bool presented)
@@ -725,7 +741,7 @@ namespace tyr
 		shaderLight.intensity = info.intensity;
 		shaderLight.attenuation = info.attenuation;
 		shaderLight.colour = info.colour;
-
+		shaderLight.castsShadow = info.castsShadow ? 1.0f : 0.0f;
 
 		m_Renderer.GetRecords().pointLights.Set(index, shaderLight);
 	}
@@ -740,6 +756,7 @@ namespace tyr
 		shaderLight.attenuation = info.attenuation;
 		shaderLight.intensity = info.intensity;
 		shaderLight.colour = info.colour;
+		shaderLight.castsShadow = info.castsShadow ? 1.0f : 0.0f;
 
 		m_Renderer.GetRecords().spotLights.Set(index, shaderLight);
 	}
@@ -805,6 +822,11 @@ namespace tyr
 	bool RendererAPI::RequestResourceUploadAllocation(size_t size, UploadBufferAllocation& allocation)
 	{
 		return m_AllocManager.RequestResourceUploadAllocation(size, allocation);
+	}
+
+	bool RendererAPI::CanRequestResourceUploadAllocations(const size_t* sizes, uint count) const
+	{
+		return m_AllocManager.CanRequestResourceUploadAllocations(sizes, count);
 	}
 
 	void RendererAPI::FlushBufferUploadAllocation(const UploadBufferAllocation& alloc)

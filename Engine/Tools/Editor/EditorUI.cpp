@@ -117,6 +117,12 @@ namespace tyr
 		{
 			m_HierarchyPanel.DeleteActor(selectedActor, selectedActor);
 		}
+		// F goes to the selected actor, unless typing or flying, where F isn't a shortcut.
+		if (editing && selectedActor != c_InvalidEntity && !ImGui::GetIO().WantTextInput && !ImGui::IsMouseDown(ImGuiMouseButton_Right)
+			&& ImGui::IsKeyPressed(ImGuiKey_F, false))
+		{
+			requests.frameSelected = true;
+		}
 
 		return panels.viewport;
 	}

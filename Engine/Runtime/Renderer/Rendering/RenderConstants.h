@@ -55,11 +55,13 @@ namespace tyr
 		// light (the sun) - 2 leaves headroom for a stylized second light (e.g. a moon).
 		static constexpr uint c_MaxDirLights = 2;
 		static_assert(c_MaxDirLights == TYR_MAX_DIR_LIGHTS, "Keep in sync with ShaderTypes.h's TYR_MAX_DIR_LIGHTS.");
-		static constexpr uint c_MaxPointLights = 16;
+		static constexpr uint c_MaxPointLights = 256;
 		static_assert(c_MaxPointLights == TYR_MAX_POINT_LIGHTS,
-			"Keep in sync with ShaderTypes.h's TYR_MAX_POINT_LIGHTS - DeferredLightingCS.hlsl's "
+			"Keep in sync with ShaderTypes.h's TYR_MAX_POINT_LIGHTS - DeferredLightingRTCS.hlsl's "
 			"shadow light slot map indexes spot-light entries starting at that offset.");
-		static constexpr uint c_MaxSpotLights = 16;
+		static constexpr uint c_MaxSpotLights = 256;
+		static_assert(c_MaxSpotLights == TYR_MAX_SPOT_LIGHTS, "Keep in sync with ShaderTypes.h's TYR_MAX_SPOT_LIGHTS.");
+		static constexpr uint c_BloomLevels = TYR_BLOOM_LEVELS;
 		// Lights from this many scenes can exist at once, such as the level being edited and the
 		// game being played. Only the active scene's lights are drawn.
 		static constexpr uint c_LightPoolSceneCount = 2;
@@ -81,7 +83,7 @@ namespace tyr
 		// the scene's list - up to c_MaxDirLights of them, always traced when shadow-casting,
 		// never selected/evicted) plus one per this tick's selected local light.
 		static constexpr uint c_MaxShadowSlots = c_MaxDirLights + c_MaxShadowCastingLocalLights;
-		// DeferredLightingCS's own light-index -> shadow-slot lookup for point/spot lights only -
+		// DeferredLightingRTCS's own light-index -> shadow-slot lookup for point/spot lights only -
 		// directional lights don't need one, since a directional light's position in the scene's
 		// list already is its shadow slot. Point entries first, then spot.
 		static constexpr uint c_ShadowLightSlotMapEntryCount = c_MaxPointLights + c_MaxSpotLights;
@@ -103,7 +105,7 @@ namespace tyr
 		static constexpr size_t c_BLASStorageBufferSize = 256 * 1024 * 1024; // 256 MB
 		static constexpr uint c_BufferedFrameCount = 3;
 		static_assert(c_BufferedFrameCount == TYR_BUFFERED_FRAME_COUNT,
-			"Keep in sync with ShaderTypes.h's TYR_BUFFERED_FRAME_COUNT - DeferredLightingCS.hlsl's "
+			"Keep in sync with ShaderTypes.h's TYR_BUFFERED_FRAME_COUNT - DeferredLightingRTCS.hlsl's "
 			"outputImages[] array is sized from that, not this.");
 		static constexpr uint c_MaxViewsPerScene = 2;
 		// This could be increased later

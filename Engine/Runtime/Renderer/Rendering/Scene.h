@@ -76,7 +76,11 @@ namespace tyr
 		LocalArray<DecalHandle, RenderConstants::c_MaxDecals> decals;
 		// Flat ambient term added to every pixel regardless of any light.
 		float ambient = 0.0f;
+		// Ambient added only where a surface can see the sky.
+		float skyAmbient = 0.0f;
 		ExposureSettings exposure;
+		BloomSettings bloom;
+		ScreenEffects screenEffects;
 		SkySettings sky;
 		// Whether this scene should actually render/upload this tick.
 		bool visible = true;
@@ -88,7 +92,10 @@ namespace tyr
 			lights.Clear();
 			decals.Clear();
 			ambient = 0.0f;
+			skyAmbient = 0.0f;
 			exposure = {};
+			bloom = {};
+			screenEffects = {};
 			sky = {};
 			visible = true;
 		}

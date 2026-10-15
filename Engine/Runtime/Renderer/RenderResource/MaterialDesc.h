@@ -3,6 +3,7 @@
 #include "RendererMacros.h"
 #include "Core.h"
 #include "Math/Vector2.h"
+#include "Math/Vector3.h"
 #include "Math/Vector4.h"
 
 namespace tyr
@@ -65,6 +66,9 @@ namespace tyr
 		float layerCoverage = 0.5f;
 		// How quickly a patch's edge blends into the base, higher being harder.
 		float layerSharpness = 4.0f;
+		// Light the surface gives off itself, such as a lamp's diffuser, in linear colour.
+		Vector3 emissiveColour = Vector3(0.0f, 0.0f, 0.0f);
+		float emissiveIntensity = 1.0f;
 		// A MaterialBlendMode: 0 opaque, 1 masked, 2 translucent.
 		uint8 blendMode = static_cast<uint8>(MaterialBlendMode::Opaque);
 	};

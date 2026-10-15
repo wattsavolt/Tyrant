@@ -20,6 +20,8 @@ namespace tyr
 		// comment (Shaders/ShaderTypes.h) for how these get decided (mesh defaults, per-slot
 		// overridden by a MeshComponent where present).
 		LocalArray<MaterialHandle, MeshConstants::c_MaxSubmeshes> materials;
+		// Scales its materials' emissive, such as 0 for a lamp that's switched off.
+		float emissiveScale = 1.0f;
 	};
 
 	struct SkeletalMeshInstanceInfo

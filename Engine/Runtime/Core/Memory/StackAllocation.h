@@ -114,10 +114,11 @@ namespace tyr
 			if (m_FreeBlock->m_Pos == 0)
 			{
 				Block* emptyBlock = m_FreeBlock;
+				Block* prevBlock = emptyBlock->m_PrevBlock;
 
-				if (emptyBlock->m_PrevBlock != nullptr)
+				if (prevBlock != nullptr)
 				{
-					m_FreeBlock = emptyBlock->m_PrevBlock;
+					m_FreeBlock = prevBlock;
 				}
 
 				// Merge with next block
@@ -125,9 +126,9 @@ namespace tyr
 				{
 					const uint totalSize = emptyBlock->m_Size + emptyBlock->m_NextBlock->m_Size;
 
-					if (emptyBlock->m_PrevBlock != nullptr)
+					if (prevBlock != nullptr)
 					{
-						emptyBlock->m_PrevBlock->m_NextBlock = nullptr;
+						prevBlock->m_NextBlock = nullptr;
 					}
 					else
 					{
@@ -137,7 +138,13 @@ namespace tyr
 					DeallocBlock(emptyBlock->m_NextBlock);
 					DeallocBlock(emptyBlock);
 
+					// The merged block goes after the previous one, which still holds live allocations,
+					// so that stays the block allocations come from.
 					AllocBlock(totalSize);
+					if (prevBlock != nullptr)
+					{
+						m_FreeBlock = prevBlock;
+					}
 				}
 			}
 		}
@@ -155,19 +162,13 @@ namespace tyr
 				blockSize = wantedSize;
 			}
 
+			// Only the very next block can be reused. Skipping past a smaller one would leave an empty
+			// block before this one, which freeing would step back into.
 			Block* newBlock = nullptr;
-			Block* curBlock = m_FreeBlock;
-
-			while (curBlock != nullptr)
+			Block* nextBlock = m_FreeBlock != nullptr ? m_FreeBlock->m_NextBlock : nullptr;
+			if (nextBlock != nullptr && nextBlock->m_Size >= blockSize)
 			{
-				Block* nextBlock = curBlock->m_NextBlock;
-				if (nextBlock != nullptr && nextBlock->m_Size >= blockSize)
-				{
-					newBlock = nextBlock;
-					break;
-				}
-
-				curBlock = nextBlock;
+				newBlock = nextBlock;
 			}
 
 			if (newBlock == nullptr)

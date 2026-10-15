@@ -29,3 +29,7 @@
 # ImGui window-layout state - generated per machine/session, not source
 imgui.ini
 
+# SDKs whose licences don't allow sharing them, such as FMOD. CMake copies them in from where
+# their installers put them, on each machine that has them.
+ThirdParty/Licensed/
+

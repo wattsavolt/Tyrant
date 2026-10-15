@@ -13,6 +13,22 @@ namespace tyr
 	namespace
 	{
 		constexpr uint c_UnassignedSlot = 0xFFFFFFFFu;
+		// A light already holding a slot ranks as if this much nearer, squared, so lights about as
+		// far away as each other don't keep swapping slots as the camera moves.
+		constexpr float c_KeepSlotDistanceScale = 0.5f;
+		constexpr uint c_MaxSlotAge = 255;
+	}
+
+	bool ShadowRTPass::OwnsSlot(bool isSpot, PointLightHandle pointHandle, SpotLightHandle spotHandle) const
+	{
+		for (const LocalSlotOwner& owner : m_LocalSlotOwners)
+		{
+			if (owner.isSpot == isSpot && (isSpot ? owner.spotHandle == spotHandle : owner.pointHandle == pointHandle))
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	ShadowRTPass::ShadowRTPass(const ShadowRTPassArgs& args)
@@ -52,7 +68,7 @@ namespace tyr
 
 		// Every directional light gets dispatched at its position in the list (a real trace if
 		// it casts shadows, a cheap "fully lit" fallback if not), which keeps every slot
-		// DeferredLightingCS's dirLightCount-bounded loop reads fresh.
+		// DeferredLightingRTCS's dirLightCount-bounded loop reads fresh.
 		for (uint i = 0; i < lights.dirLights.Size(); ++i)
 		{
 			const DirLightHandle handle = lights.dirLights[i];
@@ -88,28 +104,28 @@ namespace tyr
 		{
 			const PointLightHandle handle = lights.pointLights[i];
 			const PointLightInfo& info = m_Registry->GetPointLight(handle).info;
-			if (info.castsShadow)
+			if (info.castsShadow && info.intensity > 0.0f)
 			{
 				Candidate& candidate = candidates.ExpandOne();
 				candidate.isSpot = false;
 				candidate.pointHandle = handle;
 				candidate.lightIndex = i;
 				const Vector3 toLight = info.position - cameraPosition;
-				candidate.distanceSquared = toLight.Dot(toLight);
+				candidate.distanceSquared = toLight.Dot(toLight) * (OwnsSlot(false, handle, {}) ? c_KeepSlotDistanceScale : 1.0f);
 			}
 		}
 		for (uint i = 0; i < lights.spotLights.Size(); ++i)
 		{
 			const SpotLightHandle handle = lights.spotLights[i];
 			const SpotLightInfo& info = m_Registry->GetSpotLight(handle).info;
-			if (info.castsShadow)
+			if (info.castsShadow && info.intensity > 0.0f)
 			{
 				Candidate& candidate = candidates.ExpandOne();
 				candidate.isSpot = true;
 				candidate.spotHandle = handle;
 				candidate.lightIndex = i;
 				const Vector3 toLight = info.position - cameraPosition;
-				candidate.distanceSquared = toLight.Dot(toLight);
+				candidate.distanceSquared = toLight.Dot(toLight) * (OwnsSlot(true, {}, handle) ? c_KeepSlotDistanceScale : 1.0f);
 			}
 		}
 
@@ -137,6 +153,7 @@ namespace tyr
 			selected.spotHandle = candidates[pass].spotHandle;
 			selected.lightIndex = candidates[pass].lightIndex;
 			selected.slot = c_UnassignedSlot;
+			selected.age = 0;
 		}
 
 		// Lights already holding a slot keep it, whatever order the distances put them in now.
@@ -152,6 +169,8 @@ namespace tyr
 				{
 					claimed[i] = true;
 					selected.slot = RenderConstants::c_MaxDirLights + i;
+					m_LocalSlotOwners[i].age = std::min(m_LocalSlotOwners[i].age + 1, c_MaxSlotAge);
+					selected.age = m_LocalSlotOwners[i].age;
 					break;
 				}
 			}
@@ -174,6 +193,7 @@ namespace tyr
 			owner.isSpot = selected.isSpot;
 			owner.pointHandle = selected.pointHandle;
 			owner.spotHandle = selected.spotHandle;
+			owner.age = 0;
 			selected.slot = RenderConstants::c_MaxDirLights + nextFree;
 			m_NewSlots[selected.slot] = true;
 		}

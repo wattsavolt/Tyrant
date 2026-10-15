@@ -136,6 +136,8 @@ namespace tyr
 		ToolResult Play(const simdjson::dom::object& args);
 		ToolResult Stop(const simdjson::dom::object& args);
 		ToolResult Undo(const simdjson::dom::object& args);
+		ToolResult BuildNavmesh(const simdjson::dom::object& args);
+		ToolResult FindPath(const simdjson::dom::object& args);
 		ToolResult Redo(const simdjson::dom::object& args);
 		ToolResult UndoSteps(const simdjson::dom::object& args, bool redo);
 		ToolResult CaptureScreenshot(const simdjson::dom::object& args);

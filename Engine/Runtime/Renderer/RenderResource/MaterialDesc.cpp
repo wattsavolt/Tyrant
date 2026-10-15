@@ -22,5 +22,7 @@ namespace tyr
 		TYR_REFL_FIELD(&MaterialParams::layerPatchSize, "Layer Patch Size", true, true, true);
 		TYR_REFL_FIELD(&MaterialParams::layerCoverage, "Layer Coverage", true, true, true);
 		TYR_REFL_FIELD(&MaterialParams::layerSharpness, "Layer Sharpness", true, true, true);
+		TYR_REFL_FIELD(&MaterialParams::emissiveColour, "Emissive Colour", true, true, true);
+		TYR_REFL_FIELD(&MaterialParams::emissiveIntensity, "Emissive Intensity", true, true, true);
 	TYR_REFL_CLASS_END();
 }

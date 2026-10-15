@@ -1,5 +1,8 @@
-#include "CollisionShapes.h"
+#include "PhysicsShapes.h"
+#include "Private/JoltUtil.h"
 #include "IO/BufferedFileStream.h"
+#include <algorithm>
+#include <cmath>
 
 #include <Jolt/Jolt.h>
 #include <Jolt/Core/StreamIn.h>
@@ -8,9 +11,18 @@
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/Shape/ScaledShape.h>
+#include <Jolt/Physics/Collision/TransformedShape.h>
+#include <Jolt/Physics/Collision/CollisionCollector.h>
 
 namespace tyr
 {
+	using namespace JoltUtil;
+
 	namespace
 	{
 		// Jolt's saved shapes can only be read by the version that wrote them.
@@ -151,6 +163,57 @@ namespace tyr
 			}
 		}
 
+		// The shape moved off the body's origin by offset, with a reference held, or null if it failed.
+		const PhysicsShape* TakeOffsetShape(const JPH::ShapeSettings::ShapeResult& result, const Vector3& offset, const char* what)
+		{
+			if (result.HasError() || offset == Vector3::c_Zero)
+			{
+				return TakeShape(result, what);
+			}
+			return TakeShape(JPH::RotatedTranslatedShapeSettings(ToJolt(offset), JPH::Quat::sIdentity(), result.Get()).Create(), what);
+		}
+
+		// Gathers a shape's leaf shapes, where compound and offset shapes break down to.
+		class LeafCollector final : public JPH::TransformedShapeCollector
+		{
+		public:
+			void AddHit(const JPH::TransformedShape& shape) override
+			{
+				leaves.push_back(shape);
+			}
+
+			JPH::Array<JPH::TransformedShape> leaves;
+		};
+
+		// Calls onTriangle with each of the shape's triangles, three points, placed at the transform.
+		// Only leaf shapes give triangles, so compound and offset shapes are broken down first.
+		template<typename OnTriangle>
+		void ForEachTriangle(const JPH::Shape* shape, JPH::Vec3Arg position, JPH::QuatArg rotation, OnTriangle onTriangle)
+		{
+			if (!shape)
+			{
+				return;
+			}
+			LeafCollector collector;
+			shape->CollectTransformedShapes(JPH::AABox::sBiggest(), position + rotation * shape->GetCenterOfMass(), rotation, JPH::Vec3::sOne(),
+				JPH::SubShapeIDCreator(), collector, JPH::ShapeFilter());
+
+			constexpr int c_BatchSize = JPH::Shape::cGetTrianglesMinTrianglesRequested;
+			JPH::Float3 vertices[c_BatchSize * 3];
+			for (const JPH::TransformedShape& leaf : collector.leaves)
+			{
+				JPH::Shape::GetTrianglesContext context;
+				leaf.GetTrianglesStart(context, JPH::AABox::sBiggest(), JPH::RVec3::sZero());
+				for (int count = leaf.GetTrianglesNext(context, c_BatchSize, vertices); count > 0; count = leaf.GetTrianglesNext(context, c_BatchSize, vertices))
+				{
+					for (int t = 0; t < count; ++t)
+					{
+						onTriangle(&vertices[t * 3]);
+					}
+				}
+			}
+		}
+
 		const JPH::Shape* ReadShape(FileStreamIn& in)
 		{
 			uint8 present = 0;
@@ -174,9 +237,49 @@ namespace tyr
 		}
 	}
 
-	namespace CollisionShapes
+	namespace PhysicsShapes
 	{
-		bool Write(BufferedFileStream& stream, const CollisionMeshPiece* pieces, uint pieceCount, const char* meshName)
+		const PhysicsShape* CreateBox(const Vector3& halfExtents, const Vector3& offset)
+		{
+			// The rounded edge can't be thicker than the box.
+			const float convexRadius = std::min(JPH::cDefaultConvexRadius, std::min(halfExtents.x, std::min(halfExtents.y, halfExtents.z)) * 0.5f);
+			return TakeOffsetShape(JPH::BoxShapeSettings(ToJolt(halfExtents), convexRadius).Create(), offset, "a box collider");
+		}
+
+		const PhysicsShape* CreateSphere(float radius, const Vector3& offset)
+		{
+			return TakeOffsetShape(JPH::SphereShapeSettings(radius).Create(), offset, "a sphere collider");
+		}
+
+		const PhysicsShape* CreateCapsule(float halfHeight, float radius, const Vector3& offset)
+		{
+			return TakeOffsetShape(JPH::CapsuleShapeSettings(halfHeight, radius).Create(), offset, "a capsule collider");
+		}
+
+		const PhysicsShape* CreateScaled(const PhysicsShape* shape, const Vector3& scale)
+		{
+			const JPH::Shape* joltShape = ToJolt(shape);
+			if (!joltShape)
+			{
+				return nullptr;
+			}
+			if (scale == Vector3::c_One)
+			{
+				joltShape->AddRef();
+				return shape;
+			}
+			return TakeShape(JPH::ScaledShapeSettings(joltShape, joltShape->MakeScaleValid(ToJolt(scale))).Create(), "a scaled collider");
+		}
+
+		void AddRef(const PhysicsShape* shape)
+		{
+			if (shape)
+			{
+				ToJolt(shape)->AddRef();
+			}
+		}
+
+		bool WriteMeshShapes(BufferedFileStream& stream, const CollisionMeshPiece* pieces, uint pieceCount, const char* meshName)
 		{
 			const JPH::ShapeRefC triangleShape = CreateTriangleShape(pieces, pieceCount, meshName);
 			const JPH::ShapeRefC convexShape = CreateConvexShape(pieces, pieceCount, meshName);
@@ -188,7 +291,7 @@ namespace tyr
 			return triangleShape != nullptr || convexShape != nullptr;
 		}
 
-		void Read(BufferedFileStream& stream, const JPH::Shape*& outTriangleShape, const JPH::Shape*& outConvexShape)
+		void ReadMeshShapes(BufferedFileStream& stream, const PhysicsShape*& outTriangleShape, const PhysicsShape*& outConvexShape)
 		{
 			outTriangleShape = nullptr;
 			outConvexShape = nullptr;
@@ -201,44 +304,41 @@ namespace tyr
 				TYR_LOG_ERROR("A mesh collider was saved by another version of Jolt. Reimport its mesh.");
 				return;
 			}
-			outTriangleShape = ReadShape(in);
-			outConvexShape = ReadShape(in);
+			outTriangleShape = FromJolt(ReadShape(in));
+			outConvexShape = FromJolt(ReadShape(in));
 		}
 
-		void Release(const JPH::Shape* shape)
+		void Release(const PhysicsShape* shape)
 		{
 			if (shape)
 			{
-				shape->Release();
+				ToJolt(shape)->Release();
 			}
 		}
 
-		void AddLines(const JPH::Shape* shape, Array<Vector3>& outLines)
+		void AddTriangles(const PhysicsShape* physicsShape, const Vector3& position, const Quaternion& rotation, Array<Vector3>& outTriangles)
 		{
-			if (!shape)
+			ForEachTriangle(ToJolt(physicsShape), ToJolt(position), ToJolt(rotation), [&outTriangles](const JPH::Float3* triangle)
 			{
-				return;
-			}
-
-			// Triangles come relative to the centre of mass, so it's put back where the shape has it.
-			JPH::Shape::GetTrianglesContext context;
-			shape->GetTrianglesStart(context, JPH::AABox::sBiggest(), shape->GetCenterOfMass(), JPH::Quat::sIdentity(), JPH::Vec3::sOne());
-			constexpr int c_BatchSize = JPH::Shape::cGetTrianglesMinTrianglesRequested;
-			JPH::Float3 vertices[c_BatchSize * 3];
-			for (int count = shape->GetTrianglesNext(context, c_BatchSize, vertices); count > 0; count = shape->GetTrianglesNext(context, c_BatchSize, vertices))
-			{
-				for (int t = 0; t < count; ++t)
+				for (int v = 0; v < 3; ++v)
 				{
-					const JPH::Float3* triangle = &vertices[t * 3];
-					for (int e = 0; e < 3; ++e)
-					{
-						const JPH::Float3& a = triangle[e];
-						const JPH::Float3& b = triangle[(e + 1) % 3];
-						outLines.Add(Vector3(a.x, a.y, a.z));
-						outLines.Add(Vector3(b.x, b.y, b.z));
-					}
+					outTriangles.Add(Vector3(triangle[v].x, triangle[v].y, triangle[v].z));
 				}
-			}
+			});
+		}
+
+		void AddLines(const PhysicsShape* physicsShape, Array<Vector3>& outLines)
+		{
+			ForEachTriangle(ToJolt(physicsShape), JPH::Vec3::sZero(), JPH::Quat::sIdentity(), [&outLines](const JPH::Float3* triangle)
+			{
+				for (int e = 0; e < 3; ++e)
+				{
+					const JPH::Float3& a = triangle[e];
+					const JPH::Float3& b = triangle[(e + 1) % 3];
+					outLines.Add(Vector3(a.x, a.y, a.z));
+					outLines.Add(Vector3(b.x, b.y, b.z));
+				}
+			});
 		}
 	}
 }

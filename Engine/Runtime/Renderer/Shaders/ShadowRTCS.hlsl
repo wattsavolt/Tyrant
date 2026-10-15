@@ -64,6 +64,9 @@ static const float c_LodErrorBiasScale = 2.0f;
 static const float c_MinBias = 0.01f;
 // Back faces are ignored for this many times the bias from the ray's origin.
 static const float c_BackFaceCullBiasScale = 8.0f;
+// Rays to a point or spot light stop this far short of it, so a fixture's own mesh around its
+// light never shadows it.
+static const float c_LightClearance = 0.05f;
 
 float3 ReconstructWorldPos(int2 pixel, float deviceDepth)
 {
@@ -145,7 +148,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 	const float3 toLight = light - worldPos;
 	const float toLightDistance = length(toLight);
 	const float3 rayDirection = directional ? -normalize(light) : toLight / max(toLightDistance, 0.0001f);
-	const float rayTMax = directional ? 10000.0f : toLightDistance;
+	const float rayTMax = directional ? 10000.0f : max(toLightDistance - c_LightClearance, 0.001f);
 
 	// The acceleration structures hold LOD0, which can be up to lodErrorPerDistance * distance from
 	// the drawn LOD's surface, so the origin is lifted past that to stop the ray hitting LOD0 under

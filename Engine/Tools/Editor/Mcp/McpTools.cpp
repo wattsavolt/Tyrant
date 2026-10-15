@@ -157,6 +157,10 @@ namespace tyr
 			R"({"type":"object","properties":{}})", &McpTools::Play },
 		{ "stop", "Stops the game and goes back to editing the level.",
 			R"({"type":"object","properties":{}})", &McpTools::Stop },
+		{ "build_navmesh", "Builds the level's navmesh from everything in it that doesn't move. Save the level to keep it.",
+			R"({"type":"object","properties":{}})", &McpTools::BuildNavmesh },
+		{ "find_path", "Finds a walkable path across the navmesh of the world on screen, as the corners to walk to.",
+			R"({"type":"object","properties":{"from":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"to":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3}},"required":["from","to"]})", &McpTools::FindPath },
 		{ "undo", "Undoes the last edits to the level, whether made by a tool or in the editor. Opening or making a level clears the history.",
 			R"({"type":"object","properties":{"steps":{"type":"integer","default":1}}})", &McpTools::Undo },
 		{ "redo", "Redoes edits that were undone, until another edit is made.",
@@ -206,7 +210,8 @@ namespace tyr
 		uint connection;
 		const char* body;
 		uint bodySize;
-		while (server.TakeRequest(connection, body, bodySize))
+		// Requests wait while the level's assets are being loaded again after an import.
+		while (!m_Editor.IsRefreshingAssets() && server.TakeRequest(connection, body, bodySize))
 		{
 			HandleMessage(server, connection, body, bodySize);
 		}
@@ -234,7 +239,20 @@ namespace tyr
 			}
 			else
 			{
-				Fail("The material didn't finish loading. read_log may say why.");
+				// Says which of its textures it's still waiting on.
+				char waiting[512] = {};
+				uint dependencyCount;
+				const AssetID* dependencies = AssetRegistry::Instance().GetAssetDependencies(finished.material, dependencyCount);
+				for (uint d = 0; d < dependencyCount; ++d)
+				{
+					if (m_Editor.m_AssetManager->GetLoadState(dependencies[d]) != AssetLoadState::Loaded)
+					{
+						const size_t used = strlen(waiting);
+						snprintf(waiting + used, sizeof(waiting) - used, " %s (state %u)", AssetRegistry::Instance().GetAssetData(dependencies[d]).filePath.CStr(),
+							(uint)m_Editor.m_AssetManager->GetLoadState(dependencies[d]));
+					}
+				}
+				Fail("The material didn't finish loading. Still waiting on:%s", waiting[0] ? waiting : " nothing it lists");
 				ReplyToolResult(server, finished.connection, finished.id, true);
 			}
 			m_Editor.m_AssetManager->DeleteMaterial(finished.material);
@@ -773,7 +791,12 @@ namespace tyr
 		}
 		options.lodCount = (uint)Math::Clamp(lodCount, 0.0, (double)(MeshConstants::c_MaxLods - 1));
 
-		if (!ModelImporter::Instance().ImportModel(sourcePath, outputFolder, name, options))
+		const bool imported = ModelImporter::Instance().ImportModel(sourcePath, outputFolder, name, options);
+		if (imported)
+		{
+			m_Editor.RefreshAssets();
+		}
+		if (!imported)
 		{
 			return Fail("The import failed. read_log has the details.");
 		}
@@ -1396,6 +1419,61 @@ namespace tyr
 		return ToolResult::Done;
 	}
 
+	McpTools::ToolResult McpTools::BuildNavmesh(const dom::object& /*args*/)
+	{
+		if (!RequireEditing())
+		{
+			return ToolResult::Failed;
+		}
+		if (!m_Editor.BuildNavmesh())
+		{
+			return Fail("The level has nothing to walk on, so it has no navmesh.");
+		}
+		m_Result.BeginObject();
+		m_Result.KeyBool("built", true);
+		m_Result.KeyUInt("bytes", m_Editor.m_WorldManager->GetWorld(m_Editor.m_LevelEditorWorld).navmeshData.Size());
+		m_Result.EndObject();
+		return ToolResult::Done;
+	}
+
+	McpTools::ToolResult McpTools::FindPath(const dom::object& args)
+	{
+		Vector3 from;
+		Vector3 to;
+		GetVector3(args, "from", from);
+		GetVector3(args, "to", to);
+		if (HasArgumentError())
+		{
+			return ToolResult::Failed;
+		}
+		const World& world = m_Editor.m_WorldManager->GetWorld(m_Editor.m_WorldManager->GetActiveWorld());
+		NavmeshComponentsManager& navmesh = m_Editor.m_WorldManager->GetNavmeshComponentsManager();
+		if (!navmesh.HasNavmesh(world))
+		{
+			return Fail("The world has no navmesh. Build one with build_navmesh.");
+		}
+		NavPath path;
+		if (!navmesh.FindPath(world, from, to, path))
+		{
+			return Fail("There's no navmesh near the start or end.");
+		}
+		m_Result.BeginObject();
+		m_Result.KeyBool("partial", path.partial);
+		m_Result.Key("points");
+		m_Result.BeginArray();
+		for (const Vector3& point : path.points)
+		{
+			m_Result.BeginArray();
+			m_Result.Number(point.x);
+			m_Result.Number(point.y);
+			m_Result.Number(point.z);
+			m_Result.EndArray();
+		}
+		m_Result.EndArray();
+		m_Result.EndObject();
+		return ToolResult::Done;
+	}
+
 	McpTools::ToolResult McpTools::Undo(const dom::object& args)
 	{
 		return UndoSteps(args, false);
@@ -1759,7 +1837,12 @@ namespace tyr
 		}
 
 		AssetID textureID;
-		if (!MaterialImporter::Instance().ImportSkyCubemap(sourcePath, outputFolder, name, (uint)Math::Clamp(faceSize, 0.0, 4096.0), textureID))
+		const bool importedSky = MaterialImporter::Instance().ImportSkyCubemap(sourcePath, outputFolder, name, (uint)Math::Clamp(faceSize, 0.0, 4096.0), textureID);
+		if (importedSky)
+		{
+			m_Editor.RefreshAssets();
+		}
+		if (!importedSky)
 		{
 			return Fail("The import failed. read_log has the details.");
 		}
@@ -1853,8 +1936,6 @@ namespace tyr
 		ToolResult found = FindLoadedMaterial(args, material);
 		if (found == ToolResult::Done && AssetUtil::IsValidAssetID(layer) && !m_Editor.m_AssetManager->GetMaterialFile(layer))
 		{
-			// Waits on the layer the same way, keeping the material loaded with an extra reference.
-			m_Editor.m_AssetManager->LoadMaterial(material);
 			found = WaitForMaterial(layer);
 		}
 		if (found != ToolResult::Done)

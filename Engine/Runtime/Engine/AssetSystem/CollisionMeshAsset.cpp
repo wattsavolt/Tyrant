@@ -1,12 +1,12 @@
 #include "CollisionMeshAsset.h"
-#include "Physics/CollisionShapes.h"
+#include "PhysicsShapes.h"
 
 namespace tyr
 {
 	void CollisionMesh::Reset()
 	{
-		CollisionShapes::Release(triangleShape);
-		CollisionShapes::Release(convexShape);
+		PhysicsShapes::Release(triangleShape);
+		PhysicsShapes::Release(convexShape);
 		triangleShape = nullptr;
 		convexShape = nullptr;
 #if TYR_EDITOR
@@ -26,10 +26,10 @@ namespace tyr
 			return;
 		}
 
-		CollisionShapes::Read(stream, collisionMesh.triangleShape, collisionMesh.convexShape);
+		PhysicsShapes::ReadMeshShapes(stream, collisionMesh.triangleShape, collisionMesh.convexShape);
 #if TYR_EDITOR
-		CollisionShapes::AddLines(collisionMesh.triangleShape, collisionMesh.triangleLines);
-		CollisionShapes::AddLines(collisionMesh.convexShape, collisionMesh.convexLines);
+		PhysicsShapes::AddLines(collisionMesh.triangleShape, collisionMesh.triangleLines);
+		PhysicsShapes::AddLines(collisionMesh.convexShape, collisionMesh.convexLines);
 #endif
 	}
 }

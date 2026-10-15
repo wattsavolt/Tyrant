@@ -78,6 +78,11 @@ namespace tyr
 		return success;
 	}
 
+	bool RenderAllocationManager::CanRequestResourceUploadAllocations(const size_t* sizes, uint count) const
+	{
+		return m_ResourceUploadAllocator->CanAllocate(sizes, count);
+	}
+
 	void RenderAllocationManager::SignalResourceUpload(Handle resourceId, uint64 timelineValue)
 	{
 		m_ResourceUploadAllocator->Signal(resourceId, timelineValue);

@@ -153,11 +153,14 @@ namespace tyr
 		// Flat ambient term added to every pixel regardless of any light. Written straight into
 		// ImmediateSceneData - unlike SetSceneWindow/SetSceneRenderViewport, RenderAsync never
 		// reads this, so there's no SceneFrame merge to also queue.
-		void SetSceneAmbient(SceneHandle scene, float ambient);
+		// skyAmbient is only added where a surface can see the sky.
+		void SetSceneAmbient(SceneHandle scene, float ambient, float skyAmbient);
 
 		// The scene's sky and exposure, read every frame it renders. Main thread only, like ambient.
 		void SetSceneSky(SceneHandle scene, const SkySettings& sky);
 		void SetSceneExposure(SceneHandle scene, const ExposureSettings& exposure);
+		void SetSceneBloom(SceneHandle scene, const BloomSettings& bloom);
+		void SetSceneScreenEffects(SceneHandle scene, const ScreenEffects& effects);
 
 		// Sizes the viewport to its scene's window and shows it on all of it, under any UI,
 		// rather than in an editor panel.
@@ -196,6 +199,8 @@ namespace tyr
 		void DeleteDecal(SceneHandle scene, DecalHandle handle);
 
 		bool RequestResourceUploadAllocation(size_t size, UploadBufferAllocation& allocation);
+		// True when upload allocations of these sizes, requested in order, would all succeed.
+		bool CanRequestResourceUploadAllocations(const size_t* sizes, uint count) const;
 
 		void FlushBufferUploadAllocation(const UploadBufferAllocation& alloc);
 

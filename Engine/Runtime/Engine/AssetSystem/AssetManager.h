@@ -43,6 +43,10 @@ namespace tyr
 
 		// Frees the asset now if it's only being kept loaded for reuse, e.g. before its file is deleted.
 		void EvictUnreferencedAsset(AssetID assetID);
+		// Frees every asset kept loaded only for reuse, so the next load of any of them reads its file.
+		void EvictAllUnreferencedAssets();
+		// True while an asset released before it finished loading is still waiting to be freed.
+		bool HasPendingDeletes() const;
 
 		void LoadMaterial(AssetID assetID);
 
@@ -150,7 +154,8 @@ namespace tyr
 		// Mesh loading pipeline: load the header, create GPU geometry/LOD buffers and
 		// upload allocations sized from it, then submit the geometry upload once each
 		// LOD's data is ready.
-		void CreateMesh(MeshHeaderLoadData* ld);
+		// Returns false, without creating anything, when there's no upload space yet.
+		bool CreateMesh(MeshHeaderLoadData* ld);
 		void UploadMeshGeometry(MeshGeometryLoadData* ld);
 		// Frees a mesh's renderer resource and AssetData entry, deferred until any
 		// in-flight load for it has finished.
@@ -202,6 +207,7 @@ namespace tyr
 		Array<MaterialLoadData*> m_MaterialsAwaitingTextures;
 		// Textures waiting for upload space, such as when a level loads many at once. In load order.
 		Array<TextureHeaderLoadData*> m_TexturesAwaitingUploadSpace;
+		Array<MeshHeaderLoadData*> m_MeshesAwaitingUploadSpace;
 		// Mesh instances' assets still loading - waiting on their mesh's header and every
 		// material they'll need.
 		Array<MeshInstanceAssetsRequest*> m_PendingMeshInstanceAssets;

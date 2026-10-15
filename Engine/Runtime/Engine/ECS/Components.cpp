@@ -19,6 +19,7 @@ namespace tyr
 	TYR_COMPONENT_START(MeshComponent, 0);
 		TYR_COMPONENT_FIELD(&MeshComponent::mesh, "Mesh", true, true, true);
 		TYR_COMPONENT_FIELD(&MeshComponent::materials, "Materials", true, true, true);
+		TYR_COMPONENT_FIELD(&MeshComponent::emissiveScale, "Emissive Scale", true, true, true);
 	TYR_COMPONENT_END();
 
 	TYR_COMPONENT_START(SkeletalMeshComponent, 0);
@@ -116,6 +117,35 @@ namespace tyr
 		TYR_COMPONENT_FIELD(&DoorPanelComponent::door, "Door", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorPanelComponent::key, "Key", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorPanelComponent::powered, "Powered", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(LightFixtureComponent, 0);
+		TYR_COMPONENT_FIELD(&LightFixtureComponent::circuit, "Circuit", true, true, true);
+		TYR_COMPONENT_FIELD(&LightFixtureComponent::state, "State", true, true, true);
+		TYR_COMPONENT_FIELD(&LightFixtureComponent::switchedOn, "Switched On", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(LightSwitchComponent, 0);
+		TYR_COMPONENT_FIELD(&LightSwitchComponent::circuit, "Circuit", true, true, true);
+		TYR_COMPONENT_FIELD(&LightSwitchComponent::switchedOn, "Switched On", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(FlashlightComponent, 0);
+		TYR_COMPONENT_FIELD(&FlashlightComponent::on, "On", true, true, true);
+		TYR_COMPONENT_FIELD(&FlashlightComponent::offset, "Offset", true, true, true);
+		TYR_COMPONENT_FIELD(&FlashlightComponent::followSpeed, "Follow Speed", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(HealthComponent, 0);
+		TYR_COMPONENT_FIELD(&HealthComponent::maxHealth, "Max Health", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(NavmeshBoundsComponent, 0);
+		TYR_COMPONENT_FIELD(&NavmeshBoundsComponent::halfExtents, "Half Extents", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(GeneratorComponent, 0);
+		TYR_COMPONENT_FIELD(&GeneratorComponent::running, "Running", true, true, true);
 	TYR_COMPONENT_END();
 
 	TYR_COMPONENT_START(PickupComponent, 0);

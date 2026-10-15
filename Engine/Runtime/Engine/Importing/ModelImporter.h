@@ -5,7 +5,7 @@
 #include "AssetSystem/AssetID.h"
 #include "AssetSystem/MeshAsset.h"
 #include "IModelLoader.h"
-#include "Physics/CollisionShapes.h"
+#include "PhysicsShapes.h"
 
 namespace tyr
 {

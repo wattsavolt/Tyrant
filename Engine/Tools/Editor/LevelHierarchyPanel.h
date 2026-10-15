@@ -43,6 +43,8 @@ namespace tyr
 		// Changes made while drawing, applied once drawing is done since they reorder the lists.
 		struct PendingEdits
 		{
+			// An actor was double-clicked, so the camera goes to it.
+			bool frameSelected = false;
 			Entity actorToDelete = c_InvalidEntity;
 			Entity actorToMove = c_InvalidEntity;
 			RelativePath moveTarget;

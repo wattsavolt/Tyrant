@@ -114,6 +114,7 @@ namespace tyr
 
 		DrawActorPicker(requests);
 		ApplyEdits(world, selectedActor, edits);
+		requests.frameSelected |= edits.frameSelected;
 		if (edits.placeMesh)
 		{
 			requests.placeMesh = true;
@@ -343,6 +344,11 @@ namespace tyr
 			if (ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right))
 			{
 				selectedActor = rootEntity;
+			}
+			if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+			{
+				selectedActor = rootEntity;
+				edits.frameSelected = true;
 			}
 
 			if (m_Editing && ImGui::BeginDragDropSource())

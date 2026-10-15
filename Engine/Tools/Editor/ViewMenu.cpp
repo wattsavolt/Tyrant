@@ -17,6 +17,10 @@ namespace tyr
 			ImGui::MenuItem("Light Ranges", nullptr, &settings.showLightRanges);
 			ImGui::MenuItem("Actor Names", nullptr, &settings.showActorNames);
 			ImGui::MenuItem("Colliders", nullptr, &settings.showColliders);
+			ImGui::MenuItem("Noise", nullptr, &settings.showNoise);
+			ImGui::MenuItem("Navmesh", nullptr, &settings.showNavmesh);
+			ImGui::Separator();
+			ImGui::MenuItem("Stats", nullptr, &settings.showStats);
 			ImGui::EndMenu();
 		}
 	}

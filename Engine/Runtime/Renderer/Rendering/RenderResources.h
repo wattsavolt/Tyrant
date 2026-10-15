@@ -96,6 +96,10 @@ namespace tyr
 		ShaderModuleHandle exposureComputeShader;
 		// Exposes and tone maps the image into the viewport's display texture.
 		ComputePipelineHandle tonemapPipeline;
+		ShaderModuleHandle bloomDownsampleComputeShader;
+		ShaderModuleHandle bloomUpsampleComputeShader;
+		ComputePipelineHandle bloomDownsamplePipeline;
+		ComputePipelineHandle bloomUpsamplePipeline;
 		ShaderModuleHandle tonemapComputeShader;
 
 		// Full-screen compute pass that reads the G-buffer + depth and writes the shaded result
@@ -139,7 +143,7 @@ namespace tyr
 		// shadow slot.
 		ComputePipelineHandle shadowDenoisePipeline;
 		ShaderModuleHandle shadowDenoiseComputeShader;
-		// DeferredLightingCS's light-index -> shadow-slot lookup, CPU-built and re-uploaded every
+		// DeferredLightingRTCS's light-index -> shadow-slot lookup, CPU-built and re-uploaded every
 		// tick (not buffered per RenderFrame slot - written and consumed within the same tick, no
 		// different than activeMeshInstanceIndexBuffer).
 		RenderBufferHandle shadowLightSlotMapBuffer;

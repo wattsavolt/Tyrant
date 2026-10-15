@@ -47,9 +47,9 @@ namespace tyr
 		void DrawOpenLevelPopup(EditorRequests& requests);
 
 		void Import();
-		void DrawImportOptionsWindow();
+		void DrawImportOptionsWindow(EditorRequests& requests);
 		// An equirectangular HDR image, made into a sky cubemap.
-		void DrawSkyImportOptionsWindow();
+		void DrawSkyImportOptionsWindow(EditorRequests& requests);
 
 		const EditorSettings& m_Settings;
 		LevelAction m_PendingAction = LevelAction::None;

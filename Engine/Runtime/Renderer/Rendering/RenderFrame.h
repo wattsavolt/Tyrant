@@ -188,6 +188,10 @@ namespace tyr
 		uint visibleDecalCount = 0;
 		// The active scene's exposure, and how the active window shows images, for this frame.
 		ExposureSettings exposure;
+		BloomSettings bloom;
+		ScreenEffects screenEffects;
+		// Ambient added only where a surface can see the sky.
+		float skyAmbient = 0.0f;
 		DisplayOutput displayOutput = DisplayOutput::SDR;
 		// The tone mapper's brightest output, where 1 is paper white, and what its output is scaled by.
 		float peakBrightness = 1.0f;

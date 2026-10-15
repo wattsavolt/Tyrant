@@ -45,6 +45,23 @@ namespace tyr
 		float darkenSpeed = 3.0f;
 	};
 
+	// Full-screen effects gameplay sets each frame, applied after tone mapping.
+	struct ScreenEffects
+	{
+		// 0 shows the image and 1 is black.
+		float fade = 0.0f;
+		// A colour washed over the image, strongest at its edges, such as red when hurt.
+		Vector3 flashColour = Vector3(0.6f, 0.0f, 0.0f);
+		float flash = 0.0f;
+	};
+
+	// Bright light spilling into the pixels around it. Set per level.
+	struct BloomSettings
+	{
+		// How much of the image is the blurred glow, 0 for none.
+		float intensity = 0.1f;
+	};
+
 	// What's drawn where nothing else is. Set per level.
 	struct SkySettings
 	{

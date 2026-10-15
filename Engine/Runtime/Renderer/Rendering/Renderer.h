@@ -227,6 +227,8 @@ namespace tyr
 		void RecordExposurePass(CommandList& cmdList, uint renderFrameIndex);
 		// Exposes and tone maps sourceIndex's image into the slot's display texture.
 		void RecordTonemapPass(CommandList& cmdList, uint renderFrameIndex, uint sourceIndex);
+		// Downsamples sourceIndex into bloom level, or with upsample, adds level + 1 onto level.
+		void RecordBloomPass(CommandList& cmdList, uint renderFrameIndex, uint level, uint sourceIndex, bool upsample);
 		// Draws the viewport grid over sourceIndex's image into the slot's overlay texture.
 		void RecordEditorGridPass(CommandList& cmdList, uint renderFrameIndex, uint sourceIndex);
 		// Draws this frame's debug lines into the slot's overlay texture.
@@ -278,6 +280,7 @@ namespace tyr
 		void EnsureEditorGridOutputBound(uint renderFrameIndex, TextureHandle overlayColourTexture);
 		// Same idea as EnsureLightingOutputBound, for the tone mapper's output.
 		void EnsureDisplayOutputBound(uint renderFrameIndex, TextureHandle displayColourTexture);
+		void EnsureBloomBound(uint renderFrameIndex, const RenderViewportTextureData& targets);
 		// Reads the window's display again and recreates its swap chain if it should now be HDR
 		// or SDR, or just if resize is set. Stalls until the GPU is idle when it recreates.
 		void UpdateWindowOutput(RenderWindow& window, bool resize);
@@ -356,6 +359,7 @@ namespace tyr
 		TextureHandle m_TaaResolveOutputBoundTextures[RenderConstants::c_BufferedFrameCount];
 		TextureHandle m_EditorGridOutputBoundTextures[RenderConstants::c_BufferedFrameCount];
 		TextureHandle m_DisplayOutputBoundTextures[RenderConstants::c_BufferedFrameCount];
+		TextureHandle m_BloomBoundTextures[RenderConstants::c_BufferedFrameCount][RenderConstants::c_BloomLevels];
 		// Main thread only.
 		DisplaySettings m_DisplaySettings;
 		// The window the active scene last drew to. Main thread only.

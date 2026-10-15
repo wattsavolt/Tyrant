@@ -155,6 +155,67 @@ if (NOT TYR_FINAL_MODE)
 	set_target_properties(imgui PROPERTIES FOLDER ThirdParty)
 endif()
 
+## Recast & Detour - submodule, pinned to v1.6.0. Built from their sources rather than their own
+## CMakeLists, which also build a demo, tests and install rules. Detour finds paths at runtime, so it's
+## always built. Recast builds navmeshes, which only the editor does.
+set(TYR_RECAST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Submodule/recastnavigation)
+file(GLOB DETOUR_SRCS ${TYR_RECAST_DIR}/Detour/Source/*.cpp)
+add_library(Detour STATIC ${DETOUR_SRCS})
+target_include_directories(Detour PUBLIC ${TYR_RECAST_DIR}/Detour/Include)
+set(TYR_RECAST_TARGETS Detour)
+
+if (TYR_EDITOR_MODE)
+	file(GLOB RECAST_SRCS ${TYR_RECAST_DIR}/Recast/Source/*.cpp)
+	add_library(Recast STATIC ${RECAST_SRCS})
+	target_include_directories(Recast PUBLIC ${TYR_RECAST_DIR}/Recast/Include)
+	list(APPEND TYR_RECAST_TARGETS Recast)
+endif()
+
+foreach(RECAST_TARGET ${TYR_RECAST_TARGETS})
+	if(MSVC)
+		# Vendored code - don't hold it to our own warning level.
+		target_compile_options(${RECAST_TARGET} PRIVATE /w)
+		# Same reasoning as the libraries above - keep _ITERATOR_DEBUG_LEVEL in sync for the linker.
+		target_compile_definitions(${RECAST_TARGET} PRIVATE _ITERATOR_DEBUG_LEVEL=0)
+	endif()
+	set_target_properties(${RECAST_TARGET} PROPERTIES FOLDER ThirdParty)
+endforeach()
+
+## FMOD - audio. Its licence doesn't allow sharing the SDK, so it's never committed: it lives in
+## ThirdParty/Licensed/FMOD, which git ignores, copied there from the FMOD Engine installer's folder
+## the first time CMake finds it. Without it, everything builds and runs without audio.
+set(TYR_FMOD_INSTALL_DIR "C:/Program Files (x86)/FMOD SoundSystem/FMOD Studio API Windows" CACHE PATH
+	"Where the FMOD Engine installer put its SDK, copied from when ThirdParty/Licensed/FMOD is missing.")
+set(TYR_FMOD_DIR ${TYR_THIRD_PARTY_DIR}/Licensed/FMOD)
+if (WIN32 AND NOT EXISTS ${TYR_FMOD_DIR}/core/inc/fmod.h AND EXISTS ${TYR_FMOD_INSTALL_DIR}/api/core/inc/fmod.h)
+	message(STATUS "Copying the FMOD SDK from ${TYR_FMOD_INSTALL_DIR}")
+	foreach(FMOD_PART core studio)
+		file(COPY ${TYR_FMOD_INSTALL_DIR}/api/${FMOD_PART}/inc DESTINATION ${TYR_FMOD_DIR}/${FMOD_PART})
+		file(COPY ${TYR_FMOD_INSTALL_DIR}/api/${FMOD_PART}/lib/${TYR_ARCHITECTURE} DESTINATION ${TYR_FMOD_DIR}/${FMOD_PART}/lib)
+	endforeach()
+endif()
+
+if (WIN32 AND EXISTS ${TYR_FMOD_DIR}/core/inc/fmod.h AND EXISTS ${TYR_FMOD_DIR}/studio/inc/fmod_studio.h)
+	set(TYR_HAS_FMOD ON CACHE INTERNAL "")
+	# The core and Studio libraries, as DLLs with import libraries.
+	foreach(FMOD_LIB fmod fmodstudio)
+		set(FMOD_PART core)
+		if (FMOD_LIB STREQUAL "fmodstudio")
+			set(FMOD_PART studio)
+		endif()
+		set(FMOD_LIB_DIR ${TYR_FMOD_DIR}/${FMOD_PART}/lib/${TYR_ARCHITECTURE})
+		add_library(${FMOD_LIB} SHARED IMPORTED GLOBAL)
+		set_target_properties(${FMOD_LIB} PROPERTIES
+			IMPORTED_LOCATION ${FMOD_LIB_DIR}/${FMOD_LIB}${CMAKE_SHARED_LIBRARY_SUFFIX}
+			IMPORTED_IMPLIB ${FMOD_LIB_DIR}/${FMOD_LIB}_vc${CMAKE_IMPORT_LIBRARY_SUFFIX}
+			INTERFACE_INCLUDE_DIRECTORIES ${TYR_FMOD_DIR}/${FMOD_PART}/inc)
+	endforeach()
+else()
+	set(TYR_HAS_FMOD OFF CACHE INTERNAL "")
+	message(STATUS "FMOD wasn't found, so the engine builds without audio. Install the FMOD Engine SDK "
+		"(fmod.com/download) or set TYR_FMOD_INSTALL_DIR to where it is, then configure again.")
+endif()
+
 ## Nuklear - submodule, pinned to v4.13.3. Single header, no build of its own needed - always
 ## available (not gated on TYR_FINAL_MODE/TYR_EDITOR_MODE) since it's the always-on runtime GUI
 ## (in-game HUD/menu), used by both an editor "play in editor" preview and the final shipped

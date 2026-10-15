@@ -29,6 +29,8 @@ namespace tyr
 		~RenderAllocationManager();
 
 		bool RequestResourceUploadAllocation(size_t size, UploadBufferAllocation& allocation);
+		// True when upload allocations of these sizes, requested in order, would all succeed.
+		bool CanRequestResourceUploadAllocations(const size_t* sizes, uint count) const;
 
 		// Only ever called from the main thread, once a submission's timeline value is known.
 		void SignalResourceUpload(Handle resourceId, uint64 timelineValue);

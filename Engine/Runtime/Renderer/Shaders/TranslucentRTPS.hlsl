@@ -45,6 +45,9 @@ TYR_VK_PUSH_CONSTANT CullPushConstants g_PushConstants;
 static const uint c_ShadowSlotNone = 0xFFFFFFFFu;
 // How far shadow rays start off the surface.
 static const float c_ShadowBias = 0.02f;
+// Rays to a point or spot light stop this far short of it, so a fixture's own mesh around its
+// light never shadows it.
+static const float c_LightClearance = 0.05f;
 static const float c_ShadowTMin = 0.001f;
 // A directional light's rays go this far, enough to clear any scene.
 static const float c_DirectionalShadowDistance = 10000.0f;
@@ -62,9 +65,14 @@ struct TranslucentOutput
 };
 
 // 1 if nothing blocks the way to the light, otherwise 0. A ray no longer than its start distance
-// is never blocked, which is how lights without shadows skip the trace.
+// is never blocked and isn't traced, which is how unshadowed or unlit cases skip the trace.
 float TraceShadow(float3 origin, float3 direction, float distance)
 {
+	if (distance <= c_ShadowTMin)
+	{
+		return 1.0f;
+	}
+
 	RayDesc ray;
 	ray.Origin = origin;
 	ray.Direction = direction;
@@ -152,7 +160,8 @@ TranslucentOutput main(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace)
 		float3 lightDir;
 		float lightDistance;
 		const float3 radiance = GetPointLightRadiance(light, position, lightDir, lightDistance);
-		const float shadowDistance = shadowLightSlotMap[j] != c_ShadowSlotNone ? lightDistance : 0.0f;
+		const float lit = max(radiance.r, max(radiance.g, radiance.b)) > 0.0f ? 1.0f : 0.0f;
+		const float shadowDistance = (lightDistance - c_LightClearance) * light.castsShadow * lit;
 		const float shadow = TraceShadow(shadowOrigin, lightDir, shadowDistance);
 		colour += ShadeLight(mat, opacity, surfaceNormal, viewDir, lightDir, radiance) * shadow;
 	}
@@ -163,7 +172,8 @@ TranslucentOutput main(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace)
 		float3 lightDir;
 		float lightDistance;
 		const float3 radiance = GetSpotLightRadiance(light, position, lightDir, lightDistance);
-		const float shadowDistance = shadowLightSlotMap[TYR_MAX_POINT_LIGHTS + k] != c_ShadowSlotNone ? lightDistance : 0.0f;
+		const float lit = max(radiance.r, max(radiance.g, radiance.b)) > 0.0f ? 1.0f : 0.0f;
+		const float shadowDistance = (lightDistance - c_LightClearance) * light.castsShadow * lit;
 		const float shadow = TraceShadow(shadowOrigin, lightDir, shadowDistance);
 		colour += ShadeLight(mat, opacity, surfaceNormal, viewDir, lightDir, radiance) * shadow;
 	}

@@ -61,6 +61,8 @@ struct GBufferOutput
 	// Screen-space motion vector: current NDC.xy minus reprojected previous-frame NDC.xy of
 	// this same world position. Camera and skinned vertex motion only for now.
 	float2 motion : SV_TARGET2;
+	// Light the surface gives off, added by the lighting pass.
+	float4 emissive : SV_TARGET3;
 };
 
 #if TYR_MASKED_PASS
@@ -137,6 +139,7 @@ GBufferOutput main(VS_OUTPUT input)
 	output.albedoAO = float4(albedo, ao);
 	output.normalRoughMetal = float4(EncodeOct(perturbedNormal), roughness, metallic);
 	output.motion = motion;
+	output.emissive = float4(material.emissive * input.emissiveScale, 0.0f);
 	return output;
 }
 

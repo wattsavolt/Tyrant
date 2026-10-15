@@ -33,6 +33,9 @@ namespace tyr
 			params.normalStrength = material.normalTexture.has_value() ? material.normalTexture->scale : 1.0f;
 			params.occlusionStrength = material.occlusionTexture.has_value() ? material.occlusionTexture->strength : 1.0f;
 
+			params.emissiveColour = Vector3(material.emissiveFactor[0], material.emissiveFactor[1], material.emissiveFactor[2]);
+			params.emissiveIntensity = material.emissiveStrength;
+
 			params.alphaCutoff = material.alphaCutoff;
 			MaterialBlendMode blendMode = MaterialBlendMode::Opaque;
 			switch (material.alphaMode)
@@ -290,7 +293,7 @@ namespace tyr
 		PathUtil::GetDirectoryPathFromFilePath(filePath, baseDirectory);
 		m_BaseDirectory = baseDirectory;
 
-		fastgltf::Parser parser(fastgltf::Extensions::KHR_texture_transform);
+		fastgltf::Parser parser(fastgltf::Extensions::KHR_texture_transform | fastgltf::Extensions::KHR_materials_emissive_strength);
 
 		// LoadExternalBuffers so loose .bin files actually get read (a GLB's own embedded
 		// binary chunk is always available regardless of this flag). GenerateMeshIndices so

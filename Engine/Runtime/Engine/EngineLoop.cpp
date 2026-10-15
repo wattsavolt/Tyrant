@@ -8,6 +8,9 @@
 #include "World/WorldManager.h"
 #include "World/WorldModule.h"
 #include "RendererModule.h"
+#include "AudioModule.h"
+#include "PhysicsModule.h"
+#include "NavmeshModule.h"
 #include "GUI/GUIModule.h"
 #include "BuildConfig.h"
 #include "World/Camera.h"
@@ -46,6 +49,13 @@ namespace tyr
 		// registered here, early, executes late in each phase. RendererModule must run after
 		// every module that writes into the current render frame, so keep it registered before them.
 		TYR_REGISTER_MODULE(GUIModule);
+		// After the world has placed the listener, so sounds come from where things are this frame.
+		TYR_REGISTER_MODULE(AudioModule);
+		// Started before the assets, whose collision meshes are physics shapes, and the worlds that
+		// simulate them. Shut down after both, once they've let go of their shapes and bodies.
+		TYR_REGISTER_MODULE(PhysicsModule);
+		// Before the worlds, which load their levels' navmeshes into it.
+		TYR_REGISTER_MODULE(NavmeshModule);
 		TYR_REGISTER_MODULE(InputModule);
 		TYR_REGISTER_MODULE(AssetModule);
 		TYR_REGISTER_MODULE(WorldModule);

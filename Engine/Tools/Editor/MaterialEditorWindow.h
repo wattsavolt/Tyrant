@@ -22,9 +22,10 @@ namespace tyr
 		// Shows the material in the window, keeping it loaded while it's shown.
 		void Open(AssetID material);
 		void Draw();
+		// Saves any changes and lets go of the material.
+		void Close();
 
 	private:
-		void Close();
 		// Picks a material to take the layer's textures from, and removes the layer.
 		void DrawLayer(const MaterialAssetFile& file);
 

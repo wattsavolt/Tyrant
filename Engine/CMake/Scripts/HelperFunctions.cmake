@@ -276,20 +276,20 @@ function(set_shader_config srcs)
 endfunction()
 
 function(copy_thirdparty_binaries targetName)
-	file(GLOB_RECURSE BIN_PATHS RELATIVE ${TYR_THIRD_PARTY_COMPILED_LIBS_DIR} "${TYR_THIRD_PARTY_COMPILED_LIBS_DIR}/*${CMAKE_SHARED_LIBRARY_SUFFIX}")
-	# message("BIN PATHS: ${BIN_PATHS}")
-	foreach(CUR_PATH ${BIN_PATHS})	
-		get_filename_component(FILENAME ${CUR_PATH} NAME)
+	# Licensed SDKs, such as FMOD, are only there on machines that have them.
+	file(GLOB_RECURSE BIN_PATHS "${TYR_THIRD_PARTY_COMPILED_LIBS_DIR}/*${CMAKE_SHARED_LIBRARY_SUFFIX}"
+		"${TYR_THIRD_PARTY_DIR}/Licensed/*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+	foreach(SRC ${BIN_PATHS})
+		get_filename_component(FILENAME ${SRC} NAME)
 
-		set(SRC ${TYR_THIRD_PARTY_COMPILED_LIBS_DIR}/${CUR_PATH})
-		
 		# Note: $<CONFIG> is only known at compile time and not at configuration time.
 
 		add_custom_command(
 			TARGET ${targetName} POST_BUILD
 			COMMAND ${CMAKE_COMMAND}
 			ARGS    -E copy_if_different ${SRC} ${TYR_BINARY_OUTPUT_DIR}/$<CONFIG>/${FILENAME}
-			COMMENT "Copying ${SRC} to ${TYR_BINARY_OUTPUT_DIR}/$<CONFIG>/${FILENAME} \n")
+			COMMENT "Copying ${SRC} to ${TYR_BINARY_OUTPUT_DIR}/$<CONFIG>/${FILENAME} 
+")
 	endforeach()
 endfunction()
 

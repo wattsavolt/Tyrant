@@ -17,6 +17,12 @@ namespace tyr
 		AssetID mesh;
 		bool undo = false;
 		bool redo = false;
+		// Moves the camera to show the selected actor.
+		bool frameSelected = false;
+		// Builds the level's navmesh from its colliders.
+		bool buildNavmesh = false;
+		// Something was imported, so the open level's assets are loaded again from their files.
+		bool refreshAssets = false;
 		// The hierarchy folder, empty for the root.
 		RelativePath folder;
 

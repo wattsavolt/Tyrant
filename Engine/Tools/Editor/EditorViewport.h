@@ -43,6 +43,7 @@ namespace tyr
 			Entity selectedActor = c_InvalidEntity;
 			bool snapToGrid = false;
 			float gridCellSize = 1.0f;
+			bool showStats = false;
 		};
 
 		// What happened in the viewport this frame.
@@ -81,6 +82,8 @@ namespace tyr
 		bool DrawGizmoButtons(float imageRight, float imageTop);
 		// Returns true when clicked.
 		bool DrawGizmoButton(EditorIcons::Icon icon, const char* tooltip, bool active);
+		// Averages the frame times and draws the frame rate in the image's top left corner.
+		void DrawStats(float deltaTime, float imageX, float imageY);
 		// W, E and R switch the gizmo like in Unreal, unless the camera is flying.
 		void HandleGizmoShortcuts();
 
@@ -92,5 +95,11 @@ namespace tyr
 		// Translate and rotate along the world's axes rather than the actor's own. Scaling is
 		// always along the actor's own axes.
 		bool m_GizmoWorldSpace = true;
+
+		// Frames and time counted towards the next frame rate shown, and the one shown now.
+		uint m_StatsFrames = 0;
+		float m_StatsTime = 0.0f;
+		float m_ShownFps = 0.0f;
+		float m_ShownFrameMs = 0.0f;
 	};
 }

@@ -405,7 +405,7 @@ namespace tyr
 			SmartStack<uint8> streamBufferStack = SmartStackAlloc<uint8>((uint)c_CollisionStreamBufferSize);
 			BufferedFileStream stream(streamBufferStack, c_CollisionStreamBufferSize, absCollisionPath, BinaryStream::Operation::Write, true);
 			Serialize<uint>(stream, CollisionMesh::c_FileVersion);
-			written = CollisionShapes::Write(stream, m_CollisionPieces.Data(), m_CollisionPieces.Size(), meshName);
+			written = PhysicsShapes::WriteMeshShapes(stream, m_CollisionPieces.Data(), m_CollisionPieces.Size(), meshName);
 		}
 
 		if (!written)
@@ -761,9 +761,10 @@ namespace tyr
 				}
 
 				const size_t submeshMaxMeshlets = meshopt_buildMeshletsBound(submeshIndexCount, c_MaxMeshletVertices, c_MaxMeshletTriangles);
+				// Sized as meshoptimizer asks: every meshlet may be partly filled, and triangles are padded.
 				SmartStack<meshopt_Meshlet> rawMeshletsStack = SmartStackAlloc<meshopt_Meshlet>((uint)submeshMaxMeshlets);
-				SmartStack<uint> meshletVerticesStack = SmartStackAlloc<uint>(submeshIndexCount);
-				SmartStack<uint8> meshletTrianglesStack = SmartStackAlloc<uint8>(submeshIndexCount);
+				SmartStack<uint> meshletVerticesStack = SmartStackAlloc<uint>((uint)submeshMaxMeshlets * c_MaxMeshletVertices);
+				SmartStack<uint8> meshletTrianglesStack = SmartStackAlloc<uint8>((uint)submeshMaxMeshlets * c_MaxMeshletTriangles * 3);
 				meshopt_Meshlet* rawMeshlets = rawMeshletsStack;
 				uint* meshletVertices = meshletVerticesStack;
 				uint8* meshletTriangles = meshletTrianglesStack;

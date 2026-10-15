@@ -15,36 +15,65 @@ namespace tyr
 		}
 	}
 
+	bool ResourceUploadAllocator::FindFreeRun(const bool* chunkFree, uint chunkCount, size_t size, uint& outStart, uint& outLength)
+	{
+		outLength = (uint)((size + c_ChunkSize - 1) / c_ChunkSize);
+		uint runLength = 0;
+		for (uint i = 0; i < chunkCount; ++i)
+		{
+			if (!chunkFree[i])
+			{
+				runLength = 0;
+				continue;
+			}
+			if (runLength == 0)
+			{
+				outStart = i;
+			}
+			++runLength;
+			if (runLength == outLength)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool ResourceUploadAllocator::CanAllocate(const size_t* sizes, uint count) const
+	{
+		if (m_LiveIds.Size() + count > c_MaxInFlightAllocations)
+		{
+			return false;
+		}
+
+		bool chunkFree[c_MaxChunks];
+		for (uint i = 0; i < m_ChunkCount; ++i)
+		{
+			chunkFree[i] = m_ChunkFree[i];
+		}
+		for (uint i = 0; i < count; ++i)
+		{
+			uint runStart = 0;
+			uint runLength = 0;
+			if (!FindFreeRun(chunkFree, m_ChunkCount, sizes[i], runStart, runLength))
+			{
+				return false;
+			}
+			for (uint c = runStart; c < runStart + runLength; ++c)
+			{
+				chunkFree[c] = false;
+			}
+		}
+		return true;
+	}
+
 	bool ResourceUploadAllocator::Allocate(size_t size, size_t alignment, Allocation& allocation)
 	{
 		TYR_ASSERT(alignment <= c_ChunkSize);
 
-		const uint chunksNeeded = (uint)((size + c_ChunkSize - 1) / c_ChunkSize);
-
 		uint runStart = 0;
-		uint runLength = 0;
-		for (uint i = 0; i < m_ChunkCount; ++i)
-		{
-			if (m_ChunkFree[i])
-			{
-				if (runLength == 0)
-				{
-					runStart = i;
-				}
-				++runLength;
-
-				if (runLength == chunksNeeded)
-				{
-					break;
-				}
-			}
-			else
-			{
-				runLength = 0;
-			}
-		}
-
-		if (runLength < chunksNeeded)
+		uint chunksNeeded = 0;
+		if (m_LiveIds.Size() >= c_MaxInFlightAllocations || !FindFreeRun(m_ChunkFree, m_ChunkCount, size, runStart, chunksNeeded))
 		{
 			return false;
 		}

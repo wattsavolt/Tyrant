@@ -19,8 +19,6 @@ namespace tyr
 		// How quickly it gets up to speed or stops, in metres per second per second.
 		float acceleration = 14.0f;
 		float airAcceleration = 3.0f;
-		// Upward speed a jump starts with, in metres per second.
-		float jumpSpeed = 4.0f;
 		// How far below the top of the character the eyes are.
 		float eyeDepth = 0.12f;
 		// How fast the eyes move between standing and crouching heights, in metres per second.
@@ -31,11 +29,19 @@ namespace tyr
 		float gamepadLookSpeed = 160.0f;
 		// How far up or down it can look, in degrees.
 		float maxPitch = 85.0f;
+		// Metres walked between footsteps, and how far each is heard, by gait.
+		float walkStride = 0.75f;
+		float sprintStride = 1.0f;
+		float crouchStride = 0.55f;
+		float walkNoise = 6.0f;
+		float sprintNoise = 15.0f;
+		float crouchNoise = 1.5f;
 	};
 
 	// Moves an entity with a CharacterComponent from mouse and keyboard or gamepad input, and puts
 	// the world's camera at its eyes. WASD or the left stick moves, Shift or the left stick click
-	// sprints, Ctrl held or C toggles crouching, and Space or A jumps.
+	// sprints, and Ctrl held or C toggles crouching. There's no jumping. Each footstep is a noise
+	// enemies can hear, louder the faster the gait.
 	class TYR_ENGINE_API FirstPersonController final
 	{
 	public:
@@ -48,6 +54,9 @@ namespace tyr
 		void Update(World& world, const InputManager& input, float deltaTime, bool hasInput);
 
 		Entity GetCharacter() const { return m_Character; }
+		// Goes up with each footstep, which was heard out to the radius, for footstep sounds.
+		uint GetStepCount() const { return m_StepCount; }
+		float GetLastStepRadius() const { return m_LastStepRadius; }
 
 		FirstPersonSettings settings;
 
@@ -59,5 +68,11 @@ namespace tyr
 		Vector3 m_Velocity;
 		float m_EyeHeight = 0.0f;
 		bool m_CrouchToggled = false;
+		// Where the character was last frame, and how far it's walked since its last footstep.
+		Vector3 m_LastPosition;
+		bool m_HasLastPosition = false;
+		float m_StrideProgress = 0.0f;
+		uint m_StepCount = 0;
+		float m_LastStepRadius = 0.0f;
 	};
 }

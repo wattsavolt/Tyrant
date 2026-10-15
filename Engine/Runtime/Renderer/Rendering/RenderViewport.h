@@ -35,6 +35,8 @@ namespace tyr
 		TextureHandle gbufferAlbedoAO;
 		TextureHandle gbufferNormalRoughMetal;
 		TextureHandle gbufferMotion;
+		// Light surfaces give off themselves, rgb.
+		TextureHandle gbufferEmissive;
 		TextureHandle depthBuffer;
 		// Texture2DArray, RenderConstants::c_MaxShadowSlots layers - raw per-light ray-traced
 		// visibility (shadowMasksRaw) and the denoised/temporally-accumulated result
@@ -55,6 +57,8 @@ namespace tyr
 		TextureHandle overlayColourTexture;
 		// The exposed, tone mapped image the viewport shows, in linear colour where 1 is paper white.
 		TextureHandle displayColourTexture;
+		// Bloom's chain, each half the size of the one before, starting at half the viewport's size.
+		TextureHandle bloom[RenderConstants::c_BloomLevels];
 		uint width = 0;
 		uint height = 0;
 		// Set whenever this slot's own targets are (re)created, consumed once by the geometry

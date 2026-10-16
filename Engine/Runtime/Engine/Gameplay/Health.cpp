@@ -1,6 +1,7 @@
 #include "Health.h"
 #include "ECS/Components.h"
 #include "World/World.h"
+#include "Gameplay/Sounds.h"
 #include <algorithm>
 
 namespace tyr
@@ -26,7 +27,12 @@ namespace tyr
 			}
 			health.health = std::max(health.health - amount, 0.0f);
 			health.hurt = std::min(health.hurt + amount / (std::max(health.maxHealth, 1.0f) * c_FullHurtShare), 1.0f);
-			return health.health <= 0.0f;
+			const bool died = health.health <= 0.0f;
+			if (world.entities.HasComponent<ComponentTransform>(entity))
+			{
+				Sounds::Play(world, died ? health.deathSound : health.hurtSound, world.entities.GetComponent<ComponentTransform>(entity).world.position);
+			}
+			return died;
 		}
 
 		void Restore(World& world, Entity entity)

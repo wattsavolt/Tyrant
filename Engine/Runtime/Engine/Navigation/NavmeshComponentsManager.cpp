@@ -21,6 +21,11 @@ namespace tyr
 
 	void NavmeshComponentsManager::Sync(World& world)
 	{
+		if (world.navmeshChanged)
+		{
+			Release(world);
+			world.navmeshChanged = false;
+		}
 		if (world.navmesh || world.navmeshData.IsEmpty())
 		{
 			return;
@@ -115,6 +120,11 @@ namespace tyr
 	bool NavmeshComponentsManager::FindPath(const World& world, const Vector3& start, const Vector3& end, NavPath& outPath) const
 	{
 		return world.navmesh && m_NavmeshManager->FindPath(world.navmesh, start, end, outPath);
+	}
+
+	bool NavmeshComponentsManager::FindRandomPoint(const World& world, const Vector3& centre, float radius, Vector3& outPoint) const
+	{
+		return world.navmesh && m_NavmeshManager->FindRandomPoint(world.navmesh, centre, radius, outPoint);
 	}
 
 	void NavmeshComponentsManager::AddDebugLines(const World& world, const Vector3& centre, float radius, Array<Vector3>& outLines) const

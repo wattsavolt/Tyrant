@@ -709,6 +709,8 @@ namespace tyr
 		{
 			writer.WriteString(folder.CStr());
 		}
+		writer.Write(world.navmeshData.Size());
+		writer.WriteBytes(world.navmeshData.Data(), world.navmeshData.Size());
 		return writer.IsFull() ? 0 : writer.GetOffset();
 	}
 
@@ -718,6 +720,17 @@ namespace tyr
 		world.settings = {};
 		ReadSettings(reader, world.settings);
 		ReadFolders(reader, world.folders);
+
+		// The navmesh is loaded again from its data, which may not have changed.
+		const uint navmeshSize = reader.Read<uint>();
+		const uint8* navmesh = reader.ReadSpan(navmeshSize);
+		const bool sameNavmesh = navmeshSize == world.navmeshData.Size() && (navmeshSize == 0 || memcmp(navmesh, world.navmeshData.Data(), navmeshSize) == 0);
+		if (navmesh && !sameNavmesh)
+		{
+			world.navmeshData.Resize(navmeshSize);
+			memcpy(world.navmeshData.Data(), navmesh, navmeshSize);
+			world.navmeshChanged = true;
+		}
 		++world.changeCount;
 	}
 #endif

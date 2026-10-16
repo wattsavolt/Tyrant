@@ -23,9 +23,9 @@ namespace tyr
 		m_Backend.UnloadBank(bank);
 	}
 
-	void AudioAPI::PlayOneShot(const char* eventPath, const Vector3& position)
+	void AudioAPI::PlayOneShot(const char* eventPath, const Vector3& position, float volume)
 	{
-		m_Backend.PlayOneShot(eventPath, position);
+		m_Backend.PlayOneShot(eventPath, position, volume);
 	}
 
 	AudioEventHandle AudioAPI::StartEvent(const char* eventPath, const Vector3& position)
@@ -56,5 +56,10 @@ namespace tyr
 	void AudioAPI::SetListener(const AudioListener& listener)
 	{
 		m_Backend.SetListener(listener);
+	}
+
+	void AudioAPI::SetPaused(bool paused)
+	{
+		m_Backend.SetPaused(paused);
 	}
 }

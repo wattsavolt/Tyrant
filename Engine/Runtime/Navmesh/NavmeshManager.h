@@ -21,6 +21,9 @@ namespace tyr
 		// The nearest point on the navmesh within searchExtents of the point, along each axis.
 		bool FindNearestPoint(Handle navmesh, const Vector3& point, const Vector3& searchExtents, Vector3& outPoint) const;
 
+		// A random point on the navmesh, reachable from near the centre and about within radius of it.
+		bool FindRandomPoint(Handle navmesh, const Vector3& centre, float radius, Vector3& outPoint) const;
+
 		// The straightest path along the navmesh from near the start to near the end. When the end
 		// can't be reached, the path goes as close to it as it can and is marked partial.
 		bool FindPath(Handle navmesh, const Vector3& start, const Vector3& end, NavPath& outPath) const;

@@ -281,12 +281,12 @@ namespace tyr
 			return vOut;
 		}
 
-		/// Orients the quaternion so its negative z axis points to the provided direction.
+		/// Orients the quaternion so its positive z axis points to the provided direction.
 		///
 		/// @param[in]	forwardDir	Direction to orient towards.
 		void LookRotation(const Vector3& forward);
 
-		/// Orients the quaternion so its negative z axis points to the provided direction.
+		/// Orients the quaternion so its positive z axis points to the provided direction.
 		///
 		/// @param[in]	forward	Direction to orient towards.
 		/// @param[in]	up		Constrains y axis orientation to a plane this vector lies on. This rule might be broken

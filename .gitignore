@@ -33,3 +33,9 @@ imgui.ini
 # their installers put them, on each machine that has them.
 ThirdParty/Licensed/
 
+# Anything else from FMOD: its libraries, Studio projects and built banks. The engine's own
+# FMOD backend source in Engine/Runtime/Audio/FMOD is ours and stays tracked.
+*[Ff][Mm][Oo][Dd]*.dll
+*[Ff][Mm][Oo][Dd]*.lib
+*.fspro
+*.bank

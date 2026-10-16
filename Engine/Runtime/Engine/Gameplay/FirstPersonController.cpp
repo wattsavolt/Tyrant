@@ -1,4 +1,5 @@
 #include "FirstPersonController.h"
+#include "Gameplay/Sounds.h"
 #include "ECS/Components.h"
 #include "World/World.h"
 #include "World/Camera.h"
@@ -143,6 +144,7 @@ namespace tyr
 				m_LastStepRadius = character.crouched ? settings.crouchNoise : (sprinting ? settings.sprintNoise : settings.walkNoise);
 				++m_StepCount;
 				Noise::Emit(world, position, m_LastStepRadius, m_Character);
+				Sounds::Play(world, settings.footstepSound, position, Math::Sqrt(std::min(m_LastStepRadius / std::max(settings.sprintNoise, 0.01f), 1.0f)));
 			}
 		}
 

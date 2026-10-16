@@ -20,7 +20,7 @@ namespace tyr
 		virtual AudioBankHandle LoadBank(const char* /*filePath*/) { return {}; }
 		virtual void UnloadBank(AudioBankHandle /*bank*/) {}
 
-		virtual void PlayOneShot(const char* /*eventPath*/, const Vector3& /*position*/) {}
+		virtual void PlayOneShot(const char* /*eventPath*/, const Vector3& /*position*/, float /*volume*/) {}
 
 		virtual AudioEventHandle StartEvent(const char* /*eventPath*/, const Vector3& /*position*/) { return {}; }
 		virtual void SetEventPosition(AudioEventHandle /*event*/, const Vector3& /*position*/) {}
@@ -30,5 +30,6 @@ namespace tyr
 		virtual void SetGlobalParameter(const char* /*name*/, float /*value*/) {}
 
 		virtual void SetListener(const AudioListener& /*listener*/) {}
+		virtual void SetPaused(bool /*paused*/) {}
 	};
 }

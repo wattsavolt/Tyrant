@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Gameplay/GameplayTypes.h"
 #include "EngineMacros.h"
 #include "Core.h"
 #include "Math/Vector3.h"
@@ -36,6 +37,8 @@ namespace tyr
 		float walkNoise = 6.0f;
 		float sprintNoise = 15.0f;
 		float crouchNoise = 1.5f;
+		// Played at the feet with each footstep, quieter for quieter gaits.
+		SoundName footstepSound = "event:/Player/Footstep";
 	};
 
 	// Moves an entity with a CharacterComponent from mouse and keyboard or gamepad input, and puts

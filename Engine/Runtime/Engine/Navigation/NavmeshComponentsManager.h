@@ -30,6 +30,8 @@ namespace tyr
 
 		bool HasNavmesh(const World& world) const;
 		bool FindPath(const World& world, const Vector3& start, const Vector3& end, NavPath& outPath) const;
+		// A random walkable point reachable from near the centre, about within radius of it.
+		bool FindRandomPoint(const World& world, const Vector3& centre, float radius, Vector3& outPoint) const;
 		// The navmesh's polygon edges within radius of the centre, as pairs of points, for drawing.
 		void AddDebugLines(const World& world, const Vector3& centre, float radius, Array<Vector3>& outLines) const;
 

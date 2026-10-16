@@ -97,8 +97,13 @@ namespace tyr
 		// The level's navmesh as it's saved, and the one loaded from it. The data is empty without one.
 		Array<uint8> navmeshData;
 		Handle navmesh;
-		// Recent noises, for anything listening.
+		// Set when the data's been replaced, so the navmesh is loaded from it again.
+		bool navmeshChanged = false;
+		// Recent noises, for anything listening, and scent left behind, for anything smelling.
 		LocalArray<NoiseEvent, c_MaxNoiseEvents> noises;
+		LocalArray<ScentMarker, c_MaxScentMarkers> scents;
+		// Sounds asked for this frame, played and cleared at the end of it.
+		LocalArray<SoundRequest, c_MaxSoundRequests> sounds;
 		// Set by gameplay, such as fading out or flashing red when the player is hurt.
 		ScreenEffects screenEffects;
 
@@ -129,9 +134,12 @@ namespace tyr
 			cameraOffset = Vector3::c_Zero;
 			actorInstances.Clear();
 			noises.Clear();
+			scents.Clear();
+			sounds.Clear();
 			screenEffects = {};
 			navmeshData.Clear();
 			navmesh = {};
+			navmeshChanged = false;
 		}
 	};
 }

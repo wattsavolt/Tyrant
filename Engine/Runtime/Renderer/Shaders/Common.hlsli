@@ -63,12 +63,14 @@ float3 DecodeOct(uint packed)
     return DecodeOct(e);
 }
 
-// Same packing as DecodeOct(uint), except the top bit is the bitangent sign, not part of
-// the oct encoding.
+// Matches MeshUtil::EncodeOctTangent: x as snorm16 in the low half, y as snorm15 above it, and
+// the bitangent's sign in the top bit.
 float3 DecodeOctTangent(uint packed, out float bitangentSign)
 {
     bitangentSign = (packed & 0x80000000u) != 0 ? -1.0f : 1.0f;
-    return DecodeOct(packed & 0x7FFFFFFFu);
+    const int sx = (int)(packed << 16) >> 16;
+    const int sy = (int)(packed << 1) >> 17;
+    return DecodeOct(max(float2(sx / 32767.0, sy / 16383.0), -1.0));
 }
 
 // Inverse of DecodeOct(float2) - packs a unit vector into two [-1,1] components for the
@@ -88,10 +90,11 @@ uint EncodeOctPacked(float3 n)
 	return ((uint)(quantized.y & 0xFFFF) << 16) | (uint)(quantized.x & 0xFFFF);
 }
 
-// Matches MeshUtil::VertexToShaderVertex's tangent packing, the sign in the top bit.
+// The reverse of DecodeOctTangent.
 uint EncodeOctTangentPacked(float3 t, float bitangentSign)
 {
-	return (EncodeOctPacked(t) & 0x7FFFFFFFu) | (bitangentSign < 0.0f ? 0x80000000u : 0u);
+	const int2 quantized = int2(round(clamp(EncodeOct(t), -1.0, 1.0) * float2(32767.0, 16383.0)));
+	return ((uint)(quantized.y & 0x7FFF) << 16) | (uint)(quantized.x & 0xFFFF) | (bitangentSign < 0.0f ? 0x80000000u : 0u);
 }
 
 #endif

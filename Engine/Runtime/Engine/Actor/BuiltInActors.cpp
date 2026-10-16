@@ -94,7 +94,12 @@ namespace tyr
 		root.AddComponent(CreateIdentityTransform());
 		root.AddComponent(CharacterComponent{});
 		root.AddComponent(InventoryComponent{});
-		root.AddComponent(HealthComponent{});
+		HealthComponent health{};
+		health.hurtSound = "event:/Player/Hurt";
+		health.deathSound = "event:/Player/Death";
+		root.AddComponent(health);
+		root.AddComponent(ScentComponent{});
+		root.AddComponent(PerceivableComponent{});
 	TYR_ACTOR_END()
 
 	// A door that swings on its hinge, which is the actor's position. Its kinematic box, sized
@@ -202,6 +207,37 @@ namespace tyr
 	TYR_ACTOR_END()
 
 	// Shines along its Z axis, so it's turned with the rotate gizmo.
+	// A character that walks the navmesh, for enemies and anything else gameplay moves about. Its
+	// mesh, if it has one, faces +Z.
+	TYR_ACTOR_START(NavAgentActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(MeshComponent{});
+		root.AddComponent(CharacterComponent{});
+		root.AddComponent(NavAgentComponent{});
+	TYR_ACTOR_END()
+
+	// An enemy: a walking character that senses, hunts and attacks whatever has a
+	// PerceivableComponent. Its mesh, if it has one, faces +Z.
+	TYR_ACTOR_START(EnemyActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(MeshComponent{});
+		root.AddComponent(CharacterComponent{});
+		root.AddComponent(NavAgentComponent{});
+		root.AddComponent(PerceptionComponent{});
+		root.AddComponent(EnemyComponent{});
+		root.AddComponent(HealthComponent{});
+	TYR_ACTOR_END()
+
+	// A sound that keeps playing while the game runs, such as wind outside or a humming machine.
+	// Picked from the hierarchy, since it has no bounds to click.
+	TYR_ACTOR_START(AmbientSoundActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(AmbientSoundComponent{});
+	TYR_ACTOR_END()
+
 	// A box the navmesh is built in. Its bounds don't take clicks in the viewport, since they're
 	// usually big enough to hold the camera, so it's picked from the hierarchy.
 	TYR_ACTOR_START(NavmeshBoundsActor)

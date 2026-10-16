@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AudioTypes.h"
 #include "EngineMacros.h"
 #include "Math/Quaternion.h"
 #include "Math/Vector3.h"
@@ -8,6 +9,7 @@
 #include "RenderBase/RenderHandles.h"
 #include "PhysicsTypes.h"
 #include "Gameplay/GameplayTypes.h"
+#include "NavmeshTypes.h"
 #include "Actor/ActorTypes.h"
 
 namespace tyr
@@ -134,6 +136,42 @@ namespace tyr
 		uint characterIndex = PhysicsConstants::c_InvalidCharacter;
 	};
 
+	// Walks the CharacterComponent on the same entity along the navmesh to a target, turning to
+	// face the way it goes and opening unlocked doors in its way.
+	struct NavAgentComponent
+	{
+		// Metres per second, and per second per second.
+		float speed = 2.0f;
+		float acceleration = 10.0f;
+		// Degrees per second.
+		float turnSpeed = 360.0f;
+		// How close to the target counts as there. Other characters can't be got closer to than
+		// both their radii.
+		float arriveDistance = 1.0f;
+
+		// Set by gameplay, through NavAgents. Not saved.
+		Vector3 target;
+		bool hasTarget = false;
+		// Set when it gets there, or gives up because it can't. Cleared by a new target. Not saved.
+		bool arrived = false;
+		bool stuck = false;
+
+		// Worked out while walking. Not saved.
+		NavPath path;
+		// The corner it's walking to, and where the target was when the path was found.
+		uint nextCorner = 0;
+		Vector3 pathTarget;
+		float repathTimer = 0.0f;
+		Vector3 velocity;
+		// Radians about Y from +Z, the way it faces.
+		float yaw = 0.0f;
+		bool yawKnown = false;
+		// It's stuck when it barely moves for a while, a few times in a row.
+		float stuckTimer = 0.0f;
+		Vector3 stuckCheckPosition;
+		uint stuckCount = 0;
+	};
+
 	// Makes the ColliderComponent on the same entity move.
 	struct RigidBodyComponent
 	{
@@ -244,6 +282,10 @@ namespace tyr
 		ItemName key;
 		// Another door that opens and closes with this one, such as the other half of a double door.
 		ActorName linkedDoor;
+		// Played at the door as it starts opening or closing, and when it won't open.
+		SoundName openSound = "event:/Doors/Open";
+		SoundName closeSound = "event:/Doors/Close";
+		SoundName lockedSound = "event:/Doors/Locked";
 
 		// Worked out while playing. Not saved. Amounts go from 0 closed to 1 open.
 		float openAmount = 0.0f;
@@ -265,6 +307,8 @@ namespace tyr
 		ItemName key;
 		// Has its own power. Otherwise it only works while the world has power, such as from a generator.
 		bool powered = true;
+		// Played at the panel whenever it's pressed.
+		SoundName useSound = "event:/Doors/Button";
 	};
 
 	// A light fitting whose mesh glows and whose light shines while it's switched on and the world
@@ -288,6 +332,7 @@ namespace tyr
 	{
 		CircuitName circuit;
 		bool switchedOn = true;
+		SoundName useSound = "event:/World/Switch";
 
 		// Worked out while running. Not saved. Whether its mesh is turned to show it on, as placed.
 		bool shownOn = true;
@@ -303,14 +348,113 @@ namespace tyr
 		Vector3 offset = Vector3(0.2f, -0.25f, 0.15f);
 		// How quickly it turns after the view. Higher keeps it closer.
 		float followSpeed = 16.0f;
+		// What its beam counts as lit for gameplay, such as holding enemies in it: out to this
+		// range, and within this angle of the middle, in degrees.
+		float beamRange = 12.0f;
+		float beamAngle = 18.0f;
+		// Played at it when it's switched on or off.
+		SoundName toggleSound = "event:/Items/FlashlightClick";
 		// Set by gameplay. Not saved.
 		bool held = false;
+	};
+
+	// Leaves a trail of scent behind as the entity moves, which enemies can smell and follow.
+	struct ScentComponent
+	{
+		// Metres between markers, and seconds each lasts.
+		float spacing = 1.0f;
+		float lifetime = 45.0f;
+		// Where the last marker was left. Not saved.
+		Vector3 lastMarker;
+		bool hasMarker = false;
+	};
+
+	// Something enemies hunt, such as the player. Its noises, scent and sight all lead them to it.
+	struct PerceivableComponent
+	{
+		// How easy it is to see, from 0 to 1. Lower is harder, such as when hiding.
+		float visibility = 1.0f;
+	};
+
+	// What an enemy can sense, and what it knows from it. It hunts entities with a
+	// PerceivableComponent.
+	struct PerceptionComponent
+	{
+		// Anything it hunts within this distance it always knows of, even without sight.
+		float touchRange = 1.5f;
+		bool hearing = true;
+		// Noises are heard out to the distance they carry times this. Walls in the way halve it.
+		float hearingScale = 1.0f;
+		bool smell = true;
+		// How far from its nose it smells scent, and the oldest scent it notices, in seconds.
+		float smellRange = 3.0f;
+		float smellMaxAge = 30.0f;
+		bool sight = false;
+		float sightRange = 15.0f;
+		// The whole width of what it sees, in degrees.
+		float sightAngle = 120.0f;
+
+		// Worked out while playing. Not saved. What it knows of its target, and the noise it last
+		// heard that wasn't its target's.
+		bool targetKnown = false;
+		Entity target = c_InvalidEntity;
+		Vector3 targetPosition;
+		// Seconds since it last sensed where its target is, and how.
+		float targetAge = 0.0f;
+		uint8 targetSense = static_cast<uint8>(Sense::None);
+		bool heardOther = false;
+		Vector3 otherPosition;
+		float updateTimer = 0.0f;
+	};
+
+	// An enemy's behaviour: wandering, going after what it senses, attacking, searching for what
+	// it lost, and being held by light. Needs a NavAgentComponent and a PerceptionComponent.
+	struct EnemyComponent
+	{
+		// Metres per second.
+		float walkSpeed = 1.2f;
+		float chaseSpeed = 3.0f;
+		// It wanders this far from where it started, pausing for up to this long, in seconds.
+		float wanderRadius = 8.0f;
+		float wanderPause = 4.0f;
+		// It hits whatever it's after from this close, this hard, this often.
+		float attackRange = 1.4f;
+		float attackDamage = 20.0f;
+		float attackInterval = 1.2f;
+		// Seconds it looks around a noise, and searches where it lost its target.
+		float investigateTime = 6.0f;
+		float searchTime = 15.0f;
+		// What it knows of its target is trusted for this long, in seconds, after which it goes to
+		// where it was told and searches from there.
+		float memory = 3.0f;
+		// It's held still while a flashlight's beam is on it, and for this long after.
+		bool dazedByFlashlight = true;
+		float dazedRecovery = 0.6f;
+		// Played at it when it starts chasing, as it hits, and now and then while it isn't chasing,
+		// every idleSoundInterval seconds or so.
+		SoundName alertSound = "event:/Enemy/Alert";
+		SoundName attackSound = "event:/Enemy/Attack";
+		SoundName idleSound = "event:/Enemy/Idle";
+		float idleSoundInterval = 7.0f;
+
+		// Worked out while playing. Not saved.
+		uint8 state = static_cast<uint8>(EnemyState::Wander);
+		float stateTimer = 0.0f;
+		float attackTimer = 0.0f;
+		// Where it searches around, and where it started, which it wanders about.
+		Vector3 searchCentre;
+		Vector3 home;
+		bool homeKnown = false;
+		float idleSoundTimer = 0.0f;
 	};
 
 	// How much harm something can take before it dies.
 	struct HealthComponent
 	{
 		float maxHealth = 100.0f;
+		// Played at it when it's hurt, and instead when it dies.
+		SoundName hurtSound;
+		SoundName deathSound;
 		// Not saved. Starts full.
 		float health = 100.0f;
 		// Not saved. Damage adds to it, up to 1, and whatever shows being hurt fades it back down.
@@ -328,12 +472,25 @@ namespace tyr
 	struct GeneratorComponent
 	{
 		bool running = false;
+		SoundName startSound = "event:/World/GeneratorStart";
 	};
 
 	// Something the player can pick up, such as a key card. It's removed from the world once taken.
 	struct PickupComponent
 	{
 		ItemName item;
+		SoundName pickupSound = "event:/Items/Pickup";
+	};
+
+	// A sound that plays for as long as the world is being played, such as ambience or a humming
+	// machine. Whether it's heard from where it is, or everywhere, is up to how its event was authored.
+	struct AmbientSoundComponent
+	{
+		SoundName sound;
+
+		// Worked out while playing. Not saved.
+		AudioEventHandle handle;
+		bool started = false;
 	};
 
 	// The items a character carries.

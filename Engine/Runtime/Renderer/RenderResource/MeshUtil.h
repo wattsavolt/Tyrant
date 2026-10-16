@@ -21,6 +21,9 @@ namespace tyr
 		static void CreateTangents(Vertex* vertices, uint numVertices, const uint* indices, uint numIndices);
 		static uint EncodeOct(const Vector3& n);
 		static Vector3 DecodeOct(uint packed);
+		// A tangent and its bitangent's sign in one uint: x as snorm16 in the low half, y as snorm15
+		// above it, and the sign in the top bit.
+		static uint EncodeOctTangent(const Vector3& tangent, float bitangentSign);
 		static void VertexToShaderVertex(const Vertex& vertex, ShaderVertex& shaderVertex);
 		// shaderVertices expected to be preallocated to size of numVertices
 		static void CreateShaderVertices(const Vertex* vertices, ShaderVertex* shaderVertices, uint numVertices);

@@ -19,6 +19,8 @@ namespace tyr
 			ImGui::MenuItem("Colliders", nullptr, &settings.showColliders);
 			ImGui::MenuItem("Noise", nullptr, &settings.showNoise);
 			ImGui::MenuItem("Navmesh", nullptr, &settings.showNavmesh);
+			ImGui::MenuItem("Agent Paths", nullptr, &settings.showAgentPaths);
+			ImGui::MenuItem("AI Debug", nullptr, &settings.showAIDebug);
 			ImGui::Separator();
 			ImGui::MenuItem("Stats", nullptr, &settings.showStats);
 			ImGui::EndMenu();

@@ -1,4 +1,8 @@
 #include "McpTools.h"
+#include "AI/NavAgents.h"
+#include "AI/EnemyBrains.h"
+#include "Gameplay/LightLevel.h"
+#include "Gameplay/Noise.h"
 #include "McpServer.h"
 #include "McpReflection.h"
 #include "Editor.h"
@@ -161,6 +165,16 @@ namespace tyr
 			R"({"type":"object","properties":{}})", &McpTools::BuildNavmesh },
 		{ "find_path", "Finds a walkable path across the navmesh of the world on screen, as the corners to walk to.",
 			R"({"type":"object","properties":{"from":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"to":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3}},"required":["from","to"]})", &McpTools::FindPath },
+		{ "move_agent", "While playing, sends an actor with a NavAgentComponent walking to a position along the navmesh, and says where it is now and how it's getting on.",
+			R"({"type":"object","properties":{"actor":{"type":"string"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"Leave out to only report"}},"required":["actor"]})", &McpTools::MoveAgent },
+		{ "get_enemy", "While playing, says what an enemy is doing and what it knows of its target.",
+			R"({"type":"object","properties":{"actor":{"type":"string"}},"required":["actor"]})", &McpTools::GetEnemy },
+		{ "get_light_level", "How lit a position is in the world on screen, from its lights with walls blocking them, and whether a held flashlight's beam is on it.",
+			R"({"type":"object","properties":{"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3}},"required":["position"]})", &McpTools::GetLightLevel },
+		{ "make_noise", "While playing, makes a noise enemies can hear, as if the player made it where they stand, out to radius metres. Footsteps carry 1.5 crouching, 6 walking and 15 sprinting.",
+			R"({"type":"object","properties":{"radius":{"type":"number","default":6}}})", &McpTools::MakeNoise },
+		{ "play_animation", "While playing, cross-fades an actor with an AnimatorComponent to another animation clip over fade seconds.",
+			R"({"type":"object","properties":{"actor":{"type":"string"},"clip":{"type":"string","description":"An .anim asset path"},"fade":{"type":"number","default":0.25},"loop":{"type":"boolean","default":true}},"required":["actor","clip"]})", &McpTools::PlayAnimation },
 		{ "undo", "Undoes the last edits to the level, whether made by a tool or in the editor. Opening or making a level clears the history.",
 			R"({"type":"object","properties":{"steps":{"type":"integer","default":1}}})", &McpTools::Undo },
 		{ "redo", "Redoes edits that were undone, until another edit is made.",
@@ -1472,6 +1486,214 @@ namespace tyr
 		m_Result.EndArray();
 		m_Result.EndObject();
 		return ToolResult::Done;
+	}
+
+	McpTools::ToolResult McpTools::MoveAgent(const dom::object& args)
+	{
+		char actorName[ActorName::c_Capacity + 1];
+		const bool hasActor = GetString(args, "actor", actorName, sizeof(actorName));
+		Vector3 position;
+		const bool hasPosition = GetVector3(args, "position", position);
+		if (HasArgumentError())
+		{
+			return ToolResult::Failed;
+		}
+		if (!hasActor)
+		{
+			return Fail("actor is needed.");
+		}
+		World& world = m_Editor.m_WorldManager->GetWorld(m_Editor.m_WorldManager->GetActiveWorld());
+		if (!world.simulate)
+		{
+			return Fail("Agents only walk while the game is playing. Call play first.");
+		}
+		Entity agentEntity = c_InvalidEntity;
+		for (const ActorInstance& actor : world.actorInstances)
+		{
+			if (strcmp(actor.name.CStr(), actorName) == 0 && world.entities.HasComponent<NavAgentComponent>(actor.RootEntity()))
+			{
+				agentEntity = actor.RootEntity();
+				break;
+			}
+		}
+		if (agentEntity == c_InvalidEntity)
+		{
+			return Fail("There's no actor with that name and a NavAgentComponent in the game.");
+		}
+		if (hasPosition)
+		{
+			NavAgents::SetTarget(world, agentEntity, position);
+		}
+
+		const NavAgentComponent& agent = world.entities.GetComponent<NavAgentComponent>(agentEntity);
+		const Vector3& at = world.entities.GetComponent<ComponentTransform>(agentEntity).world.position;
+		m_Result.BeginObject();
+		m_Result.Key("position");
+		m_Result.BeginArray();
+		m_Result.Number(at.x);
+		m_Result.Number(at.y);
+		m_Result.Number(at.z);
+		m_Result.EndArray();
+		m_Result.KeyBool("hasTarget", agent.hasTarget);
+		m_Result.KeyBool("arrived", agent.arrived);
+		m_Result.KeyBool("stuck", agent.stuck);
+		m_Result.KeyUInt("cornersLeft", agent.path.points.Size() > agent.nextCorner ? agent.path.points.Size() - agent.nextCorner : 0);
+		m_Result.EndObject();
+		return ToolResult::Done;
+	}
+
+	McpTools::ToolResult McpTools::GetEnemy(const dom::object& args)
+	{
+		char actorName[ActorName::c_Capacity + 1];
+		const bool hasActor = GetString(args, "actor", actorName, sizeof(actorName));
+		if (HasArgumentError())
+		{
+			return ToolResult::Failed;
+		}
+		if (!hasActor)
+		{
+			return Fail("actor is needed.");
+		}
+		World& world = m_Editor.m_WorldManager->GetWorld(m_Editor.m_WorldManager->GetActiveWorld());
+		Entity enemyEntity = c_InvalidEntity;
+		for (const ActorInstance& actor : world.actorInstances)
+		{
+			if (strcmp(actor.name.CStr(), actorName) == 0 && world.entities.HasComponent<EnemyComponent>(actor.RootEntity()))
+			{
+				enemyEntity = actor.RootEntity();
+				break;
+			}
+		}
+		if (enemyEntity == c_InvalidEntity)
+		{
+			return Fail("There's no actor with that name and an EnemyComponent in the world on screen.");
+		}
+
+		static const char* c_SenseNames[] = { "none", "sight", "hearing", "smell", "touch" };
+		const EnemyComponent& enemy = world.entities.GetComponent<EnemyComponent>(enemyEntity);
+		const PerceptionComponent& perception = world.entities.GetComponent<PerceptionComponent>(enemyEntity);
+		const Vector3& at = world.entities.GetComponent<ComponentTransform>(enemyEntity).world.position;
+		m_Result.BeginObject();
+		m_Result.KeyString("state", EnemyBrains::GetStateName(enemy.state));
+		m_Result.Key("position");
+		m_Result.BeginArray();
+		m_Result.Number(at.x);
+		m_Result.Number(at.y);
+		m_Result.Number(at.z);
+		m_Result.EndArray();
+		m_Result.KeyBool("targetKnown", perception.targetKnown);
+		m_Result.KeyString("sense", c_SenseNames[std::min<uint>(perception.targetSense, 4)]);
+		m_Result.KeyNumber("knowledgeAge", perception.targetAge);
+		m_Result.Key("targetPosition");
+		m_Result.BeginArray();
+		m_Result.Number(perception.targetPosition.x);
+		m_Result.Number(perception.targetPosition.y);
+		m_Result.Number(perception.targetPosition.z);
+		m_Result.EndArray();
+		m_Result.KeyUInt("scentMarkers", world.scents.Size());
+		m_Result.EndObject();
+		return ToolResult::Done;
+	}
+
+	McpTools::ToolResult McpTools::GetLightLevel(const dom::object& args)
+	{
+		Vector3 position;
+		GetVector3(args, "position", position);
+		if (HasArgumentError())
+		{
+			return ToolResult::Failed;
+		}
+		World& world = m_Editor.m_WorldManager->GetWorld(m_Editor.m_WorldManager->GetActiveWorld());
+		if (!world.physicsWorld)
+		{
+			return Fail("Light levels are only worked out while the game is playing, where walls block light. Call play first.");
+		}
+		const PhysicsComponentsManager& physics = m_Editor.m_WorldManager->GetPhysicsComponentsManager();
+		m_Result.BeginObject();
+		m_Result.KeyNumber("lightLevel", LightLevel::Get(world, physics, position));
+		m_Result.KeyBool("inFlashlightBeam", LightLevel::IsInFlashlightBeam(world, physics, position));
+		m_Result.EndObject();
+		return ToolResult::Done;
+	}
+
+	McpTools::ToolResult McpTools::MakeNoise(const dom::object& args)
+	{
+		double radius = 6.0;
+		GetNumber(args, "radius", radius);
+		if (HasArgumentError())
+		{
+			return ToolResult::Failed;
+		}
+		World& world = m_Editor.m_WorldManager->GetWorld(m_Editor.m_WorldManager->GetActiveWorld());
+		Entity player = c_InvalidEntity;
+		world.entities.ForEach<PerceivableComponent>([&world, &player](Entity entity, PerceivableComponent& /*perceivable*/)
+		{
+			if (player == c_InvalidEntity && world.entities.HasComponent<ComponentTransform>(entity))
+			{
+				player = entity;
+			}
+		});
+		if (!world.simulate || player == c_InvalidEntity)
+		{
+			return Fail("There's no player to make a noise. Call play first.");
+		}
+		const Vector3& position = world.entities.GetComponent<ComponentTransform>(player).world.position;
+		Noise::Emit(world, position, static_cast<float>(radius), player);
+		m_Result.BeginObject();
+		m_Result.KeyBool("made", true);
+		m_Result.EndObject();
+		return ToolResult::Done;
+	}
+
+	McpTools::ToolResult McpTools::PlayAnimation(const dom::object& args)
+	{
+		char actorName[ActorName::c_Capacity + 1];
+		char clipPath[PathConstants::c_MaxAssetPathTotalSize];
+		const bool hasActor = GetString(args, "actor", actorName, sizeof(actorName));
+		const bool hasClip = GetString(args, "clip", clipPath, sizeof(clipPath));
+		double fade = 0.25;
+		bool loop = true;
+		GetNumber(args, "fade", fade);
+		bool loopValue = true;
+		if (args["loop"].get(loopValue) == simdjson::SUCCESS)
+		{
+			loop = loopValue;
+		}
+		if (HasArgumentError())
+		{
+			return ToolResult::Failed;
+		}
+		if (!hasActor || !hasClip)
+		{
+			return Fail("actor and clip are needed.");
+		}
+		World& world = m_Editor.m_WorldManager->GetWorld(m_Editor.m_WorldManager->GetActiveWorld());
+		if (!world.simulate)
+		{
+			return Fail("Animations only play while the game is playing. Call play first.");
+		}
+		const AssetID clip = AssetRegistry::Instance().GetAssetID(clipPath);
+		if (!AssetUtil::IsValidAssetID(clip))
+		{
+			return Fail("There's no animation clip at that path.");
+		}
+		for (const ActorInstance& actor : world.actorInstances)
+		{
+			for (Entity entity : actor.entities)
+			{
+				if (strcmp(actor.name.CStr(), actorName) == 0 && world.entities.HasComponent<AnimatorComponent>(entity))
+				{
+					AnimatorComponent& animator = world.entities.GetComponent<AnimatorComponent>(entity);
+					animator.loop = loop;
+					m_Editor.m_WorldManager->GetAnimationSystem().Play(animator, clip, static_cast<float>(fade));
+					m_Result.BeginObject();
+					m_Result.KeyBool("playing", true);
+					m_Result.EndObject();
+					return ToolResult::Done;
+				}
+			}
+		}
+		return Fail("There's no actor with that name and an AnimatorComponent in the game.");
 	}
 
 	McpTools::ToolResult McpTools::Undo(const dom::object& args)

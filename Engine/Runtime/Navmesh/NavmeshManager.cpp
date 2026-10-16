@@ -17,6 +17,15 @@ namespace tyr
 		// Debug lines float this far over the polygons, so they aren't hidden in the floor.
 		constexpr float c_DebugLineLift = 0.05f;
 
+		// Detour asks for random numbers from 0 to 1 through a plain function, so they come from here.
+		uint g_RandomState = 0x2545F491u;
+
+		float Random01()
+		{
+			g_RandomState = g_RandomState * 1664525u + 1013904223u;
+			return static_cast<float>(g_RandomState >> 8) * (1.0f / 16777216.0f);
+		}
+
 		// Detour allocates through the engine's heap.
 		void* Allocate(size_t size, dtAllocHint /*hint*/)
 		{
@@ -140,11 +149,32 @@ namespace tyr
 		return true;
 	}
 
+	bool NavmeshManager::FindRandomPoint(Handle navmesh, const Vector3& centre, float radius, Vector3& outPoint) const
+	{
+		const NavmeshData& data = *m_Navmeshes[navmesh];
+		dtPolyRef startPolygon = 0;
+		float start[3];
+		data.query->findNearestPoly(&centre.x, c_PathSearchExtents, &data.filter, &startPolygon, start);
+		if (startPolygon == 0)
+		{
+			return false;
+		}
+		dtPolyRef randomPolygon = 0;
+		float point[3];
+		if (dtStatusFailed(data.query->findRandomPointAroundCircle(startPolygon, start, radius, &data.filter, &Random01, &randomPolygon, point)))
+		{
+			return false;
+		}
+		outPoint = Vector3(point[0], point[1], point[2]);
+		return true;
+	}
+
 	bool NavmeshManager::FindPath(Handle navmesh, const Vector3& start, const Vector3& end, NavPath& outPath) const
 	{
 		const NavmeshData& data = *m_Navmeshes[navmesh];
 		outPath.points.Clear();
 		outPath.partial = false;
+		outPath.truncated = false;
 
 		dtPolyRef startPolygon = 0;
 		dtPolyRef endPolygon = 0;
@@ -174,8 +204,9 @@ namespace tyr
 
 		float corners[NavmeshConstants::c_MaxPathPoints * 3];
 		int cornerCount = 0;
-		data.query->findStraightPath(startPoint, endPoint, polygons, polygonCount, corners, nullptr, nullptr, &cornerCount,
+		const dtStatus status = data.query->findStraightPath(startPoint, endPoint, polygons, polygonCount, corners, nullptr, nullptr, &cornerCount,
 			static_cast<int>(NavmeshConstants::c_MaxPathPoints));
+		outPath.truncated = dtStatusDetail(status, DT_BUFFER_TOO_SMALL);
 		for (int i = 0; i < cornerCount; ++i)
 		{
 			outPath.points.Add(Vector3(corners[i * 3], corners[i * 3 + 1], corners[i * 3 + 2]));

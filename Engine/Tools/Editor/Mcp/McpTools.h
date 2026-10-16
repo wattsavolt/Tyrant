@@ -138,6 +138,11 @@ namespace tyr
 		ToolResult Undo(const simdjson::dom::object& args);
 		ToolResult BuildNavmesh(const simdjson::dom::object& args);
 		ToolResult FindPath(const simdjson::dom::object& args);
+		ToolResult MoveAgent(const simdjson::dom::object& args);
+		ToolResult GetEnemy(const simdjson::dom::object& args);
+		ToolResult GetLightLevel(const simdjson::dom::object& args);
+		ToolResult MakeNoise(const simdjson::dom::object& args);
+		ToolResult PlayAnimation(const simdjson::dom::object& args);
 		ToolResult Redo(const simdjson::dom::object& args);
 		ToolResult UndoSteps(const simdjson::dom::object& args, bool redo);
 		ToolResult CaptureScreenshot(const simdjson::dom::object& args);

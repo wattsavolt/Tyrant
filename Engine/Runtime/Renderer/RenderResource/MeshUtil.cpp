@@ -4,6 +4,9 @@
 #include "Memory/StackAllocation.h"
 #include "Math/Vector3.h"
 #include "Math/Half2.h"
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
 
 namespace tyr
 {
@@ -163,17 +166,20 @@ namespace tyr
 		return v;
 	}
 
+	uint MeshUtil::EncodeOctTangent(const Vector3& tangent, float bitangentSign)
+	{
+		const uint packed = EncodeOct(tangent);
+		// y gives up its lowest bit, halving to snorm15, so the top bit is free for the sign.
+		const int y16 = int16_t(packed >> 16);
+		const int y15 = std::clamp(static_cast<int>(std::lround(y16 * 0.5f)), -16383, 16383);
+		return (packed & 0xFFFFu) | (uint(y15 & 0x7FFF) << 16) | (bitangentSign < 0.0f ? 0x80000000u : 0u);
+	}
+
 	void MeshUtil::VertexToShaderVertex(const Vertex& vertex, ShaderVertex& shaderVertex)
 	{
 		shaderVertex.position = vertex.position;
 		shaderVertex.normalOct = EncodeOct(vertex.normal);
-		const Vector3 tangent = Vector3(vertex.tangent.x, vertex.tangent.y, vertex.tangent.z);
-		shaderVertex.tangentOct = EncodeOct(tangent);
-		const Vector3 crossNT = Vector3::Cross(vertex.normal, tangent);
-		const uint signBit = vertex.tangent.w < 0.0f ? 1u : 0u;
-
-		// Pack sign into highest bit
-		shaderVertex.tangentOct = (shaderVertex.tangentOct & 0x7FFFFFFF) | (signBit << 31);
+		shaderVertex.tangentOct = EncodeOctTangent(Vector3(vertex.tangent.x, vertex.tangent.y, vertex.tangent.z), vertex.tangent.w);
 		shaderVertex.uv = Half2(vertex.uv.x, vertex.uv.y);
 	}
 

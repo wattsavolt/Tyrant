@@ -251,42 +251,37 @@ namespace tyr
 		void SetInverseTRS(const Vector3& translation, const Quaternion& rotation, const Vector3& scale);
 
 		/// Extracts the translation from the matrix. 
-		Vector3 GetTranslation() const { return Vector3(m[0][3], m[1][3], m[2][3]); }
+		Vector3 GetTranslation() const { return Vector3(m[3][0], m[3][1], m[3][2]); }
 
 		/// Check whether or not the matrix is affine matrix.
-		/// @note	An affine matrix is a 4x4 matrix with row 3 equal to (0, 0, 0, 1), meaning no projective coefficients. 
+		/// @note	An affine matrix has column 3 equal to (0, 0, 0, 1), meaning no projective coefficients. 
 		bool IsAffine() const
 		{
-			return m[3][0] == 0 && m[3][1] == 0 && m[3][2] == 0 && m[3][3] == 1;
+			return m[0][3] == 0 && m[1][3] == 0 && m[2][3] == 0 && m[3][3] == 1;
 		}
 
 		/// Returns the inverse of the affine matrix.
 		/// @note	Matrix must be affine.
 		Matrix4 InverseAffine() const;
 
-		/// Concatenate two affine matrices.
+		/// This matrix's transform followed by other's, the same as this * other.
 		/// @note	Both matrices must be affine.
 		Matrix4 ConcatenateAffine(const Matrix4 &other) const
 		{
-			return Matrix4
-			(
-				m[0][0] * other.m[0][0] + m[0][1] * other.m[1][0] + m[0][2] * other.m[2][0],
-				m[0][0] * other.m[0][1] + m[0][1] * other.m[1][1] + m[0][2] * other.m[2][1],
-				m[0][0] * other.m[0][2] + m[0][1] * other.m[1][2] + m[0][2] * other.m[2][2],
-				m[0][0] * other.m[0][3] + m[0][1] * other.m[1][3] + m[0][2] * other.m[2][3] + m[0][3],
-
-				m[1][0] * other.m[0][0] + m[1][1] * other.m[1][0] + m[1][2] * other.m[2][0],
-				m[1][0] * other.m[0][1] + m[1][1] * other.m[1][1] + m[1][2] * other.m[2][1],
-				m[1][0] * other.m[0][2] + m[1][1] * other.m[1][2] + m[1][2] * other.m[2][2],
-				m[1][0] * other.m[0][3] + m[1][1] * other.m[1][3] + m[1][2] * other.m[2][3] + m[1][3],
-
-				m[2][0] * other.m[0][0] + m[2][1] * other.m[1][0] + m[2][2] * other.m[2][0],
-				m[2][0] * other.m[0][1] + m[2][1] * other.m[1][1] + m[2][2] * other.m[2][1],
-				m[2][0] * other.m[0][2] + m[2][1] * other.m[1][2] + m[2][2] * other.m[2][2],
-				m[2][0] * other.m[0][3] + m[2][1] * other.m[1][3] + m[2][2] * other.m[2][3] + m[2][3],
-
-				0, 0, 0, 1
-			);
+			Matrix4 result;
+			for (int row = 0; row < 4; ++row)
+			{
+				for (int column = 0; column < 3; ++column)
+				{
+					result.m[row][column] = m[row][0] * other.m[0][column] + m[row][1] * other.m[1][column] + m[row][2] * other.m[2][column];
+				}
+				result.m[row][3] = 0;
+			}
+			result.m[3][0] += other.m[3][0];
+			result.m[3][1] += other.m[3][1];
+			result.m[3][2] += other.m[3][2];
+			result.m[3][3] = 1;
+			return result;
 		}
 
 		/// Transform a 3D point by this matrix, including its translation row.

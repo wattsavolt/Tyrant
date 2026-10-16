@@ -27,7 +27,7 @@ namespace tyr
 		AudioBankHandle LoadBank(const char* filePath) override;
 		void UnloadBank(AudioBankHandle bank) override;
 
-		void PlayOneShot(const char* eventPath, const Vector3& position) override;
+		void PlayOneShot(const char* eventPath, const Vector3& position, float volume) override;
 
 		AudioEventHandle StartEvent(const char* eventPath, const Vector3& position) override;
 		void SetEventPosition(AudioEventHandle event, const Vector3& position) override;
@@ -37,6 +37,7 @@ namespace tyr
 		void SetGlobalParameter(const char* name, float value) override;
 
 		void SetListener(const AudioListener& listener) override;
+		void SetPaused(bool paused) override;
 
 	private:
 		// Makes an instance of the event placed at the position, or null if there's no such event.

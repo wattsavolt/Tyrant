@@ -124,11 +124,12 @@ namespace tyr
 		return instance;
 	}
 
-	void FMODAudioBackend::PlayOneShot(const char* eventPath, const Vector3& position)
+	void FMODAudioBackend::PlayOneShot(const char* eventPath, const Vector3& position, float volume)
 	{
 		FMOD::Studio::EventInstance* instance = CreateInstance(eventPath, position);
 		if (instance)
 		{
+			instance->setVolume(volume);
 			// Released now, FMOD frees it once it's finished playing.
 			instance->start();
 			instance->release();
@@ -223,5 +224,14 @@ namespace tyr
 		attributes.forward = ToFMOD(listener.forward);
 		attributes.up = ToFMOD(listener.up);
 		m_System->setListenerAttributes(0, &attributes);
+	}
+
+	void FMODAudioBackend::SetPaused(bool paused)
+	{
+		FMOD::Studio::Bus* master = nullptr;
+		if (m_System && m_System->getBus("bus:/", &master) == FMOD_OK)
+		{
+			master->setPaused(paused);
+		}
 	}
 }

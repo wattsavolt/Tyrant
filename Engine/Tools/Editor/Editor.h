@@ -96,6 +96,11 @@ namespace tyr
 		static void DrawNoises(const World& world);
 		// The navmesh's polygons around the camera.
 		void DrawNavmesh(const World& world);
+		// Each agent's remaining path, and a mark at its target.
+		static void DrawAgentPaths(World& world);
+		// Each enemy's state above its head, a line to where it thinks its target is, and the
+		// scent trail as marks that fade with age.
+		static void DrawAIDebug(World& world);
 		// Builds the level's navmesh from its colliders. False when it has nothing to walk on.
 		bool BuildNavmesh();
 		static ActorName MakeUniqueActorName(const World& world, const char* baseName);

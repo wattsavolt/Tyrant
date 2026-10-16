@@ -19,6 +19,10 @@ namespace tyr
 		bool showNoise = false;
 		// The navmesh's polygons around the camera.
 		bool showNavmesh = false;
+		// Where each agent is walking, and the path it's taking.
+		bool showAgentPaths = false;
+		// Each enemy's state and what it knows, and the scent trail it can follow.
+		bool showAIDebug = false;
 		// The frame rate in the viewport's corner, while editing and playing.
 		bool showStats = false;
 	};

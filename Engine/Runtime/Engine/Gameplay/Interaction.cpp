@@ -1,4 +1,5 @@
 #include "Interaction.h"
+#include "Gameplay/Sounds.h"
 #include "Doors.h"
 #include "Power.h"
 #include "ECS/Components.h"
@@ -61,6 +62,7 @@ namespace tyr
 				if (!HasItem(world, user, door.key))
 				{
 					SetMessage(outMessage, "Locked. Needs %s.", door.key.CStr());
+					Sounds::Play(world, door.lockedSound, GetPosition(world, target));
 					return false;
 				}
 				Doors::Unlock(world, target);
@@ -69,12 +71,14 @@ namespace tyr
 				if (!Doors::IsInFront(world, target, userPosition))
 				{
 					outMessage = "Locked from the other side.";
+					Sounds::Play(world, door.lockedSound, GetPosition(world, target));
 					return false;
 				}
 				Doors::Unlock(world, target);
 				break;
 			case DoorLock::Locked:
 				outMessage = "Locked.";
+				Sounds::Play(world, door.lockedSound, GetPosition(world, target));
 				return false;
 			default:
 				break;
@@ -86,6 +90,7 @@ namespace tyr
 		bool UsePanel(World& world, Entity target, Entity user, InteractionText& outMessage)
 		{
 			const DoorPanelComponent& panel = world.entities.GetComponent<DoorPanelComponent>(target);
+			Sounds::Play(world, panel.useSound, GetPosition(world, target));
 			if (!panel.powered && !Power::IsOn(world))
 			{
 				outMessage = "No power.";
@@ -112,6 +117,7 @@ namespace tyr
 
 		bool UseLightSwitch(World& world, Entity target, InteractionText& outMessage)
 		{
+			Sounds::Play(world, world.entities.GetComponent<LightSwitchComponent>(target).useSound, GetPosition(world, target));
 			Power::ToggleSwitch(world, target);
 			if (!Power::IsOn(world))
 			{
@@ -127,6 +133,7 @@ namespace tyr
 				outMessage = "It's already running.";
 				return false;
 			}
+			Sounds::Play(world, world.entities.GetComponent<GeneratorComponent>(target).startSound, GetPosition(world, target));
 			Power::StartGenerator(world, target);
 			outMessage = "The generator starts.";
 			return true;
@@ -146,6 +153,7 @@ namespace tyr
 			}
 			const ItemName item = world.entities.GetComponent<PickupComponent>(target).item;
 			inventory.items.Add(item);
+			Sounds::Play(world, world.entities.GetComponent<PickupComponent>(target).pickupSound, GetPosition(world, target));
 			SetMessage(outMessage, "Took %s.", item.CStr());
 
 			for (const ActorInstance& actor : world.actorInstances)

@@ -20,6 +20,45 @@ namespace tyr
 	};
 	constexpr uint c_MaxNoiseEvents = 64;
 
+	// A trace of scent something left behind, which enemies that smell can follow.
+	struct ScentMarker
+	{
+		Vector3 position;
+		// Seconds since it was left, and how long it lasts.
+		float age = 0.0f;
+		float lifetime = 0.0f;
+		Entity source = c_InvalidEntity;
+	};
+	constexpr uint c_MaxScentMarkers = 256;
+
+	// How an enemy last found out where its target is. Stored as uint8 in PerceptionComponent.
+	enum class Sense : uint8
+	{
+		None = 0,
+		Sight,
+		Hearing,
+		Smell,
+		// Close enough to brush against.
+		Touch
+	};
+
+	// What an enemy is doing. Stored as uint8 in EnemyComponent.
+	enum class EnemyState : uint8
+	{
+		// Wandering about near where it started, pausing now and then.
+		Wander = 0,
+		// Going to look at a noise that didn't come from its target.
+		Investigate,
+		// Going after its target, or where it last knew the target was.
+		Chase,
+		// Close enough to hit its target, and hitting it.
+		Attack,
+		// Looking around where it lost its target.
+		Search,
+		// Held still by light.
+		Dazed
+	};
+
 	// How a door moves between closed and open. Stored as uint8 in DoorComponent.
 	enum class DoorMotion : uint8
 	{
@@ -56,6 +95,18 @@ namespace tyr
 	using ItemName = LocalString<c_MaxItemName>;
 	// Names the light fixtures and switches that go together, such as "Lobby".
 	using CircuitName = LocalString<c_MaxItemName>;
+
+	// A sound event's path, such as "event:/Doors/Open". Empty plays nothing.
+	using SoundName = LocalString<47>;
+
+	// A sound asked for this frame, played once at a position.
+	struct SoundRequest
+	{
+		SoundName sound;
+		Vector3 position;
+		float volume = 1.0f;
+	};
+	constexpr uint c_MaxSoundRequests = 64;
 
 	struct GameplayConstants
 	{

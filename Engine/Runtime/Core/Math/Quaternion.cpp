@@ -200,24 +200,18 @@ namespace tyr
 		Matrix3 matRot;
 		ToRotationMatrix(matRot);
 
-		xaxis.x = matRot[0][0];
-		xaxis.y = matRot[1][0];
-		xaxis.z = matRot[2][0];
-
-		yaxis.x = matRot[0][1];
-		yaxis.y = matRot[1][1];
-		yaxis.z = matRot[2][1];
-
-		zaxis.x = matRot[0][2];
-		zaxis.y = matRot[1][2];
-		zaxis.z = matRot[2][2];
+		// Each row of the row-vector rotation matrix is a rotated axis.
+		xaxis = Vector3(matRot[0][0], matRot[0][1], matRot[0][2]);
+		yaxis = Vector3(matRot[1][0], matRot[1][1], matRot[1][2]);
+		zaxis = Vector3(matRot[2][0], matRot[2][1], matRot[2][2]);
 	}
 
 	bool Quaternion::ToEulerAngles(float& xAngle, float& yAngle, float& zAngle) const
 	{
 		Matrix3 matRot;
 		ToRotationMatrix(matRot);
-		return matRot.ToEulerAngles(xAngle, yAngle, zAngle);
+		// Matrix3::ToEulerAngles reads the column-vector form, so it takes the transpose.
+		return matRot.Transpose().ToEulerAngles(xAngle, yAngle, zAngle);
 	}
 
 	Vector3 Quaternion::Right() const
@@ -287,7 +281,7 @@ namespace tyr
 		}
 
 		Vector3 nrmForwardDir = Vector3::SafeNormalize(forwardDir);
-		Vector3 currentForwardDir = -Forward();
+		Vector3 currentForwardDir = Forward();
 
 		if ((nrmForwardDir + currentForwardDir).SqrLength() < 0.00005f)
 		{
@@ -314,13 +308,13 @@ namespace tyr
 			return;
 		}
 
-		Vector3 x = Vector3::Cross(forward, up);
-		Vector3 y = Vector3::Cross(x, forward);
+		Vector3 x = Vector3::Cross(up, forward);
+		Vector3 y = Vector3::Cross(forward, x);
 
 		x.Normalize();
 		y.Normalize();
 
-		*this = Quaternion(x, y, -forward);
+		*this = Quaternion(x, y, forward);
 	}
 
 	Quaternion Quaternion::Slerp(float t, const Quaternion& p, const Quaternion& q, bool shortestPath)

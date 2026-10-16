@@ -22,8 +22,9 @@ namespace tyr
 		AudioBankHandle LoadBank(const char* filePath);
 		void UnloadBank(AudioBankHandle bank);
 
-		// Plays the event once at the position and forgets about it.
-		void PlayOneShot(const char* eventPath, const Vector3& position);
+		// Plays the event once at the position and forgets about it. Volume scales how loud it was
+		// authored, from 0 silent to 1 as authored.
+		void PlayOneShot(const char* eventPath, const Vector3& position, float volume = 1.0f);
 
 		// Starts the event at the position, to be moved, changed and stopped with the handle.
 		AudioEventHandle StartEvent(const char* eventPath, const Vector3& position);
@@ -36,6 +37,9 @@ namespace tyr
 		void SetGlobalParameter(const char* name, float value);
 
 		void SetListener(const AudioListener& listener);
+
+		// Holds every sound where it is, such as while the game is paused, and lets them carry on.
+		void SetPaused(bool paused);
 
 	private:
 		AudioBackend& m_Backend;

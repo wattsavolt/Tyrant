@@ -150,17 +150,18 @@ namespace tyr
 		float r21 = m01 * m20 - m00 * m21;
 		float r22 = m00 * m11 - m01 * m10;
 
-		float m03 = m[0][3], m13 = m[1][3], m23 = m[2][3];
+		// The translation row, undone through the inverse rotation and scale.
+		float m30 = m[3][0], m31 = m[3][1], m32 = m[3][2];
 
-		float r03 = - (r00 * m03 + r01 * m13 + r02 * m23);
-		float r13 = - (r10 * m03 + r11 * m13 + r12 * m23);
-		float r23 = - (r20 * m03 + r21 * m13 + r22 * m23);
+		float r30 = - (m30 * r00 + m31 * r10 + m32 * r20);
+		float r31 = - (m30 * r01 + m31 * r11 + m32 * r21);
+		float r32 = - (m30 * r02 + m31 * r12 + m32 * r22);
 
 		return Matrix4(
-			r00, r01, r02, r03,
-			r10, r11, r12, r13,
-			r20, r21, r22, r23,
-			  0,   0,   0,   1);
+			r00, r01, r02, 0,
+			r10, r11, r12, 0,
+			r20, r21, r22, 0,
+			r30, r31, r32, 1);
 	}
 
 	void Matrix4::SetTRS(const Vector3& translation, const Quaternion& rotation, const Vector3& scale)
@@ -201,7 +202,9 @@ namespace tyr
 			}
 		}
 
-		rotation.FromRotationMatrix(Matrix3(rows[0], rows[1], rows[2]));
+		// The rows are the row-vector form of the rotation, while FromRotationMatrix takes the column-vector
+		// form, so they're passed as columns.
+		rotation.FromRotationMatrix(Matrix3(rows[0], rows[1], rows[2]).Transpose());
 		rotation.Normalize();
 	}
 

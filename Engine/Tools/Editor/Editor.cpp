@@ -28,6 +28,7 @@
 #include "Debug/DebugDraw.h"
 #include "Gameplay/Doors.h"
 #include "Gameplay/Noise.h"
+#include "AI/EnemyBrains.h"
 #include "AssetSystem/MeshAsset.h"
 #include "Utility/PathUtil.h"
 #include "Math/Math.h"
@@ -577,6 +578,14 @@ namespace tyr
 		{
 			DrawNavmesh(m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld()));
 		}
+		if (m_EditorUI->GetViewSettings().showAgentPaths)
+		{
+			DrawAgentPaths(m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld()));
+		}
+		if (m_EditorUI->GetViewSettings().showAIDebug)
+		{
+			DrawAIDebug(m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld()));
+		}
 
 		const ViewSettings& viewSettings = m_EditorUI->GetViewSettings();
 		EditorViewport::EditState editState;
@@ -1110,6 +1119,61 @@ namespace tyr
 		for (uint i = 0; i + 1 < m_NavmeshLines.Size(); i += 2)
 		{
 			DebugDraw::Line(m_NavmeshLines[i], m_NavmeshLines[i + 1], DebugColour::c_Cyan);
+		}
+	}
+
+	void Editor::DrawAgentPaths(World& world)
+	{
+		const Vector3 lift(0.0f, 0.1f, 0.0f);
+		world.entities.ForEach<NavAgentComponent>([&world, &lift](Entity entity, NavAgentComponent& agent)
+		{
+			if (!agent.hasTarget || !world.entities.HasComponent<ComponentTransform>(entity))
+			{
+				return;
+			}
+			Vector3 previous = world.entities.GetComponent<ComponentTransform>(entity).world.position + lift;
+			for (uint i = agent.nextCorner; i < agent.path.points.Size(); ++i)
+			{
+				const Vector3 corner = agent.path.points[i] + lift;
+				DebugDraw::Line(previous, corner, DebugColour::c_Orange);
+				previous = corner;
+			}
+			DebugDraw::Sphere(agent.target + lift, 0.2f, agent.stuck ? DebugColour::c_Red : DebugColour::c_Yellow);
+		});
+	}
+
+	void Editor::DrawAIDebug(World& world)
+	{
+		static const char* c_SenseNames[] = { "", "sight", "hearing", "smell", "touch" };
+		world.entities.ForEach<EnemyComponent>([&world](Entity entity, EnemyComponent& enemy)
+		{
+			if (!world.entities.HasComponent<ComponentTransform>(entity) || !world.entities.HasComponent<PerceptionComponent>(entity))
+			{
+				return;
+			}
+			const PerceptionComponent& perception = world.entities.GetComponent<PerceptionComponent>(entity);
+			const Vector3 head = world.entities.GetComponent<ComponentTransform>(entity).world.position + Vector3(0.0f, 2.0f, 0.0f);
+			char label[DebugText::c_MaxLength + 1];
+			if (perception.targetKnown)
+			{
+				snprintf(label, sizeof(label), "%s (%s, %.1fs)", EnemyBrains::GetStateName(enemy.state),
+					c_SenseNames[std::min<uint>(perception.targetSense, 4)], perception.targetAge);
+				DebugDraw::Line(head, perception.targetPosition + Vector3(0.0f, 0.1f, 0.0f), DebugColour::c_Red);
+			}
+			else
+			{
+				snprintf(label, sizeof(label), "%s", EnemyBrains::GetStateName(enemy.state));
+			}
+			DebugDraw::Text(head, label, DebugColour::c_White);
+		});
+
+		for (const ScentMarker& marker : world.scents)
+		{
+			const float freshness = 1.0f - std::min(marker.age / std::max(marker.lifetime, 0.001f), 1.0f);
+			const uint colour = (DebugColour::c_Green & 0x00FFFFFFu) | (static_cast<uint>(freshness * 255.0f) << 24);
+			const Vector3 point = marker.position + Vector3(0.0f, 0.05f, 0.0f);
+			DebugDraw::Line(point - Vector3(0.1f, 0.0f, 0.0f), point + Vector3(0.1f, 0.0f, 0.0f), colour);
+			DebugDraw::Line(point - Vector3(0.0f, 0.0f, 0.1f), point + Vector3(0.0f, 0.0f, 0.1f), colour);
 		}
 	}
 

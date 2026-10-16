@@ -102,7 +102,9 @@ namespace tyr
 		ObjectVsBroadPhaseFilter objectVsBroadPhaseFilter;
 		ObjectPairFilter objectPairFilter;
 		JPH::PhysicsSystem system;
-		// After the system, so they're destroyed before it. Empty slots have no character.
+		// Characters bump into each other through this, rather than walking through each other.
+		JPH::CharacterVsCharacterCollisionSimple characterCollision;
+		// After the system and the collision, so they're destroyed before them. Empty slots have no character.
 		PhysicsCharacter characters[PhysicsConstants::c_MaxCharacters];
 	};
 
@@ -251,13 +253,16 @@ namespace tyr
 		settings.mEnhancedInternalEdgeRemoval = true;
 
 		physicsCharacter.character = new JPH::CharacterVirtual(&settings, ToJolt(desc.position), JPH::Quat::sIdentity(), desc.userData, &m_Data->system);
+		physicsCharacter.character->SetCharacterVsCharacterCollision(&m_Data->characterCollision);
+		m_Data->characterCollision.Add(physicsCharacter.character);
 		return slot;
 	}
 
 	void PhysicsScene::RemoveCharacter(uint character)
 	{
-		if (character < PhysicsConstants::c_MaxCharacters)
+		if (character < PhysicsConstants::c_MaxCharacters && m_Data->characters[character].character != nullptr)
 		{
+			m_Data->characterCollision.Remove(m_Data->characters[character].character);
 			m_Data->characters[character] = PhysicsCharacter();
 		}
 	}

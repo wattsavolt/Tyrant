@@ -7,6 +7,7 @@
 #include "Animation/AnimationSystem.h"
 #include "Physics/PhysicsComponentsManager.h"
 #include "Navigation/NavmeshComponentsManager.h"
+#include "AudioTypes.h"
 
 namespace tyr
 {
@@ -123,6 +124,8 @@ namespace tyr
 		void UpdateLightFixtures(World& world, float deltaTime);
 		// Keeps held flashlights at the camera, once it's been placed this frame.
 		void UpdateFlashlights(World& world, float deltaTime);
+		// Plays the sounds asked for this frame and keeps ambient sounds going, for a world being played.
+		void UpdateSounds(World& world);
 		// Moves opening and closing doors. Their kinematic bodies follow on the next physics step.
 		void UpdateDoors(World& world, float deltaTime);
 		// Moves entities with dynamic bodies to where physics put them, blended between steps.
@@ -149,6 +152,9 @@ namespace tyr
 
 		RendererAPI* m_RendererAPI;
 		AudioAPI* m_AudioAPI = nullptr;
+		// The game's sound banks, loaded from Assets/Audio when it has them.
+		AudioBankHandle m_AudioBanks[2];
+		bool m_AudioPaused = false;
 		WindowModule* m_WindowModule;
 		AssetManager* m_AssetManager;
 		AnimationSystem m_AnimationSystem;

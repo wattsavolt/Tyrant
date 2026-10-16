@@ -8,9 +8,10 @@ namespace tyr
 	struct NavmeshConstants
 	{
 		static constexpr uint c_MaxNavmeshes = 4;
-		// Polygons a path can cross, and corners it can turn.
+		// Polygons a path can cross, and the corners kept of it. A path with more corners keeps its
+		// first ones, and whoever walks it finds the rest once there.
 		static constexpr uint c_MaxPathPolys = 512;
-		static constexpr uint c_MaxPathPoints = 128;
+		static constexpr uint c_MaxPathPoints = 24;
 		// Written first in navmesh data, and bumped whenever its layout changes.
 		static constexpr uint c_DataVersion = 0x4E415601;
 	};
@@ -49,5 +50,7 @@ namespace tyr
 		LocalArray<Vector3, NavmeshConstants::c_MaxPathPoints> points;
 		// The end couldn't be reached, so the path goes as close to it as it can.
 		bool partial = false;
+		// It had more corners than are kept, so it stops at the last one kept.
+		bool truncated = false;
 	};
 }

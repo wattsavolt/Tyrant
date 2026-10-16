@@ -11,8 +11,13 @@
 #include "AssetSystem/AssetManager.h"
 #include "ECS/Components.h"
 #include "Gameplay/Noise.h"
+#include "AI/NavAgents.h"
+#include "AI/Perception.h"
+#include "AI/EnemyBrains.h"
+#include "Gameplay/Scents.h"
 #include "Gameplay/Doors.h"
 #include "Gameplay/Power.h"
+#include "Gameplay/Sounds.h"
 #include "AssetSystem/AssetRegistry.h"
 #include "AssetSystem/AssetUtil.h"
 #include "AssetSystem/AssetConstants.h"
@@ -159,6 +164,17 @@ namespace tyr
 		AudioModule* audioModule;
 		TYR_GET_MODULE(AudioModule, audioModule);
 		m_AudioAPI = audioModule->GetAudioAPI();
+		// The strings bank first, so events can be found by path. A game without sound has neither.
+		const char* const bankFiles[] = { "Audio/Master.strings.bank", "Audio/Master.bank" };
+		for (uint i = 0; i < 2 && m_AudioAPI->IsAvailable(); ++i)
+		{
+			char bankPath[TYR_MAX_PATH];
+			AssetUtil::CreateFullPath(bankPath, bankFiles[i], sizeof(bankPath));
+			if (Platform::FileExists(bankPath))
+			{
+				m_AudioBanks[i] = m_AudioAPI->LoadBank(bankPath);
+			}
+		}
 
 		TYR_GET_MODULE(WindowModule, m_WindowModule);
 
@@ -171,6 +187,11 @@ namespace tyr
 	WorldManager::~WorldManager()
 	{
 		RemoveWorlds();
+		for (AudioBankHandle& bank : m_AudioBanks)
+		{
+			m_AudioAPI->UnloadBank(bank);
+			bank = {};
+		}
 	}
 
 	void WorldManager::Update(float deltaTime)
@@ -254,6 +275,15 @@ namespace tyr
 		{
 			UpdateDoors(world, deltaTime);
 			Noise::Update(world, deltaTime);
+			Scents::Update(world, deltaTime);
+		}
+
+		// Enemies sense, decide and then walk, before physics moves them by the velocities they set.
+		if (world.simulate && !world.paused && world.physicsWorld)
+		{
+			Perception::Update(world, m_PhysicsComponentsManager, deltaTime);
+			EnemyBrains::Update(world, m_NavmeshComponentsManager, m_PhysicsComponentsManager, deltaTime);
+			NavAgents::Update(world, m_NavmeshComponentsManager, m_PhysicsComponentsManager, deltaTime);
 		}
 
 		if (world.physicsWorld && !world.paused)
@@ -282,7 +312,9 @@ namespace tyr
 			listener.forward = world.camera->GetForward();
 			listener.up = world.camera->GetUp();
 			m_AudioAPI->SetListener(listener);
+			UpdateSounds(world);
 		}
+		world.sounds.Clear();
 
 		// The other way a resize can be detected - externally, by the OS/windowing system -
 		// rather than internally by the renderer itself. Always consumed, but only acted on if
@@ -1130,6 +1162,38 @@ namespace tyr
 		});
 	}
 
+	void WorldManager::UpdateSounds(World& world)
+	{
+		if (world.paused != m_AudioPaused)
+		{
+			m_AudioAPI->SetPaused(world.paused);
+			m_AudioPaused = world.paused;
+		}
+		for (const SoundRequest& request : world.sounds)
+		{
+			m_AudioAPI->PlayOneShot(request.sound.CStr(), request.position, request.volume);
+		}
+
+		// Each is started once, so one whose event can't be found isn't tried every frame.
+		world.entities.ForEach<AmbientSoundComponent>([this, &world](Entity entity, AmbientSoundComponent& ambient)
+		{
+			const Vector3 position = world.entities.HasComponent<ComponentTransform>(entity)
+				? world.entities.GetComponent<ComponentTransform>(entity).world.position : Vector3::c_Zero;
+			if (!ambient.started)
+			{
+				ambient.started = true;
+				if (ambient.sound.Size() > 0)
+				{
+					ambient.handle = m_AudioAPI->StartEvent(ambient.sound.CStr(), position);
+				}
+			}
+			else
+			{
+				m_AudioAPI->SetEventPosition(ambient.handle, position);
+			}
+		});
+	}
+
 	void WorldManager::UpdateFlashlights(World& world, float deltaTime)
 	{
 		const Vector3 forward = world.camera->GetForward();
@@ -1206,9 +1270,12 @@ namespace tyr
 			}
 			const Vector3 position = Vector3::Lerp(alpha, character.previousPosition, character.currentPosition);
 			const Transform& current = world.entities.GetComponent<ComponentTransform>(entity).world;
-			if (current.position != position)
+			// An agent turns to face the way it walks. Anything else keeps its rotation.
+			const Quaternion rotation = world.entities.HasComponent<NavAgentComponent>(entity)
+				? Quaternion(Vector3::c_Up, world.entities.GetComponent<NavAgentComponent>(entity).yaw) : current.rotation;
+			if (current.position != position || current.rotation != rotation)
 			{
-				MoveEntity(world, entity, position, current.rotation);
+				MoveEntity(world, entity, position, rotation);
 			}
 		});
 	}
@@ -1375,6 +1442,17 @@ namespace tyr
 		{
 			ReleaseDecal(world, decal);
 		});
+		world.entities.ForEach<AmbientSoundComponent>([this](Entity /*entity*/, AmbientSoundComponent& ambient)
+		{
+			m_AudioAPI->StopEvent(ambient.handle, true);
+			ambient.handle = {};
+			ambient.started = false;
+		});
+		if (world.simulate && m_AudioPaused)
+		{
+			m_AudioAPI->SetPaused(false);
+			m_AudioPaused = false;
+		}
 
 		if (world.physicsWorld)
 		{

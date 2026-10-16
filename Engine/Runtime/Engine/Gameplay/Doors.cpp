@@ -2,6 +2,7 @@
 #include "ECS/Components.h"
 #include "World/World.h"
 #include "Math/Math.h"
+#include "Gameplay/Sounds.h"
 
 namespace tyr
 {
@@ -32,6 +33,7 @@ namespace tyr
 				door.swingSign = movement.Dot(toUser) > 0.0f ? -1.0f : 1.0f;
 			}
 			door.targetAmount = target;
+			Sounds::Play(world, open ? door.openSound : door.closeSound, door.closedPosition);
 		}
 
 		Entity FindLinked(const World& world, Entity entity)

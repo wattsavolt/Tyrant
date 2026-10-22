@@ -12,6 +12,17 @@
 
 namespace tyr
 {
+#if TYR_EDITOR
+	namespace
+	{
+		// A door zone's size about the hinge, in metres: behind it along the wall, into the doorway,
+		// and out from the wall on each side.
+		constexpr float c_DoorZoneBehind = 1.0f;
+		constexpr float c_DoorZoneAhead = 0.3f;
+		constexpr float c_DoorZoneDepth = 1.0f;
+	}
+#endif
+
 	NavmeshComponentsManager::NavmeshComponentsManager()
 	{
 		NavmeshModule* navmeshModule;
@@ -54,7 +65,7 @@ namespace tyr
 		uint skipped = 0;
 		world.entities.ForEach<ColliderComponent>([&](Entity entity, const ColliderComponent& collider)
 		{
-			if (!world.entities.HasComponent<ComponentTransform>(entity))
+			if (!world.entities.HasComponent<TransformComponent>(entity))
 			{
 				return;
 			}
@@ -64,7 +75,7 @@ namespace tyr
 				return;
 			}
 
-			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+			const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 			const PhysicsShape* shape = PhysicsComponentsManager::CreateColliderShape(collider, transform.scale, MotionType::Static, assetManager);
 			if (!shape)
 			{
@@ -84,11 +95,11 @@ namespace tyr
 		m_Bounds.Clear();
 		world.entities.ForEach<NavmeshBoundsComponent>([&](Entity entity, const NavmeshBoundsComponent& boundsComponent)
 		{
-			if (!world.entities.HasComponent<ComponentTransform>(entity))
+			if (!world.entities.HasComponent<TransformComponent>(entity))
 			{
 				return;
 			}
-			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+			const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 			NavmeshBounds& bounds = m_Bounds.ExpandOne();
 			for (uint corner = 0; corner < 8; ++corner)
 			{
@@ -100,9 +111,55 @@ namespace tyr
 			}
 		});
 
+		// Beside each swinging door's hinge, either side of its wall, where its leaf stands once open: enemies
+		// don't stop there or brush past it, so their arms don't go through the leaf. The rest of the
+		// doorway is left for walking through.
+		m_Zones.Clear();
+		world.entities.ForEach<DoorComponent>([&](Entity entity, const DoorComponent& door)
+		{
+			if (static_cast<DoorMotion>(door.motion) != DoorMotion::Swing || !world.entities.HasComponent<TransformComponent>(entity))
+			{
+				return;
+			}
+			const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
+			// The leaf runs along its local x, the way its box is offset, from the hinge at its origin.
+			const float leafSide = world.entities.HasComponent<BoxComponent>(entity) && world.entities.GetComponent<BoxComponent>(entity).center.x < 0.0f ? -1.0f : 1.0f;
+			const float along[4] = { -c_DoorZoneBehind, c_DoorZoneAhead, c_DoorZoneAhead, -c_DoorZoneBehind };
+			const float across[4] = { -c_DoorZoneDepth, -c_DoorZoneDepth, c_DoorZoneDepth, c_DoorZoneDepth };
+			NavmeshZone& zone = m_Zones.ExpandOne();
+			for (uint c = 0; c < 4; ++c)
+			{
+				zone.corners[c] = transform.position + transform.rotation.Rotate(Vector3(along[c] * leafSide, 0.0f, across[c]));
+			}
+			zone.minY = transform.position.y - 0.5f;
+			zone.maxY = transform.position.y + 2.0f;
+		});
+
+		// Area boxes, flattened to their four lower corners, between their lowest and highest points.
+		world.entities.ForEach<NavmeshAreaComponent>([&](Entity entity, const NavmeshAreaComponent& areaComponent)
+		{
+			if (!world.entities.HasComponent<TransformComponent>(entity))
+			{
+				return;
+			}
+			const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
+			const Vector3 extent = areaComponent.halfExtents * transform.scale;
+			const float x[4] = { -extent.x, extent.x, extent.x, -extent.x };
+			const float z[4] = { -extent.z, -extent.z, extent.z, extent.z };
+			NavmeshZone& zone = m_Zones.ExpandOne();
+			zone.area = areaComponent.area;
+			for (uint c = 0; c < 4; ++c)
+			{
+				zone.corners[c] = transform.position + transform.rotation.Rotate(Vector3(x[c], 0.0f, z[c]));
+			}
+			zone.minY = transform.position.y - extent.y;
+			zone.maxY = transform.position.y + extent.y;
+		});
+
 		Release(world);
 		const NavmeshBuildSettings settings;
-		if (!NavmeshBuilder::Build(m_Triangles.Data(), m_Triangles.Size() / 3, m_Bounds.Data(), m_Bounds.Size(), settings, world.navmeshData))
+		if (!NavmeshBuilder::Build(m_Triangles.Data(), m_Triangles.Size() / 3, m_Bounds.Data(), m_Bounds.Size(), m_Zones.Data(), m_Zones.Size(),
+			settings, world.navmeshData))
 		{
 			TYR_LOG_WARNING("The navmesh has nothing to walk on, so the level has none.");
 		}
@@ -117,9 +174,9 @@ namespace tyr
 		return world.navmesh ? true : false;
 	}
 
-	bool NavmeshComponentsManager::FindPath(const World& world, const Vector3& start, const Vector3& end, NavPath& outPath) const
+	bool NavmeshComponentsManager::FindPath(const World& world, const Vector3& start, const Vector3& end, bool useStairs, NavPath& outPath) const
 	{
-		return world.navmesh && m_NavmeshManager->FindPath(world.navmesh, start, end, outPath);
+		return world.navmesh && m_NavmeshManager->FindPath(world.navmesh, start, end, useStairs, outPath);
 	}
 
 	bool NavmeshComponentsManager::FindRandomPoint(const World& world, const Vector3& centre, float radius, Vector3& outPoint) const

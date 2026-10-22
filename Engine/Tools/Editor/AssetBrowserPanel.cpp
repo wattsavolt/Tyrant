@@ -40,6 +40,7 @@ namespace tyr
 			Animation,
 			CollisionMesh,
 			Level,
+			Font,
 			Other
 		};
 
@@ -60,6 +61,7 @@ namespace tyr
 			{ "Anim", IM_COL32(70, 120, 210, 255) },
 			{ "Coll", IM_COL32(120, 160, 60, 255) },
 			{ "Lvl", IM_COL32(200, 150, 50, 255) },
+			{ "Font", IM_COL32(220, 220, 220, 255) },
 			{ "?", IM_COL32(110, 110, 110, 255) }
 		};
 
@@ -101,6 +103,10 @@ namespace tyr
 			if (strcmp(extension, AssetConstants::c_LevelFileExtension) == 0)
 			{
 				return AssetKind::Level;
+			}
+			if (strcmp(extension, AssetConstants::c_FontFileExtension) == 0)
+			{
+				return AssetKind::Font;
 			}
 			return AssetKind::Other;
 		}

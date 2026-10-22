@@ -23,9 +23,11 @@ namespace tyr
 		constexpr float c_StuckCheckInterval = 1.0f;
 		constexpr float c_StuckMinProgress = 0.2f;
 		constexpr uint c_MaxStalls = 3;
-		// Doors are looked for this far ahead, at about waist height.
-		constexpr float c_DoorCheckDistance = 1.0f;
+		// Doors are looked for at least this far ahead, at about waist height.
+		constexpr float c_DoorCheckDistance = 1.3f;
 		constexpr float c_DoorCheckHeight = 1.0f;
+		// A door opening ahead is waited for until it's this far open, so it isn't walked into.
+		constexpr float c_PassableOpenAmount = 0.75f;
 
 		float FlatDistance(const Vector3& a, const Vector3& b)
 		{
@@ -56,22 +58,74 @@ namespace tyr
 			return current + Math::Clamp(difference, -maxStep, maxStep);
 		}
 
-		// Opens an unlocked door just ahead, the way a person would on reaching it.
-		void OpenDoorAhead(World& world, const PhysicsComponentsManager& physics, const Vector3& position, const Vector3& direction)
+		// Opens an unlocked door just ahead, the way a person would on reaching it, or bashes on it
+		// until it bursts open, then waits for it to swing out of the way. True while it's held up.
+		bool OpenDoorAhead(World& world, const PhysicsComponentsManager& physics, Entity entity, NavAgentComponent& agent, const Vector3& position,
+			const Vector3& direction, float deltaTime)
 		{
+			// It stops at the door from as far out as it takes to slow down from how fast it's going.
+			const float speedSquared = agent.velocity.x * agent.velocity.x + agent.velocity.z * agent.velocity.z;
+			const float reach = agent.doorBashReach + speedSquared / (2.0f * std::max(agent.acceleration, 0.1f));
 			RayCastEntityHit hit;
 			const Vector3 eye = position + Vector3(0.0f, c_DoorCheckHeight, 0.0f);
-			if (!physics.Raycast(world.physicsWorld, eye, direction, c_DoorCheckDistance, hit) || !world.entities.HasComponent<DoorComponent>(hit.entity))
+			if (!physics.Raycast(world.physicsWorld, eye, direction, std::max(c_DoorCheckDistance, reach), hit) || !world.entities.HasComponent<DoorComponent>(hit.entity))
 			{
-				return;
+				agent.bashDoor = c_InvalidEntity;
+				return false;
 			}
 			const DoorComponent& door = world.entities.GetComponent<DoorComponent>(hit.entity);
-			const DoorLock lock = static_cast<DoorLock>(door.lock);
-			const bool canOpen = lock == DoorLock::Unlocked || (lock == DoorLock::LockedFromBack && Doors::IsInFront(world, hit.entity, position));
-			if (canOpen && !Doors::IsOpening(world, hit.entity))
+			if (Doors::IsOpening(world, hit.entity))
 			{
-				Doors::SetOpen(world, hit.entity, true, position);
+				agent.bashDoor = c_InvalidEntity;
+				return door.openAmount < c_PassableOpenAmount && hit.distance <= reach;
 			}
+			const DoorLock lock = static_cast<DoorLock>(door.lock);
+			if (lock != DoorLock::Unlocked && !(lock == DoorLock::LockedFromBack && Doors::IsInFront(world, hit.entity, position)))
+			{
+				agent.bashDoor = c_InvalidEntity;
+				return false;
+			}
+			// It keeps coming until it's within reach of the door, or its blows will land on it.
+			if (agent.bashDoor != hit.entity && hit.distance > reach)
+			{
+				return false;
+			}
+			if (agent.doorBashes <= 0)
+			{
+				Doors::SetOpen(world, hit.entity, true, position, entity);
+				return true;
+			}
+
+			if (agent.bashDoor != hit.entity)
+			{
+				agent.bashDoor = hit.entity;
+				agent.bashCount = 0;
+				agent.bashTimer = 0.0f;
+				agent.bashHitTimer = -1.0f;
+			}
+			// Each swing lands a moment after it starts, so the blow matches the animation.
+			agent.bashTimer -= deltaTime;
+			if (agent.bashTimer <= 0.0f)
+			{
+				agent.bashTimer = agent.doorBashInterval;
+				agent.bashHitTimer = agent.doorBashHitDelay;
+				agent.bashSwing++;
+			}
+			if (agent.bashHitTimer >= 0.0f)
+			{
+				agent.bashHitTimer -= deltaTime;
+				if (agent.bashHitTimer < 0.0f && ++agent.bashCount >= agent.doorBashes)
+				{
+					Doors::BurstOpen(world, hit.entity, position, entity);
+					agent.bashDoor = c_InvalidEntity;
+					return true;
+				}
+				if (agent.bashHitTimer < 0.0f)
+				{
+					Doors::Bash(world, hit.entity, position, entity);
+				}
+			}
+			return true;
 		}
 
 		// It's done walking: there, or as close as it can get.
@@ -102,10 +156,11 @@ namespace tyr
 			agent.path.points.Clear();
 			agent.nextCorner = 0;
 			agent.stuckTimer = 0.0f;
+			agent.hasFacePoint = false;
 			agent.stuckCount = 0;
-			if (world.entities.HasComponent<ComponentTransform>(entity))
+			if (world.entities.HasComponent<TransformComponent>(entity))
 			{
-				agent.stuckCheckPosition = world.entities.GetComponent<ComponentTransform>(entity).world.position;
+				agent.stuckCheckPosition = world.entities.GetComponent<TransformComponent>(entity).world.position;
 			}
 		}
 
@@ -117,6 +172,29 @@ namespace tyr
 				agent.hasTarget = false;
 				agent.path.points.Clear();
 				agent.nextCorner = 0;
+				agent.dashTimer = 0.0f;
+			}
+		}
+
+		void Dash(World& world, Entity entity, const Vector3& velocity, float seconds)
+		{
+			if (world.entities.HasComponent<NavAgentComponent>(entity))
+			{
+				Stop(world, entity);
+				NavAgentComponent& agent = world.entities.GetComponent<NavAgentComponent>(entity);
+				agent.dashVelocity = Vector3(velocity.x, 0.0f, velocity.z);
+				agent.dashTimer = seconds;
+				agent.hasFacePoint = false;
+			}
+		}
+
+		void FaceTowards(World& world, Entity entity, const Vector3& point)
+		{
+			if (world.entities.HasComponent<NavAgentComponent>(entity))
+			{
+				NavAgentComponent& agent = world.entities.GetComponent<NavAgentComponent>(entity);
+				agent.facePoint = point;
+				agent.hasFacePoint = true;
 			}
 		}
 
@@ -124,18 +202,31 @@ namespace tyr
 		{
 			world.entities.ForEach<NavAgentComponent>([&](Entity entity, NavAgentComponent& agent)
 			{
-				if (!world.entities.HasComponent<CharacterComponent>(entity) || !world.entities.HasComponent<ComponentTransform>(entity))
+				if (!world.entities.HasComponent<CharacterComponent>(entity) || !world.entities.HasComponent<TransformComponent>(entity))
 				{
 					return;
 				}
 				CharacterComponent& character = world.entities.GetComponent<CharacterComponent>(entity);
-				const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+				const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 				const Vector3 position = transform.position;
 				if (!agent.yawKnown)
 				{
 					const Vector3 facing = transform.rotation.Rotate(Vector3::c_Forward);
 					agent.yaw = Math::Atan2(facing.x, facing.z);
 					agent.yawKnown = true;
+				}
+
+				const float maxTurn = agent.turnSpeed * Math::c_DegToRad * deltaTime;
+				if (agent.dashTimer > 0.0f)
+				{
+					agent.dashTimer -= deltaTime;
+					agent.velocity = agent.dashTimer > 0.0f ? agent.dashVelocity : Vector3::c_Zero;
+					character.moveVelocity = agent.velocity;
+					if (agent.dashVelocity.x * agent.dashVelocity.x + agent.dashVelocity.z * agent.dashVelocity.z > 0.01f)
+					{
+						agent.yaw = TurnTowards(agent.yaw, Math::Atan2(agent.dashVelocity.x, agent.dashVelocity.z), maxTurn);
+					}
+					return;
 				}
 
 				Vector3 desired = Vector3::c_Zero;
@@ -149,7 +240,7 @@ namespace tyr
 						agent.repathTimer = c_RepathInterval;
 						agent.pathTarget = agent.target;
 						agent.nextCorner = 1;
-						if (!navmesh.FindPath(world, position, agent.target, agent.path))
+						if (!navmesh.FindPath(world, position, agent.target, agent.usesStairs, agent.path))
 						{
 							Finish(agent, false);
 						}
@@ -187,7 +278,14 @@ namespace tyr
 							direction = direction * (1.0f / length);
 							const float speed = onLastLeg ? agent.speed * std::min(1.0f, toEnd / c_SlowDownDistance) : agent.speed;
 							desired = direction * speed;
-							OpenDoorAhead(world, physics, position, direction);
+							if (OpenDoorAhead(world, physics, entity, agent, position, direction, deltaTime))
+							{
+								// It stands at the door, facing it, and isn't stuck while it's bashing.
+								desired = Vector3::c_Zero;
+								agent.facePoint = position + direction;
+								agent.hasFacePoint = true;
+								agent.stuckTimer = 0.0f;
+							}
 						}
 					}
 
@@ -211,6 +309,13 @@ namespace tyr
 					}
 				}
 
+				// Held where it is for a moment, such as while getting up, though it keeps its path.
+				if (agent.holdTimer > 0.0f)
+				{
+					agent.holdTimer -= deltaTime;
+					agent.stuckTimer = 0.0f;
+					desired = Vector3::c_Zero;
+				}
 				agent.velocity = MoveTowards(agent.velocity, desired, agent.acceleration * deltaTime);
 				character.moveVelocity = agent.velocity;
 
@@ -218,8 +323,11 @@ namespace tyr
 				const float speedSquared = agent.velocity.x * agent.velocity.x + agent.velocity.z * agent.velocity.z;
 				if (speedSquared > 0.01f)
 				{
-					const float targetYaw = Math::Atan2(agent.velocity.x, agent.velocity.z);
-					agent.yaw = TurnTowards(agent.yaw, targetYaw, agent.turnSpeed * Math::c_DegToRad * deltaTime);
+					agent.yaw = TurnTowards(agent.yaw, Math::Atan2(agent.velocity.x, agent.velocity.z), maxTurn);
+				}
+				else if (agent.hasFacePoint && FlatDistance(position, agent.facePoint) > 0.05f)
+				{
+					agent.yaw = TurnTowards(agent.yaw, Math::Atan2(agent.facePoint.x - position.x, agent.facePoint.z - position.z), maxTurn);
 				}
 			});
 		}

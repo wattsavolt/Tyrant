@@ -57,6 +57,7 @@ void main(
 		output.uv = (float2)v.uv;
 		output.materialIndex = materialIndex;
 		output.emissiveScale = instance.emissiveScale;
+		output.highlight = instance.highlight;
 		verts[groupThreadId.x] = output;
 	}
 

@@ -104,7 +104,7 @@ namespace tyr
 		};
 
 		static constexpr uint c_MaxRotationCacheEntries = 8;
-		static constexpr uint c_MaxFieldReflectors = 16;
+		static constexpr uint c_MaxFieldReflectors = 64;
 
 		HashMap<Id64, CustomReflectFunction> m_CustomReflectors;
 		LocalArray<FieldReflectorEntry, c_MaxFieldReflectors> m_FieldReflectors;

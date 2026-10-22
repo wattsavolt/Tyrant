@@ -123,6 +123,7 @@ namespace tyr
 		ToolResult SetMaterialLayer(const simdjson::dom::object& args);
 		ToolResult Interact(const simdjson::dom::object& args);
 		ToolResult GiveItem(const simdjson::dom::object& args);
+		ToolResult SetPlayerView(const simdjson::dom::object& args);
 		// The running game's player, with the world it's in.
 		Entity FindGamePlayer(World*& outWorld, Handle& outWorldHandle);
 		ToolResult SpawnActor(const simdjson::dom::object& args);
@@ -139,7 +140,6 @@ namespace tyr
 		ToolResult BuildNavmesh(const simdjson::dom::object& args);
 		ToolResult FindPath(const simdjson::dom::object& args);
 		ToolResult MoveAgent(const simdjson::dom::object& args);
-		ToolResult GetEnemy(const simdjson::dom::object& args);
 		ToolResult GetLightLevel(const simdjson::dom::object& args);
 		ToolResult MakeNoise(const simdjson::dom::object& args);
 		ToolResult PlayAnimation(const simdjson::dom::object& args);
@@ -153,6 +153,8 @@ namespace tyr
 		ToolResult GetLevelSettings(const simdjson::dom::object& args);
 		ToolResult SetLevelSettings(const simdjson::dom::object& args);
 		ToolResult ImportSky(const simdjson::dom::object& args);
+		ToolResult ImportTexture(const simdjson::dom::object& args);
+		ToolResult ImportFont(const simdjson::dom::object& args);
 		ToolResult GetDisplay(const simdjson::dom::object& args);
 		ToolResult SetDisplay(const simdjson::dom::object& args);
 		void WriteLevelSettings();

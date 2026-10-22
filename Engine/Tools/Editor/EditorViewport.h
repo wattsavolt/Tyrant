@@ -59,6 +59,8 @@ namespace tyr
 			Transform transform;
 			// A click on the game while it's playing, to give it the mouse back.
 			bool playClicked = false;
+			// Where the world's image was drawn.
+			PanelRect image;
 		};
 
 		EditorViewport(RendererAPI& rendererAPI, const EditorIcons& icons);

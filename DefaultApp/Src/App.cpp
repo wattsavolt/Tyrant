@@ -114,9 +114,9 @@ void App::SpawnPlayer()
 	bool found = false;
 	for (const ActorInstance& actor : world.actorInstances)
 	{
-		if (actor.typeID == c_PlayerStartType && world.entities.HasComponent<ComponentTransform>(actor.RootEntity()))
+		if (actor.typeID == c_PlayerStartType && world.entities.HasComponent<TransformComponent>(actor.RootEntity()))
 		{
-			const Transform& start = world.entities.GetComponent<ComponentTransform>(actor.RootEntity()).world;
+			const Transform& start = world.entities.GetComponent<TransformComponent>(actor.RootEntity()).world;
 			const Vector3 facing = start.rotation.Rotate(Vector3::c_Forward);
 			position = start.position;
 			yaw = Math::Atan2(facing.x, facing.z);

@@ -28,7 +28,8 @@ namespace tyr
 		Mesh,
 		Skeleton,
 		Animation,
-		CollisionMesh
+		CollisionMesh,
+		Font
 	};
 
 	struct AssetData

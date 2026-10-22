@@ -2,16 +2,33 @@
 
 #include "RenderBase/RenderHandles.h"
 #include "Rendering/RenderConstants.h"
+#include "Math/Vector4.h"
 
 namespace tyr
 {
-	// An infinite grid on the y = 0 plane, drawn over a viewport's final image.
+	// An infinite grid on a flat, level plane, drawn over a viewport's final image. Hidden
+	// behind anything the scene draws closer to the camera.
 	struct ViewportGridDesc
 	{
 		bool enabled = false;
+		// The height of the plane the grid lies on.
+		float planeHeight = 0.0f;
 		float cellSize = 1.0f;
 		// How many cells apart the brighter major lines are.
 		uint majorLineEvery = 10;
+		// Line widths are fractions of a cell (minor, axis) or of a major cell (major).
+		float minorLineWidth = 0.01f;
+		float majorLineWidth = 0.0025f;
+		float axisLineWidth = 0.025f;
+		// Linear colours, with how opaque the lines are in alpha.
+		Vector4 minorLineColour = Vector4(0.25f, 0.25f, 0.25f, 0.45f);
+		Vector4 majorLineColour = Vector4(0.4f, 0.4f, 0.4f, 0.7f);
+		// The X axis runs along z = 0 and the Z axis along x = 0.
+		Vector4 xAxisColour = Vector4(0.8f, 0.1f, 0.1f, 0.9f);
+		Vector4 zAxisColour = Vector4(0.1f, 0.25f, 0.9f, 0.9f);
+		// The grid fades out between these distances from the camera, in major cells.
+		float fadeStart = 10.0f;
+		float fadeEnd = 20.0f;
 	};
 
 	enum class ViewportCaptureStatus : uint8

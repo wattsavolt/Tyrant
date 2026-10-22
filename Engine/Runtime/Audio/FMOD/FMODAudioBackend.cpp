@@ -1,6 +1,7 @@
 #include "FMODAudioBackend.h"
 #include "fmod_studio.hpp"
 #include "fmod_errors.h"
+#include <cstring>
 
 namespace tyr
 {
@@ -8,6 +9,35 @@ namespace tyr
 	{
 		// Sounds FMOD mixes at once. Quieter ones are virtualised past this.
 		constexpr int c_MaxChannels = 512;
+		// FMOD wants 16-byte aligned blocks; each starts with its size, which reallocating needs.
+		constexpr size_t c_BlockHeader = 16;
+
+		void* F_CALL Allocate(unsigned int size, FMOD_MEMORY_TYPE, const char*)
+		{
+			uint8* block = static_cast<uint8*>(MemAllocAligned16(size + c_BlockHeader));
+			*reinterpret_cast<size_t*>(block) = size;
+			return block + c_BlockHeader;
+		}
+
+		void F_CALL FreeBlock(void* memory, FMOD_MEMORY_TYPE, const char*)
+		{
+			if (memory)
+			{
+				MemoryAllocator<HeapAllocator>::FreeAligned16(static_cast<uint8*>(memory) - c_BlockHeader);
+			}
+		}
+
+		void* F_CALL Reallocate(void* memory, unsigned int size, FMOD_MEMORY_TYPE type, const char* source)
+		{
+			void* newMemory = Allocate(size, type, source);
+			if (memory)
+			{
+				const size_t oldSize = *reinterpret_cast<size_t*>(static_cast<uint8*>(memory) - c_BlockHeader);
+				memcpy(newMemory, memory, oldSize < size ? oldSize : size);
+				FreeBlock(memory, type, source);
+			}
+			return newMemory;
+		}
 
 		bool Check(FMOD_RESULT result, const char* what)
 		{
@@ -37,6 +67,8 @@ namespace tyr
 
 	bool FMODAudioBackend::Initialize()
 	{
+		// FMOD allocates through the engine's heap. This has to happen before anything else in FMOD.
+		Check(FMOD::Memory_Initialize(nullptr, 0, &Allocate, &Reallocate, &FreeBlock, FMOD_MEMORY_ALL), "use the engine's memory");
 		if (!Check(FMOD::Studio::System::create(&m_System), "create its system"))
 		{
 			m_System = nullptr;

@@ -12,12 +12,13 @@
 #include "ECS/Components.h"
 #include "Gameplay/Noise.h"
 #include "AI/NavAgents.h"
+#include "Gameplay/LimbCollision.h"
 #include "AI/Perception.h"
-#include "AI/EnemyBrains.h"
 #include "Gameplay/Scents.h"
 #include "Gameplay/Doors.h"
 #include "Gameplay/Power.h"
 #include "Gameplay/Sounds.h"
+#include "Gameplay/Triggers.h"
 #include "AssetSystem/AssetRegistry.h"
 #include "AssetSystem/AssetUtil.h"
 #include "AssetSystem/AssetConstants.h"
@@ -31,6 +32,14 @@ namespace tyr
 {
 	namespace
 	{
+		// A held flashlight keeps this far from a wall in front, drawing back towards the eyes by up
+		// to the most, tucking down a little as it goes. It draws back quickly and comes out slowly.
+		constexpr float c_FlashlightWallGap = 0.12f;
+		constexpr float c_FlashlightMaxPullBack = 0.3f;
+		constexpr float c_FlashlightTuck = 0.5f;
+		constexpr float c_FlashlightPullSpeed = 20.0f;
+		constexpr float c_FlashlightReturnSpeed = 6.0f;
+
 		// Whether an actor of this type, added to the world, keeps the world within max of T.
 		template<typename T>
 		bool HasRoomFor(EntitySystem& entities, const ActorTypeDesc& actorType, uint max)
@@ -59,9 +68,9 @@ namespace tyr
 		// The entity's world transform, or no transform if it has none.
 		Transform GetWorldTransform(EntitySystem& entities, Entity entity)
 		{
-			if (entities.HasComponent<ComponentTransform>(entity))
+			if (entities.HasComponent<TransformComponent>(entity))
 			{
-				return entities.GetComponent<ComponentTransform>(entity).world;
+				return entities.GetComponent<TransformComponent>(entity).world;
 			}
 			Transform transform;
 			transform.position = Vector3::c_Zero;
@@ -81,8 +90,15 @@ namespace tyr
 		}
 
 		// A light fixture's brightness, 0 for a flashlight that's off, or 1 for anything else.
-		float GetLightBrightness(const EntitySystem& entities, Entity entity)
+		float GetLightBrightness(const World& world, Entity entity)
 		{
+			const EntitySystem& entities = world.entities;
+			// Outdoor lights are off while the camera is indoors, so they cost nothing there.
+			if (world.cameraIndoors && ((entities.HasComponent<PointLightComponent>(entity) && entities.GetComponent<PointLightComponent>(entity).outdoor)
+				|| (entities.HasComponent<SpotLightComponent>(entity) && entities.GetComponent<SpotLightComponent>(entity).outdoor)))
+			{
+				return 0.0f;
+			}
 			if (entities.HasComponent<FlashlightComponent>(entity))
 			{
 				return entities.GetComponent<FlashlightComponent>(entity).on ? 1.0f : 0.0f;
@@ -247,7 +263,7 @@ namespace tyr
 				if (!light.lightHandle)
 				{
 					light.lightHandle = m_RendererAPI->CreatePointLight(world.sceneHandle,
-						CreateLightDesc(light, GetWorldTransform(world.entities, entity), GetLightBrightness(world.entities, entity)));
+						CreateLightDesc(light, GetWorldTransform(world.entities, entity), GetLightBrightness(world, entity)));
 				}
 			});
 
@@ -256,7 +272,7 @@ namespace tyr
 				if (!light.lightHandle)
 				{
 					light.lightHandle = m_RendererAPI->CreateSpotLight(world.sceneHandle,
-						CreateLightDesc(light, GetWorldTransform(world.entities, entity), GetLightBrightness(world.entities, entity)));
+						CreateLightDesc(light, GetWorldTransform(world.entities, entity), GetLightBrightness(world, entity)));
 				}
 			});
 
@@ -274,16 +290,19 @@ namespace tyr
 		if (world.simulate && !world.paused)
 		{
 			UpdateDoors(world, deltaTime);
+			UpdatePickupShine(world, deltaTime);
+			Triggers::Update(world);
 			Noise::Update(world, deltaTime);
 			Scents::Update(world, deltaTime);
 		}
 
-		// Enemies sense, decide and then walk, before physics moves them by the velocities they set.
+		// Agents sense and then walk where the game's update sent them, before physics moves them by
+		// the velocities they set.
 		if (world.simulate && !world.paused && world.physicsWorld)
 		{
-			Perception::Update(world, m_PhysicsComponentsManager, deltaTime);
-			EnemyBrains::Update(world, m_NavmeshComponentsManager, m_PhysicsComponentsManager, deltaTime);
+			Perception::Update(world, m_NavmeshComponentsManager, m_PhysicsComponentsManager, deltaTime);
 			NavAgents::Update(world, m_NavmeshComponentsManager, m_PhysicsComponentsManager, deltaTime);
+			LimbCollision::Update(world, m_PhysicsComponentsManager, m_AnimationSystem, deltaTime);
 		}
 
 		if (world.physicsWorld && !world.paused)
@@ -298,11 +317,12 @@ namespace tyr
 		}
 
 		// After physics, so the camera is where the entity is drawn this frame.
-		if (world.cameraEntity != c_InvalidEntity && world.entities.HasComponent<ComponentTransform>(world.cameraEntity))
+		if (world.cameraEntity != c_InvalidEntity && world.entities.HasComponent<TransformComponent>(world.cameraEntity))
 		{
-			world.camera->SetPosition(world.entities.GetComponent<ComponentTransform>(world.cameraEntity).world.position + world.cameraOffset);
+			world.camera->SetPosition(world.entities.GetComponent<TransformComponent>(world.cameraEntity).world.position + world.cameraOffset);
 		}
 		UpdateFlashlights(world, deltaTime);
+		UpdateIndoors(world);
 
 		// Only a world being played is heard. One open in the editor stays silent.
 		if (world.simulate)
@@ -475,7 +495,8 @@ namespace tyr
 				desc.info.transform = Matrix4::CreateTRS(transform.position, transform.rotation, transform.scale);
 				desc.info.mesh = assets.mesh;
 				desc.info.materials = assets.materials;
-				desc.info.emissiveScale = world.entities.GetComponent<MeshComponent>(entity).emissiveScale * GetLightBrightness(world.entities, entity);
+				desc.info.emissiveScale = world.entities.GetComponent<MeshComponent>(entity).emissiveScale * GetLightBrightness(world, entity);
+				desc.info.highlight = world.entities.GetComponent<MeshComponent>(entity).highlight;
 
 				MeshComponent& comp = world.entities.GetComponent<MeshComponent>(entity);
 				comp.meshInstance = m_RendererAPI->CreateMeshInstance(world.sceneHandle, desc);
@@ -557,7 +578,7 @@ namespace tyr
 			if (light.lightHandle)
 			{
 				m_RendererAPI->UpdatePointLight(light.lightHandle,
-					CreateLightDesc(light, GetWorldTransform(world.entities, entity), GetLightBrightness(world.entities, entity)));
+					CreateLightDesc(light, GetWorldTransform(world.entities, entity), GetLightBrightness(world, entity)));
 			}
 			return true;
 		}
@@ -568,7 +589,7 @@ namespace tyr
 			if (light.lightHandle)
 			{
 				m_RendererAPI->UpdateSpotLight(light.lightHandle,
-					CreateLightDesc(light, GetWorldTransform(world.entities, entity), GetLightBrightness(world.entities, entity)));
+					CreateLightDesc(light, GetWorldTransform(world.entities, entity), GetLightBrightness(world, entity)));
 			}
 			return true;
 		}
@@ -612,9 +633,9 @@ namespace tyr
 			return true;
 		}
 
-		if (typeID == ComponentRegistry::GetComponentTypeID<ComponentTransform>())
+		if (typeID == ComponentRegistry::GetComponentTypeID<TransformComponent>())
 		{
-			world.entities.GetComponent<ComponentTransform>(entity) = *static_cast<const ComponentTransform*>(data);
+			world.entities.GetComponent<TransformComponent>(entity) = *static_cast<const TransformComponent*>(data);
 
 			// Moving the actor's root carries the rest of the actor with it.
 			for (const ActorInstance& instance : world.actorInstances)
@@ -624,7 +645,7 @@ namespace tyr
 					if (actorEntity == entity)
 					{
 						const Entity rootEntity = instance.RootEntity();
-						SetActorTransform(worldHandle, rootEntity, world.entities.GetComponent<ComponentTransform>(rootEntity).local);
+						SetActorTransform(worldHandle, rootEntity, world.entities.GetComponent<TransformComponent>(rootEntity).local);
 						return true;
 					}
 				}
@@ -704,13 +725,25 @@ namespace tyr
 		return true;
 	}
 
+	void WorldManager::UpdateEntityTransform(Handle worldHandle, Entity entity)
+	{
+		UpdateEntityTransform(GetWorld(worldHandle), entity);
+	}
+
+	void WorldManager::RemoveEntity(Handle worldHandle, Entity entity)
+	{
+		World& world = GetWorld(worldHandle);
+		ReleaseEntity(world, entity);
+		world.entities.RemoveEntity(entity);
+	}
+
 	void WorldManager::UpdateEntityTransform(World& world, Entity entity)
 	{
-		if (!world.entities.HasComponent<ComponentTransform>(entity))
+		if (!world.entities.HasComponent<TransformComponent>(entity))
 		{
 			return;
 		}
-		const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+		const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 
 		if (world.entities.HasComponent<MeshComponent>(entity))
 		{
@@ -724,7 +757,8 @@ namespace tyr
 				{
 					desc.info.materials.Add(m_AssetManager->GetMaterial(materialID));
 				}
-				desc.info.emissiveScale = meshComponent.emissiveScale * GetLightBrightness(world.entities, entity);
+				desc.info.emissiveScale = meshComponent.emissiveScale * GetLightBrightness(world, entity);
+				desc.info.highlight = meshComponent.highlight;
 				m_RendererAPI->UpdateMeshInstance(meshComponent.meshInstance, desc);
 			}
 		}
@@ -750,7 +784,7 @@ namespace tyr
 			const PointLightComponent& light = world.entities.GetComponent<PointLightComponent>(entity);
 			if (light.lightHandle)
 			{
-				m_RendererAPI->UpdatePointLight(light.lightHandle, CreateLightDesc(light, transform, GetLightBrightness(world.entities, entity)));
+				m_RendererAPI->UpdatePointLight(light.lightHandle, CreateLightDesc(light, transform, GetLightBrightness(world, entity)));
 			}
 		}
 
@@ -759,7 +793,7 @@ namespace tyr
 			const SpotLightComponent& light = world.entities.GetComponent<SpotLightComponent>(entity);
 			if (light.lightHandle)
 			{
-				m_RendererAPI->UpdateSpotLight(light.lightHandle, CreateLightDesc(light, transform, GetLightBrightness(world.entities, entity)));
+				m_RendererAPI->UpdateSpotLight(light.lightHandle, CreateLightDesc(light, transform, GetLightBrightness(world, entity)));
 			}
 		}
 
@@ -786,7 +820,7 @@ namespace tyr
 			++world.changeCount;
 
 			// The root has no parent, so its local and world transforms are the same.
-			ComponentTransform& root = world.entities.GetComponent<ComponentTransform>(rootEntity);
+			TransformComponent& root = world.entities.GetComponent<TransformComponent>(rootEntity);
 			root.local = transform;
 			root.world = transform;
 			UpdateEntityTransform(world, rootEntity);
@@ -1126,7 +1160,6 @@ namespace tyr
 
 	void WorldManager::UpdateLightFixtures(World& world, float deltaTime)
 	{
-		Power::Update(world);
 		const bool powered = Power::IsOn(world);
 		const bool animate = world.simulate && !world.paused;
 		world.entities.ForEach<LightFixtureComponent>([this, &world, powered, animate, deltaTime](Entity entity, LightFixtureComponent& fixture)
@@ -1152,13 +1185,44 @@ namespace tyr
 		}
 		world.entities.ForEach<LightSwitchComponent>([this, &world](Entity entity, LightSwitchComponent& lightSwitch)
 		{
-			if (lightSwitch.shownOn == lightSwitch.switchedOn || !world.entities.HasComponent<ComponentTransform>(entity))
+			if (lightSwitch.shownOn == lightSwitch.switchedOn || !world.entities.HasComponent<TransformComponent>(entity))
 			{
 				return;
 			}
 			lightSwitch.shownOn = lightSwitch.switchedOn;
-			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+			const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 			MoveEntity(world, entity, transform.position, transform.rotation * Quaternion(Vector3::c_Forward, Math::c_Pi));
+		});
+	}
+
+	void WorldManager::UpdatePickupShine(World& world, float deltaTime)
+	{
+		if (!world.camera)
+		{
+			return;
+		}
+		// Full strength within a few metres, fading out further away so the far side of a room stays dark.
+		constexpr float c_FullDistance = 3.0f;
+		constexpr float c_FadeDistance = 9.0f;
+		constexpr float c_PulseSpeed = 2.6f;
+		const Vector3 eye = world.camera->GetPosition();
+		world.entities.ForEach<PickupComponent>([this, &world, eye, deltaTime](Entity entity, PickupComponent& pickup)
+		{
+			if (!world.entities.HasComponent<MeshComponent>(entity))
+			{
+				return;
+			}
+			pickup.shineTime += deltaTime;
+			const float distance = (GetWorldTransform(world.entities, entity).position - eye).Length();
+			const float nearness = Math::Clamp01(1.0f - (distance - c_FullDistance) / c_FadeDistance);
+			const float highlight = nearness * (0.55f + 0.45f * Math::Sin(pickup.shineTime * c_PulseSpeed));
+			MeshComponent& mesh = world.entities.GetComponent<MeshComponent>(entity);
+			if (highlight == mesh.highlight)
+			{
+				return;
+			}
+			mesh.highlight = highlight;
+			UpdateEntityTransform(world, entity);
 		});
 	}
 
@@ -1177,8 +1241,8 @@ namespace tyr
 		// Each is started once, so one whose event can't be found isn't tried every frame.
 		world.entities.ForEach<AmbientSoundComponent>([this, &world](Entity entity, AmbientSoundComponent& ambient)
 		{
-			const Vector3 position = world.entities.HasComponent<ComponentTransform>(entity)
-				? world.entities.GetComponent<ComponentTransform>(entity).world.position : Vector3::c_Zero;
+			const Vector3 position = world.entities.HasComponent<TransformComponent>(entity)
+				? world.entities.GetComponent<TransformComponent>(entity).world.position : Vector3::c_Zero;
 			if (!ambient.started)
 			{
 				ambient.started = true;
@@ -1194,6 +1258,43 @@ namespace tyr
 		});
 	}
 
+	void WorldManager::UpdateIndoors(World& world)
+	{
+		const Vector3 eyes = world.camera->GetPosition();
+		bool indoors = false;
+		world.entities.ForEach<IndoorVolumeComponent>([&world, &eyes, &indoors](Entity entity, const IndoorVolumeComponent& volume)
+		{
+			if (indoors || !world.entities.HasComponent<TransformComponent>(entity))
+			{
+				return;
+			}
+			const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
+			const Vector3 local = transform.rotation.Inverse().Rotate(eyes - transform.position);
+			const Vector3 extents(volume.halfExtents.x * transform.scale.x, volume.halfExtents.y * transform.scale.y, volume.halfExtents.z * transform.scale.z);
+			indoors = Math::Abs(local.x) <= extents.x && Math::Abs(local.y) <= extents.y && Math::Abs(local.z) <= extents.z;
+		});
+		if (indoors == world.cameraIndoors)
+		{
+			return;
+		}
+		// Going in or out, every outdoor light is sent again, switched off or back on.
+		world.cameraIndoors = indoors;
+		world.entities.ForEach<PointLightComponent>([this, &world](Entity entity, const PointLightComponent& light)
+		{
+			if (light.outdoor)
+			{
+				UpdateEntityTransform(world, entity);
+			}
+		});
+		world.entities.ForEach<SpotLightComponent>([this, &world](Entity entity, const SpotLightComponent& light)
+		{
+			if (light.outdoor)
+			{
+				UpdateEntityTransform(world, entity);
+			}
+		});
+	}
+
 	void WorldManager::UpdateFlashlights(World& world, float deltaTime)
 	{
 		const Vector3 forward = world.camera->GetForward();
@@ -1205,14 +1306,31 @@ namespace tyr
 
 		world.entities.ForEach<FlashlightComponent>([this, &world, &aim, &eyes, &right, &up, &forward, deltaTime](Entity entity, FlashlightComponent& flashlight)
 		{
-			if (!flashlight.held || !world.entities.HasComponent<ComponentTransform>(entity))
+			if (!flashlight.held || !world.entities.HasComponent<TransformComponent>(entity))
 			{
 				return;
 			}
-			const Quaternion current = world.entities.GetComponent<ComponentTransform>(entity).world.rotation;
+			const Quaternion current = world.entities.GetComponent<TransformComponent>(entity).world.rotation;
 			const float blend = 1.0f - Math::Exp(-flashlight.followSpeed * deltaTime);
-			const Vector3 position = eyes + right * flashlight.offset.x + up * flashlight.offset.y + forward * flashlight.offset.z;
-			MoveEntity(world, entity, position, Quaternion::Slerp(blend, current, aim));
+			const Quaternion rotation = Quaternion::Slerp(blend, current, aim);
+			Vector3 position = eyes + right * flashlight.offset.x + up * flashlight.offset.y + forward * flashlight.offset.z;
+
+			// Drawn back out of any wall between the eyes and just past the lens.
+			const Vector3 reach = position - eyes;
+			const float reachLength = reach.Length();
+			float wantedPull = 0.0f;
+			RayCastEntityHit hit;
+			if (reachLength > 0.001f && world.physicsWorld
+				&& m_PhysicsComponentsManager.Raycast(world.physicsWorld, eyes, reach * (1.0f / reachLength), reachLength + c_FlashlightWallGap, hit))
+			{
+				wantedPull = Math::Clamp(reachLength + c_FlashlightWallGap - hit.distance, 0.0f, c_FlashlightMaxPullBack);
+			}
+			const float speed = wantedPull > flashlight.pullBack ? c_FlashlightPullSpeed : c_FlashlightReturnSpeed;
+			flashlight.pullBack += (wantedPull - flashlight.pullBack) * (1.0f - Math::Exp(-speed * deltaTime));
+			const Vector3 held = rotation.Rotate(Vector3::c_Forward);
+			position -= held * flashlight.pullBack;
+			position -= up * (flashlight.pullBack * c_FlashlightTuck);
+			MoveEntity(world, entity, position, rotation);
 		});
 	}
 
@@ -1220,17 +1338,29 @@ namespace tyr
 	{
 		world.entities.ForEach<DoorComponent>([this, &world, deltaTime](Entity entity, DoorComponent& door)
 		{
-			if (!world.entities.HasComponent<ComponentTransform>(entity))
+			if (!world.entities.HasComponent<TransformComponent>(entity))
 			{
 				return;
 			}
 			Doors::CaptureClosedPose(world, entity);
+			if (door.broken)
+			{
+				if (Doors::UpdateFall(door, deltaTime))
+				{
+					Vector3 fallenPosition;
+					Quaternion fallenRotation;
+					Doors::GetPose(door, fallenPosition, fallenRotation);
+					MoveEntity(world, entity, fallenPosition, fallenRotation);
+				}
+				return;
+			}
 			if (door.openAmount == door.targetAmount)
 			{
+				door.bursting = false;
 				return;
 			}
 
-			const float step = deltaTime / std::max(door.openTime, 0.01f);
+			const float step = deltaTime / std::max(door.bursting ? door.burstOpenTime : door.openTime, 0.01f);
 			door.openAmount = door.targetAmount > door.openAmount ? std::min(door.openAmount + step, door.targetAmount) : std::max(door.openAmount - step, door.targetAmount);
 			Vector3 position;
 			Quaternion rotation;
@@ -1254,7 +1384,7 @@ namespace tyr
 			const Quaternion rotation = Quaternion::Lerp(alpha, rigidBody.previousRotation, rigidBody.currentRotation);
 
 			// A body at rest, such as one asleep, leaves its entity where it already is.
-			const Transform& current = world.entities.GetComponent<ComponentTransform>(entity).world;
+			const Transform& current = world.entities.GetComponent<TransformComponent>(entity).world;
 			if (current.position == position && current.rotation == rotation)
 			{
 				return;
@@ -1269,7 +1399,7 @@ namespace tyr
 				return;
 			}
 			const Vector3 position = Vector3::Lerp(alpha, character.previousPosition, character.currentPosition);
-			const Transform& current = world.entities.GetComponent<ComponentTransform>(entity).world;
+			const Transform& current = world.entities.GetComponent<TransformComponent>(entity).world;
 			// An agent turns to face the way it walks. Anything else keeps its rotation.
 			const Quaternion rotation = world.entities.HasComponent<NavAgentComponent>(entity)
 				? Quaternion(Vector3::c_Up, world.entities.GetComponent<NavAgentComponent>(entity).yaw) : current.rotation;
@@ -1282,7 +1412,7 @@ namespace tyr
 
 	void WorldManager::MoveEntity(World& world, Entity entity, const Vector3& position, const Quaternion& rotation)
 	{
-		ComponentTransform& transform = world.entities.GetComponent<ComponentTransform>(entity);
+		TransformComponent& transform = world.entities.GetComponent<TransformComponent>(entity);
 		transform.world.position = position;
 		transform.world.rotation = rotation;
 
@@ -1294,7 +1424,7 @@ namespace tyr
 		else
 		{
 			// The local transform keeps the entity where it is under its parent.
-			const Transform& parentWorld = world.entities.GetComponent<ComponentTransform>(transform.parentEntity).world;
+			const Transform& parentWorld = world.entities.GetComponent<TransformComponent>(transform.parentEntity).world;
 			const Matrix4 worldMatrix = Matrix4::CreateTRS(position, rotation, transform.world.scale);
 			const Matrix4 localMatrix = worldMatrix * Matrix4::CreateTRS(parentWorld.position, parentWorld.rotation, parentWorld.scale).Inverse();
 			localMatrix.DecomposeTRS(transform.local.position, transform.local.rotation, transform.local.scale);
@@ -1322,7 +1452,7 @@ namespace tyr
 		// Parents come before their children in the actor's entity list.
 		for (Entity entity : instance.entities)
 		{
-			ComponentTransform& child = world.entities.GetComponent<ComponentTransform>(entity);
+			TransformComponent& child = world.entities.GetComponent<TransformComponent>(entity);
 			bool parentMoved = false;
 			for (Entity movedEntity : movedEntities)
 			{
@@ -1333,7 +1463,7 @@ namespace tyr
 				continue;
 			}
 
-			const Transform& parentWorld = world.entities.GetComponent<ComponentTransform>(child.parentEntity).world;
+			const Transform& parentWorld = world.entities.GetComponent<TransformComponent>(child.parentEntity).world;
 			const Matrix4 worldMatrix = Matrix4::CreateTRS(child.local.position, child.local.rotation, child.local.scale)
 				* Matrix4::CreateTRS(parentWorld.position, parentWorld.rotation, parentWorld.scale);
 			worldMatrix.DecomposeTRS(child.world.position, child.world.rotation, child.world.scale);

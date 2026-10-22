@@ -1316,6 +1316,22 @@ namespace tyr
 		return assetData && assetData->loadState == AssetLoadState::Loaded ? &m_CollisionMeshPool[assetData->resourceHandle] : nullptr;
 	}
 
+	void AssetManager::LoadFont(AssetID assetID)
+	{
+		LoadCpuAsset(assetID, AssetLoadType::Font);
+	}
+
+	void AssetManager::DeleteFont(AssetID assetID)
+	{
+		DeleteCpuAsset(assetID, AssetLoadType::Font);
+	}
+
+	const FontFile* AssetManager::GetFont(AssetID assetID) const
+	{
+		const AssetData* assetData = m_AssetMap.Find(assetID);
+		return assetData && assetData->loadState == AssetLoadState::Loaded ? &m_FontPool[assetData->resourceHandle] : nullptr;
+	}
+
 	void AssetManager::LoadCpuAsset(AssetID assetID, AssetLoadType type)
 	{
 		if (AssetData* assetData = m_AssetMap.Find(assetID))
@@ -1341,6 +1357,9 @@ namespace tyr
 		case AssetLoadType::Animation:
 			ld->handle = m_AnimationPool.Create();
 			break;
+		case AssetLoadType::Font:
+			ld->handle = m_FontPool.Create();
+			break;
 		default:
 			ld->handle = m_CollisionMeshPool.Create();
 			break;
@@ -1356,6 +1375,9 @@ namespace tyr
 				break;
 			case AssetLoadType::Animation:
 				LoadAssetFile(ld->filePath.CStr(), m_AnimationPool[ld->handle]);
+				break;
+			case AssetLoadType::Font:
+				LoadAssetFile(ld->filePath.CStr(), m_FontPool[ld->handle]);
 				break;
 			default:
 				LoadAssetFile(ld->filePath.CStr(), m_CollisionMeshPool[ld->handle]);
@@ -1392,6 +1414,9 @@ namespace tyr
 			break;
 		case AssetLoadType::Animation:
 			m_AnimationPool.Delete(assetData.resourceHandle);
+			break;
+		case AssetLoadType::Font:
+			m_FontPool.Delete(assetData.resourceHandle);
 			break;
 		default:
 			m_CollisionMeshPool.Delete(assetData.resourceHandle);

@@ -17,6 +17,8 @@ namespace tyr
 		float age = 0.0f;
 		// What made it, or c_InvalidEntity.
 		Entity source = c_InvalidEntity;
+		// Counts up with each noise made, so anything listening only works out once whether it hears it.
+		uint id = 0;
 	};
 	constexpr uint c_MaxNoiseEvents = 64;
 
@@ -39,24 +41,11 @@ namespace tyr
 		Hearing,
 		Smell,
 		// Close enough to brush against.
-		Touch
-	};
-
-	// What an enemy is doing. Stored as uint8 in EnemyComponent.
-	enum class EnemyState : uint8
-	{
-		// Wandering about near where it started, pausing now and then.
-		Wander = 0,
-		// Going to look at a noise that didn't come from its target.
-		Investigate,
-		// Going after its target, or where it last knew the target was.
-		Chase,
-		// Close enough to hit its target, and hitting it.
-		Attack,
-		// Looking around where it lost its target.
-		Search,
-		// Held still by light.
-		Dazed
+		Touch,
+		// Close by and in front, sensed without seeing.
+		Nearby,
+		// Kept track of once found, while nothing's in the way.
+		Tracked
 	};
 
 	// How a door moves between closed and open. Stored as uint8 in DoorComponent.
@@ -111,7 +100,8 @@ namespace tyr
 	struct GameplayConstants
 	{
 		// How far from their eyes the player can use things, in metres.
-		static constexpr float c_InteractDistance = 2.0f;
-		static constexpr uint c_MaxInventoryItems = 12;
+		static constexpr float c_InteractDistance = 2.5f;
+		static constexpr uint c_MaxInventoryItems = 10;
+		static constexpr uint c_MaxDocuments = 12;
 	};
 }

@@ -91,6 +91,28 @@ namespace tyr
 		}
 	}
 
+	Vector3 AnimationUtil::GetRootTravel(const AnimationClip& clip)
+	{
+		// Bones are ordered parents first, so the first is a root.
+		if (clip.tracks.IsEmpty() || clip.tracks[0].translationCount < 2)
+		{
+			return Vector3::c_Zero;
+		}
+		const AnimationTrack& track = clip.tracks[0];
+		return clip.translations[track.translationOffset + track.translationCount - 1] - clip.translations[track.translationOffset];
+	}
+
+	void AnimationUtil::RemoveRootTravel(const AnimationClip& clip, const Skeleton& skeleton, BoneTransform* pose)
+	{
+		if (clip.tracks.IsEmpty() || clip.tracks[0].translationCount == 0 || skeleton.BoneCount() == 0)
+		{
+			return;
+		}
+		const Vector3& start = clip.translations[clip.tracks[0].translationOffset];
+		pose[0].translation.x = start.x;
+		pose[0].translation.z = start.z;
+	}
+
 	void AnimationUtil::BlendPoses(const BoneTransform* a, const BoneTransform* b, float weight, uint boneCount, BoneTransform* out)
 	{
 		for (uint bone = 0; bone < boneCount; ++bone)

@@ -230,7 +230,7 @@ namespace tyr
 		// Downsamples sourceIndex into bloom level, or with upsample, adds level + 1 onto level.
 		void RecordBloomPass(CommandList& cmdList, uint renderFrameIndex, uint level, uint sourceIndex, bool upsample);
 		// Draws the viewport grid over sourceIndex's image into the slot's overlay texture.
-		void RecordEditorGridPass(CommandList& cmdList, uint renderFrameIndex, uint sourceIndex);
+		void RecordGridPass(CommandList& cmdList, uint renderFrameIndex, uint sourceIndex);
 		// Draws this frame's debug lines into the slot's overlay texture.
 		void RecordDebugLinePass(CommandList& cmdList, uint renderFrameIndex);
 		// Resolves the active scene's own RenderViewport down to this renderFrameIndex's own
@@ -277,7 +277,7 @@ namespace tyr
 		// Same idea as EnsureLightingOutputBound, for TAA's own resolve output.
 		void EnsureTaaResolveOutputBound(uint renderFrameIndex, TextureHandle resolvedColourTexture);
 		// Same idea as EnsureLightingOutputBound, for the grid's overlay output.
-		void EnsureEditorGridOutputBound(uint renderFrameIndex, TextureHandle overlayColourTexture);
+		void EnsureGridOutputBound(uint renderFrameIndex, TextureHandle overlayColourTexture);
 		// Same idea as EnsureLightingOutputBound, for the tone mapper's output.
 		void EnsureDisplayOutputBound(uint renderFrameIndex, TextureHandle displayColourTexture);
 		void EnsureBloomBound(uint renderFrameIndex, const RenderViewportTextureData& targets);
@@ -357,7 +357,7 @@ namespace tyr
 		TextureHandle m_ShadowMasksRawBoundTextures[RenderConstants::c_BufferedFrameCount];
 		TextureHandle m_ShadowMasksBoundTextures[RenderConstants::c_BufferedFrameCount];
 		TextureHandle m_TaaResolveOutputBoundTextures[RenderConstants::c_BufferedFrameCount];
-		TextureHandle m_EditorGridOutputBoundTextures[RenderConstants::c_BufferedFrameCount];
+		TextureHandle m_GridOutputBoundTextures[RenderConstants::c_BufferedFrameCount];
 		TextureHandle m_DisplayOutputBoundTextures[RenderConstants::c_BufferedFrameCount];
 		TextureHandle m_BloomBoundTextures[RenderConstants::c_BufferedFrameCount][RenderConstants::c_BloomLevels];
 		// Main thread only.

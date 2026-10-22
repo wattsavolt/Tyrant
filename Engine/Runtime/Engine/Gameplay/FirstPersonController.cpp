@@ -45,6 +45,9 @@ namespace tyr
 		m_CrouchToggled = false;
 		m_HasLastPosition = false;
 		m_StrideProgress = 0.0f;
+		m_Stamina = 1.0f;
+		m_Exhausted = false;
+		m_StaminaRecoverWait = 0.0f;
 		if (world.entities.HasComponent<CharacterComponent>(character))
 		{
 			m_EyeHeight = GetEyeHeight(world.entities.GetComponent<CharacterComponent>(character), settings.eyeDepth);
@@ -76,11 +79,19 @@ namespace tyr
 		}
 		CharacterComponent& character = world.entities.GetComponent<CharacterComponent>(m_Character);
 
-		// Looking.
+		// Looking, or where a tool turned the view.
+		if (world.viewRequested)
+		{
+			world.viewRequested = false;
+			m_Yaw = world.requestedYaw;
+			m_Pitch = Math::Clamp(world.requestedPitch, -settings.maxPitch * Math::c_DegToRad, settings.maxPitch * Math::c_DegToRad);
+		}
 		if (hasInput)
 		{
 			const Vector2& mouse = input.GetRawMouseDelta();
-			const Vector2& stick = input.GetGamepadRightStick();
+			// Squared, so a small push turns slowly enough to aim with and a full one still turns fast.
+			const Vector2& rawStick = input.GetGamepadRightStick();
+			const Vector2 stick(rawStick.x * Math::Abs(rawStick.x), rawStick.y * Math::Abs(rawStick.y));
 			const float yawDegrees = mouse.x * settings.mouseSensitivity + stick.x * settings.gamepadLookSpeed * deltaTime;
 			const float pitchDegrees = -mouse.y * settings.mouseSensitivity + stick.y * settings.gamepadLookSpeed * deltaTime;
 			const float maxPitch = settings.maxPitch * Math::c_DegToRad;
@@ -96,12 +107,28 @@ namespace tyr
 		{
 			forward = (input.IsKeyDown('W') ? 1.0f : 0.0f) - (input.IsKeyDown('S') ? 1.0f : 0.0f) + input.GetGamepadLeftStick().y;
 			right = (input.IsKeyDown('D') ? 1.0f : 0.0f) - (input.IsKeyDown('A') ? 1.0f : 0.0f) + input.GetGamepadLeftStick().x;
-			sprint = input.IsKeyDown(c_KeyShift) || input.IsGamepadButtonDown(GamepadButton::LeftThumb);
+			// Clicking the left stick runs until the stick is let go, rather than having to be held in.
+			const Vector2& moveStick = input.GetGamepadLeftStick();
+			if (input.IsGamepadButtonPressed(GamepadButton::LeftThumb))
+			{
+				m_PadSprint = !m_PadSprint;
+			}
+			m_PadSprint = m_PadSprint && moveStick.x * moveStick.x + moveStick.y * moveStick.y > 0.04f;
+			sprint = input.IsKeyDown(c_KeyShift) || m_PadSprint;
 
 			if (input.IsKeyPressed('C') || input.IsGamepadButtonPressed(GamepadButton::B))
 			{
 				m_CrouchToggled = !m_CrouchToggled;
 			}
+		}
+		// Held still while hiding, only able to look about.
+		if (character.frozen)
+		{
+			right = 0.0f;
+			forward = 0.0f;
+			sprint = false;
+			m_Velocity = Vector3::c_Zero;
+			m_HasLastPosition = false;
 		}
 		const float inputLength = Math::Sqrt(right * right + forward * forward);
 		if (inputLength > 1.0f)
@@ -110,7 +137,28 @@ namespace tyr
 			forward /= inputLength;
 		}
 
-		character.wantsCrouch = hasInput && (m_CrouchToggled || input.IsKeyDown(c_KeyControl));
+		character.wantsCrouch = hasInput && !character.frozen && (m_CrouchToggled || input.IsKeyDown(c_KeyControl));
+
+		// Running uses up stamina, which comes back after a moment's rest. Once spent, it's walking
+		// until enough has come back.
+		const bool running = sprint && !character.crouched && !m_Exhausted && inputLength > 0.1f;
+		if (running)
+		{
+			m_Stamina = std::max(m_Stamina - deltaTime / std::max(settings.sprintStamina, 0.01f), 0.0f);
+			m_StaminaRecoverWait = settings.staminaRecoverDelay;
+			m_Exhausted = m_Stamina <= 0.0f;
+			m_PadSprint = m_PadSprint && !m_Exhausted;
+		}
+		else
+		{
+			m_StaminaRecoverWait -= deltaTime;
+			if (m_StaminaRecoverWait <= 0.0f)
+			{
+				m_Stamina = std::min(m_Stamina + deltaTime / std::max(settings.staminaRecoverTime, 0.01f), 1.0f);
+			}
+			m_Exhausted = m_Exhausted && m_Stamina < settings.exhaustedUntil;
+		}
+		sprint = running;
 		// Standing up is refused while something is overhead, so speed follows the actual stance.
 		const float speed = character.crouched ? settings.crouchSpeed : (sprint ? settings.sprintSpeed : settings.walkSpeed);
 
@@ -124,9 +172,9 @@ namespace tyr
 		character.moveVelocity = m_Velocity;
 
 		// A footstep every stride walked on the ground.
-		if (world.entities.HasComponent<ComponentTransform>(m_Character))
+		if (world.entities.HasComponent<TransformComponent>(m_Character))
 		{
-			const Vector3 position = world.entities.GetComponent<ComponentTransform>(m_Character).world.position;
+			const Vector3 position = world.entities.GetComponent<TransformComponent>(m_Character).world.position;
 			const Vector3 moved = position - m_LastPosition;
 			const float distance = Math::Sqrt(moved.x * moved.x + moved.z * moved.z);
 			if (m_HasLastPosition && character.grounded && distance < c_MaxStepPerFrame)
@@ -144,7 +192,7 @@ namespace tyr
 				m_LastStepRadius = character.crouched ? settings.crouchNoise : (sprinting ? settings.sprintNoise : settings.walkNoise);
 				++m_StepCount;
 				Noise::Emit(world, position, m_LastStepRadius, m_Character);
-				Sounds::Play(world, settings.footstepSound, position, Math::Sqrt(std::min(m_LastStepRadius / std::max(settings.sprintNoise, 0.01f), 1.0f)));
+				Sounds::Play(world, settings.footstepSound, position, character.crouched ? settings.crouchStepVolume : (sprinting ? 1.0f : settings.walkStepVolume));
 			}
 		}
 

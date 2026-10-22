@@ -7,6 +7,9 @@ namespace tyr
 {
 	// Any application modules must be registered by this function
 	using AppModulesRegistrationCallback = void (*)(void);
+	// Adds the application's modules to the frame's update order, after the window and input and
+	// before the rest of the engine's modules.
+	using AppModulesUpdateOrderCallback = void (*)(void);
 	using AppExitQueryCallback = FunctionRef<bool()>;
 
 	class TYR_ENGINE_API EngineLoop final : INonCopyable
@@ -16,7 +19,7 @@ namespace tyr
 		~EngineLoop();
 
 		// All modules will be registered and initialized here
-		void Initialize(AppModulesRegistrationCallback registerAppModules);
+		void Initialize(AppModulesRegistrationCallback registerAppModules, AppModulesUpdateOrderCallback addAppModulesForUpdate);
 		// All modules will be shutdown and unregistered here
 		void Shutdown();
 		void Run(AppExitQueryCallback shouldExit);

@@ -5,6 +5,7 @@
 #include "Math/Quaternion.h"
 #include "Math/Vector3.h"
 #include "AssetSystem/AssetDataTypes.h"
+#include "AssetSystem/SkeletonAsset.h"
 #include "ECS/EntitySystem.h"
 #include "RenderBase/RenderHandles.h"
 #include "PhysicsTypes.h"
@@ -23,7 +24,7 @@ namespace tyr
 		Vector3 position;
 	};
 
-	struct ComponentTransform
+	struct TransformComponent
 	{
 		Transform local;
 		Transform world;
@@ -43,6 +44,8 @@ namespace tyr
 		bool meshInstanceRequested = false;
 		// Scales the glow of its materials' emissive, such as 0 for a lamp that's switched off.
 		float emissiveScale = 1.0f;
+		// How strongly it shines to show it can be picked up. Set while playing, not saved.
+		float highlight = 0.0f;
 	};
 
 	// A skinned mesh, posed by the AnimatorComponent on the same entity if it has one, otherwise
@@ -60,15 +63,28 @@ namespace tyr
 		bool meshInstanceRequested = false;
 	};
 
-	// One clip being played and how far through it is.
+	// One clip being played, how far through it is, and how far it has faded in over the clips
+	// under it.
 	struct AnimationPlayback
 	{
 		AssetID clip;
 		float time = 0.0f;
+		float playRate = 1.0f;
+		// From 0 to 1 over fadeDuration seconds.
+		float fade = 1.0f;
+		float fadeDuration = 0.0f;
+		bool loop = true;
+		// Keeps the root bone from travelling across the ground, for clips played while
+		// something else moves the character, such as walking on the navmesh.
+		bool inPlace = false;
+		// Where through the clip to start, as a share of its length, once it has loaded. Negative once started.
+		float startPhase = -1.0f;
 	};
 
-	// Plays clips on the skeletal mesh on the same entity. The base clip can cross-fade to
-	// another, and a second clip can be layered over one bone and every bone under it.
+	constexpr uint c_MaxBlendedClips = 4;
+
+	// Plays clips on the skeletal mesh on the same entity. Each new clip fades in over the ones
+	// already playing, and a second clip can be layered over one bone and every bone under it.
 	struct AnimatorComponent
 	{
 		// Changing it cross-fades to the new clip over fadeTime seconds while simulating.
@@ -81,12 +97,8 @@ namespace tyr
 		uint layerMaskBone = 0;
 		float layerWeight = 1.0f;
 
-		// Worked out while playing. Not saved.
-		AnimationPlayback current;
-		// The clip being faded out of, while fadeElapsed is less than fadeDuration.
-		AnimationPlayback previous;
-		float fadeDuration = 0.0f;
-		float fadeElapsed = 0.0f;
+		// Worked out while playing. Not saved. The last one is the newest, fading in over the rest.
+		LocalArray<AnimationPlayback, c_MaxBlendedClips> blends;
 		AnimationPlayback layer;
 	};
 
@@ -134,6 +146,11 @@ namespace tyr
 		Vector3 previousPosition;
 		Vector3 currentPosition;
 		uint characterIndex = PhysicsConstants::c_InvalidCharacter;
+		// Set by gameplay. Not saved. A frozen character isn't moved at all, not even by gravity, and
+		// one to teleport is put at the position on the next physics step.
+		bool frozen = false;
+		bool teleport = false;
+		Vector3 teleportPosition;
 	};
 
 	// Walks the CharacterComponent on the same entity along the navmesh to a target, turning to
@@ -148,6 +165,15 @@ namespace tyr
 		// How close to the target counts as there. Other characters can't be got closer to than
 		// both their radii.
 		float arriveDistance = 1.0f;
+		// A closed door in its way is hit this many times before it opens, a hit every so many seconds,
+		// each landing a moment into the swing. Zero opens doors the way a person would.
+		int doorBashes = 0;
+		float doorBashInterval = 1.1f;
+		float doorBashHitDelay = 0.5f;
+		// It walks up until the door is this close, about as far as its swing reaches, before it starts.
+		float doorBashReach = 0.75f;
+		// Only those that may change floors walk stairs. Others stop at the top or bottom of a marked flight.
+		bool usesStairs = false;
 
 		// Set by gameplay, through NavAgents. Not saved.
 		Vector3 target;
@@ -166,10 +192,24 @@ namespace tyr
 		// Radians about Y from +Z, the way it faces.
 		float yaw = 0.0f;
 		bool yawKnown = false;
+		// Set through NavAgents::FaceTowards. It turns to face it while standing still.
+		Vector3 facePoint;
+		bool hasFacePoint = false;
 		// It's stuck when it barely moves for a while, a few times in a row.
 		float stuckTimer = 0.0f;
 		Vector3 stuckCheckPosition;
 		uint stuckCount = 0;
+		// Seconds it stays where it is before setting off, such as while getting up.
+		float holdTimer = 0.0f;
+		// Set through NavAgents::Dash: how fast it goes and for how many more seconds.
+		Vector3 dashVelocity;
+		float dashTimer = 0.0f;
+		// The door it's bashing on, how many hits have landed, and each swing, counted up as it starts.
+		Entity bashDoor = c_InvalidEntity;
+		int bashCount = 0;
+		float bashTimer = 0.0f;
+		float bashHitTimer = -1.0f;
+		uint bashSwing = 0;
 	};
 
 	// Makes the ColliderComponent on the same entity move.
@@ -189,7 +229,7 @@ namespace tyr
 		Quaternion currentRotation;
 	};
 
-	// A box in the entity's own local space, relative to its ComponentTransform - for
+	// A box in the entity's own local space, relative to its TransformComponent - for
 	// physics (Jolt) to use later. Just data for now, nothing reads it yet.
 	struct BoxComponent
 	{
@@ -223,6 +263,8 @@ namespace tyr
 		// How the light fades with distance: constant, linear and squared.
 		Vector3 attenuation;
 		bool castsShadow;
+		// Switched off while the camera is in an IndoorVolumeComponent, so it costs nothing there.
+		bool outdoor = false;
 		// Invalid until the light has been created in the renderer.
 		PointLightHandle lightHandle;
 	};
@@ -239,6 +281,8 @@ namespace tyr
 		// How the light fades with distance: constant, linear and squared.
 		Vector3 attenuation;
 		bool castsShadow;
+		// Switched off while the camera is in an IndoorVolumeComponent, so it costs nothing there.
+		bool outdoor = false;
 		// Invalid until the light has been created in the renderer.
 		SpotLightHandle lightHandle;
 	};
@@ -274,8 +318,9 @@ namespace tyr
 		bool opensAway = true;
 		// Slide only: how far it moves when fully open, in its own space.
 		Vector3 slideOffset = Vector3(0.9f, 0.0f, 0.0f);
-		// Seconds to fully open or close.
+		// Seconds to fully open or close, and to fly open when something bursts through it.
 		float openTime = 0.8f;
+		float burstOpenTime = 0.25f;
 		// A DoorLock: 0 unlocked, 1 needs key, 2 locked from the back, 3 locked.
 		uint8 lock = static_cast<uint8>(DoorLock::Unlocked);
 		// The item that unlocks it when it needs a key.
@@ -286,6 +331,10 @@ namespace tyr
 		SoundName openSound = "event:/Doors/Open";
 		SoundName closeSound = "event:/Doors/Close";
 		SoundName lockedSound = "event:/Doors/Locked";
+		// Played at the door when something bashes on it.
+		SoundName bashSound = "event:/Doors/Bash";
+		// How far away enemies hear it open, close or get bashed, in metres. Rattling it locked carries half as far.
+		float noiseRadius = 6.0f;
 
 		// Worked out while playing. Not saved. Amounts go from 0 closed to 1 open.
 		float openAmount = 0.0f;
@@ -296,6 +345,12 @@ namespace tyr
 		bool closedPoseKnown = false;
 		Vector3 closedPosition;
 		Quaternion closedRotation;
+		// Not saved. Broken off, it falls flat about its bottom edge, 1 or -1 being which way, and stays there.
+		bool broken = false;
+		float fallAmount = 0.0f;
+		float fallSign = 1.0f;
+		// Not saved. Flying open, burst through, until it's fully open.
+		bool bursting = false;
 	};
 
 	// A wall panel or button that opens and closes a door. With a key, it unlocks the door for good
@@ -344,8 +399,8 @@ namespace tyr
 	struct FlashlightComponent
 	{
 		bool on = true;
-		// Right, up and forward from the eyes, in metres.
-		Vector3 offset = Vector3(0.2f, -0.25f, 0.15f);
+		// Right, up and forward from the eyes, in metres. It's held out in the left hand.
+		Vector3 offset = Vector3(-0.16f, -0.135f, 0.53f);
 		// How quickly it turns after the view. Higher keeps it closer.
 		float followSpeed = 16.0f;
 		// What its beam counts as lit for gameplay, such as holding enemies in it: out to this
@@ -356,6 +411,8 @@ namespace tyr
 		SoundName toggleSound = "event:/Items/FlashlightClick";
 		// Set by gameplay. Not saved.
 		bool held = false;
+		// How far it's drawn back towards the eyes, so it doesn't poke through a wall in front. Not saved.
+		float pullBack = 0.0f;
 	};
 
 	// Leaves a trail of scent behind as the entity moves, which enemies can smell and follow.
@@ -374,18 +431,30 @@ namespace tyr
 	{
 		// How easy it is to see, from 0 to 1. Lower is harder, such as when hiding.
 		float visibility = 1.0f;
+		// Not saved. Hidden away, such as in a wardrobe, nothing can sense it at all.
+		bool hidden = false;
 	};
 
 	// What an enemy can sense, and what it knows from it. It hunts entities with a
 	// PerceivableComponent.
 	struct PerceptionComponent
 	{
-		// Anything it hunts within this distance it always knows of, even without sight.
-		float touchRange = 1.5f;
+		// Anything it hunts within this distance it always knows of, such as one bumping into it.
+		float touchRange = 0.9f;
+		// Anything it hunts this close in front of it, with nothing in the way, it senses without
+		// seeing. The angle is the whole width in front of it, in degrees.
+		bool nearby = true;
+		float nearbyRange = 3.0f;
+		float nearbyAngle = 200.0f;
+		// Once it's after its target, it keeps track of where it is for as long as nothing's in the
+		// way between them, out to this distance. 0 for one that can't see.
+		float trackRange = 25.0f;
+		// Noises are heard out to the distance they carry times this, either straight through walls and
+		// shut doors, each of which halves it, or round through doorways, where only shut doors do.
+		// A heard noise is only walked to, unless it's its target's while it's already after it.
 		bool hearing = true;
-		// Noises are heard out to the distance they carry times this. Walls in the way halve it.
 		float hearingScale = 1.0f;
-		bool smell = true;
+		bool smell = false;
 		// How far from its nose it smells scent, and the oldest scent it notices, in seconds.
 		float smellRange = 3.0f;
 		float smellMaxAge = 30.0f;
@@ -395,57 +464,25 @@ namespace tyr
 		float sightAngle = 120.0f;
 
 		// Worked out while playing. Not saved. What it knows of its target, and the noise it last
-		// heard that wasn't its target's.
+		// heard, with what made it if that's something it hunts.
 		bool targetKnown = false;
 		Entity target = c_InvalidEntity;
 		Vector3 targetPosition;
 		// Seconds since it last sensed where its target is, and how.
 		float targetAge = 0.0f;
 		uint8 targetSense = static_cast<uint8>(Sense::None);
-		bool heardOther = false;
-		Vector3 otherPosition;
+		bool heardNoise = false;
+		Vector3 noisePosition;
+		Entity noiseSource = c_InvalidEntity;
+		// How far the loudest noise heard this time carries, so quiet ones can be ignored, and the
+		// newest noise it's listened for.
+		float noiseRadius = 0.0f;
+		uint lastNoiseId = 0;
+		// Its target, heard while it was hidden, such as getting into or out of a hiding place.
+		Entity heardHiddenTarget = c_InvalidEntity;
+		// Set by its brain while it's after its target, so it's tracked.
+		bool tracking = false;
 		float updateTimer = 0.0f;
-	};
-
-	// An enemy's behaviour: wandering, going after what it senses, attacking, searching for what
-	// it lost, and being held by light. Needs a NavAgentComponent and a PerceptionComponent.
-	struct EnemyComponent
-	{
-		// Metres per second.
-		float walkSpeed = 1.2f;
-		float chaseSpeed = 3.0f;
-		// It wanders this far from where it started, pausing for up to this long, in seconds.
-		float wanderRadius = 8.0f;
-		float wanderPause = 4.0f;
-		// It hits whatever it's after from this close, this hard, this often.
-		float attackRange = 1.4f;
-		float attackDamage = 20.0f;
-		float attackInterval = 1.2f;
-		// Seconds it looks around a noise, and searches where it lost its target.
-		float investigateTime = 6.0f;
-		float searchTime = 15.0f;
-		// What it knows of its target is trusted for this long, in seconds, after which it goes to
-		// where it was told and searches from there.
-		float memory = 3.0f;
-		// It's held still while a flashlight's beam is on it, and for this long after.
-		bool dazedByFlashlight = true;
-		float dazedRecovery = 0.6f;
-		// Played at it when it starts chasing, as it hits, and now and then while it isn't chasing,
-		// every idleSoundInterval seconds or so.
-		SoundName alertSound = "event:/Enemy/Alert";
-		SoundName attackSound = "event:/Enemy/Attack";
-		SoundName idleSound = "event:/Enemy/Idle";
-		float idleSoundInterval = 7.0f;
-
-		// Worked out while playing. Not saved.
-		uint8 state = static_cast<uint8>(EnemyState::Wander);
-		float stateTimer = 0.0f;
-		float attackTimer = 0.0f;
-		// Where it searches around, and where it started, which it wanders about.
-		Vector3 searchCentre;
-		Vector3 home;
-		bool homeKnown = false;
-		float idleSoundTimer = 0.0f;
 	};
 
 	// How much harm something can take before it dies.
@@ -455,10 +492,55 @@ namespace tyr
 		// Played at it when it's hurt, and instead when it dies.
 		SoundName hurtSound;
 		SoundName deathSound;
-		// Not saved. Starts full.
+		// Not saved. Full until the first damage.
 		float health = 100.0f;
+		bool damaged = false;
 		// Not saved. Damage adds to it, up to 1, and whatever shows being hurt fades it back down.
 		float hurt = 0.0f;
+		// Not saved. Counts the times it's been hurt, so others can notice a new hit.
+		uint damageCount = 0;
+	};
+
+	// Keeps a skeletal mesh's limbs out of walls and doors while playing, with a capsule along each of
+	// its longer bones. An arm that sinks into something is swung back out at the shoulder; anything
+	// else pushes its CharacterComponent away across the ground.
+	struct LimbCollisionComponent
+	{
+		float limbRadius = 0.05f;
+		// Bones shorter than this, such as fingers and the face's, are left out.
+		float minBoneLength = 0.06f;
+		// Metres per second it's pushed at most.
+		float maxPushSpeed = 2.5f;
+		// The bone at each shoulder, how quickly an arm swings out of the way, and how far at most, in degrees.
+		BoneName leftArm = "CC_Base_L_Upperarm";
+		BoneName rightArm = "CC_Base_R_Upperarm";
+		float armTurnSpeed = 14.0f;
+		float maxArmTurn = 70.0f;
+		// Worked out while playing. Not saved. Each arm's swing out of the way, relative to the mesh,
+		// and its shoulder bone, once found.
+		Quaternion armTurns[2] = { Quaternion::c_Identity, Quaternion::c_Identity };
+		int armBones[2] = { -1, -1 };
+		// Set by the game while its limbs shouldn't push it about, such as crouched feeding over a body.
+		bool still = false;
+	};
+
+	// Indoors: a box around the entity, stretched by its scale. While the camera is in one, lights
+	// marked outdoor are switched off.
+	struct IndoorVolumeComponent
+	{
+		Vector3 halfExtents = Vector3(10.0f, 5.0f, 10.0f);
+	};
+
+	// A box around the entity, stretched by its scale, set off when the player walks into it. Whatever
+	// waits on it, such as an enemy held as it starts, finds it by its actor's name.
+	struct TriggerVolumeComponent
+	{
+		Vector3 halfExtents = Vector3(1.0f, 1.0f, 1.0f);
+		// It stays set off once it has been, rather than only while the player's inside.
+		bool once = true;
+
+		// Worked out while playing. Saved.
+		bool triggered = false;
 	};
 
 	// Where the navmesh is built: a box around the entity, stretched by its scale. Only floors
@@ -468,18 +550,29 @@ namespace tyr
 		Vector3 halfExtents = Vector3(10.0f, 5.0f, 10.0f);
 	};
 
-	// Gives the world power once started. A world without one always has power.
-	struct GeneratorComponent
+	// Marks the navmesh in a box around the entity, stretched by its scale, as one of the
+	// NavmeshAreas, such as a flight of stairs only some enemies may take.
+	struct NavmeshAreaComponent
 	{
-		bool running = false;
-		SoundName startSound = "event:/World/GeneratorStart";
+		Vector3 halfExtents = Vector3(1.0f, 1.0f, 1.0f);
+		// 2 is stairs.
+		uint8 area = 2;
 	};
 
 	// Something the player can pick up, such as a key card. It's removed from the world once taken.
 	struct PickupComponent
 	{
 		ItemName item;
+		// How many there are, such as a box of a few, and how many of the item stack in one inventory
+		// slot. Only what fits is taken.
+		uint8 count = 1;
+		uint8 stackLimit = 1;
+		// A note or a code, kept with the character's documents rather than taking an inventory slot.
+		bool document = false;
 		SoundName pickupSound = "event:/Items/Pickup";
+
+		// How far through its shine's pulse it is. Not saved.
+		float shineTime = 0.0f;
 	};
 
 	// A sound that plays for as long as the world is being played, such as ambience or a humming
@@ -493,10 +586,38 @@ namespace tyr
 		bool started = false;
 	};
 
-	// The items a character carries.
+	// The items a character carries, one slot each, though some stack several to a slot.
 	struct InventoryComponent
 	{
 		LocalArray<ItemName, GameplayConstants::c_MaxInventoryItems> items;
+		// How many slots it has, up to c_MaxInventoryItems.
+		uint8 slots = GameplayConstants::c_MaxInventoryItems;
+		// Keys are thrown away once there's nothing left they unlock.
+		bool discardSpentKeys = false;
+
+		// Not saved in levels. How many are stacked in each slot, and how many fit, as Inventory
+		// keeps them.
+		LocalArray<uint8, GameplayConstants::c_MaxInventoryItems> counts;
+		LocalArray<uint8, GameplayConstants::c_MaxInventoryItems> stackLimits;
+	};
+
+	// The notes and codes a character has picked up. They don't take inventory slots, but still
+	// open whatever they're the key to.
+	struct DocumentsComponent
+	{
+		LocalArray<ItemName, GameplayConstants::c_MaxDocuments> documents;
+	};
+
+	// Something the game itself handles when it's used, such as a locker or a typewriter, named by
+	// its kind. The game looks for ones that have been used and clears them.
+	struct ActivatorComponent
+	{
+		ItemName kind;
+		// Shown after the use button, such as "Open locker".
+		ItemName action = "Use";
+
+		// Not saved. Set when it's used, until the game deals with it.
+		bool used = false;
 	};
 
 }

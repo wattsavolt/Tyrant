@@ -11,8 +11,9 @@ namespace tyr
 		// Builds a navmesh from world-space triangles, three points each, in the form
 		// NavmeshManager::CreateNavmesh reads. Triangles can wind either way: any flat enough is
 		// walkable. Only floors inside one of the bounds are kept, though everything still blocks;
-		// without bounds the whole of it is. False when there's nothing to walk on.
+		// without bounds the whole of it is. Floor in a zone is marked as its area. False when
+		// there's nothing to walk on.
 		TYR_NAVMESH_API bool Build(const Vector3* triangles, uint triangleCount, const NavmeshBounds* bounds, uint boundsCount,
-			const NavmeshBuildSettings& settings, Array<uint8>& outData);
+			const NavmeshZone* zones, uint zoneCount, const NavmeshBuildSettings& settings, Array<uint8>& outData);
 	}
 }

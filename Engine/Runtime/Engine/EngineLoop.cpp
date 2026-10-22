@@ -36,20 +36,17 @@ namespace tyr
 		}
 	}
 
-	void EngineLoop::Initialize(AppModulesRegistrationCallback registerAppModules)
+	void EngineLoop::Initialize(AppModulesRegistrationCallback registerAppModules, AppModulesUpdateOrderCallback addAppModulesForUpdate)
 	{
 		TYR_ASSERT(!m_Initialized);
 
 		// Starts the task scheduler's worker threads up front, before any module runs.
 		TaskScheduler::Instance();
 
+		// Registered in the order they're initialized: anything a module uses is registered before it.
 		TYR_REGISTER_MODULE(WindowModule);
 		TYR_REGISTER_MODULE(RendererModule);
-		// ModuleManager runs Update()/EndFrame() in reverse registration order, so a module
-		// registered here, early, executes late in each phase. RendererModule must run after
-		// every module that writes into the current render frame, so keep it registered before them.
 		TYR_REGISTER_MODULE(GUIModule);
-		// After the world has placed the listener, so sounds come from where things are this frame.
 		TYR_REGISTER_MODULE(AudioModule);
 		// Started before the assets, whose collision meshes are physics shapes, and the worlds that
 		// simulate them. Shut down after both, once they've let go of their shapes and bodies.
@@ -65,6 +62,24 @@ namespace tyr
 		{
 			registerAppModules();
 		}
+
+		// The order each frame runs in. The window's messages are pumped and input is latched first,
+		// so the app's gameplay sees this frame's input. The worlds then move what it decided, and
+		// the renderer goes last, after everything that writes into the frame, the UI included.
+		TYR_ADD_MODULE_FOR_UPDATE(WindowModule);
+		TYR_ADD_MODULE_FOR_UPDATE(InputModule);
+		if (addAppModulesForUpdate)
+		{
+			addAppModulesForUpdate();
+		}
+		TYR_ADD_MODULE_FOR_UPDATE(WorldModule);
+		TYR_ADD_MODULE_FOR_UPDATE(AssetModule);
+		TYR_ADD_MODULE_FOR_UPDATE(NavmeshModule);
+		TYR_ADD_MODULE_FOR_UPDATE(PhysicsModule);
+		// After the world has placed the listener, so sounds come from where things are this frame.
+		TYR_ADD_MODULE_FOR_UPDATE(AudioModule);
+		TYR_ADD_MODULE_FOR_UPDATE(GUIModule);
+		TYR_ADD_MODULE_FOR_UPDATE(RendererModule);
 
 		ModuleManager::Instance().InitializeModules();
 

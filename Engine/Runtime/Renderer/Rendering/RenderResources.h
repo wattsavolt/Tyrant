@@ -157,8 +157,8 @@ namespace tyr
 		// previous buffered viewport slot's own resolved history.
 		ComputePipelineHandle taaResolvePipeline;
 		ShaderModuleHandle taaResolveComputeShader;
-		ComputePipelineHandle editorGridPipeline;
-		ShaderModuleHandle editorGridComputeShader;
+		ComputePipelineHandle gridPipeline;
+		ShaderModuleHandle gridComputeShader;
 
 		// Debug lines drawn into the viewport's overlay after the grid, one pipeline tested against
 		// the scene's depth and one drawn on top.

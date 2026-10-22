@@ -25,11 +25,8 @@ namespace tyr
 
 		void Shutdown() override;
 
-		// Pumps OS messages here rather than in Update() - BeginFrame/Update/EndFrame each run
-		// as a full pass over every module before the next phase starts (see ModuleManager), so
-		// this guarantees every module's Update() this frame sees messages the OS delivered this
-		// same frame, regardless of module registration order. See GUIModule::BeginFrame's own
-		// comment for the same reasoning applied to ImGui::NewFrame().
+		// Pumps OS messages first thing each frame, before input is latched, so every module sees
+		// the messages the OS delivered this frame.
 		void BeginFrame() override;
 
 		void Update(float deltaTime) override;

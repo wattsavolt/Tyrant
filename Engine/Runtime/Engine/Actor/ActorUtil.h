@@ -27,14 +27,14 @@ namespace tyr
 	class TYR_ENGINE_API ActorUtil final
 	{
 	public:
-		// A single mesh - one entity with a ComponentTransform, MeshComponent and
+		// A single mesh - one entity with a TransformComponent, MeshComponent and
 		// BoxComponent, no parent. Just BuildStaticMeshesActor with one mesh - see its comment.
 		static Entity BuildStaticMeshActor(EntitySystem& entities, const StaticMeshActorMeshDesc& mesh);
 
 		// One or more meshes, e.g. the separate walls/floor/ceiling of an imported building.
 		// A single mesh gets one entity carrying the transform/mesh/box directly, no parent -
 		// same shape as BuildStaticMeshActor. More than one mesh gets a shared root entity
-		// (ComponentTransform only, identity, no parent) plus one child entity per mesh, each
+		// (TransformComponent only, identity, no parent) plus one child entity per mesh, each
 		// parented to the root - moving the root moves every mesh with it. Returns every
 		// entity created, root first when there is one.
 		static LocalArray<Entity, c_MaxStaticMeshActorEntities> BuildStaticMeshesActor(EntitySystem& entities, const StaticMeshActorMeshDesc* meshes, uint count);

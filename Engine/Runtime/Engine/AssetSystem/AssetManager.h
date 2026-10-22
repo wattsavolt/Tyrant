@@ -9,6 +9,7 @@
 #include "RenderBase/RenderHandles.h"
 #include "AssetConstants.h"
 #include "CollisionMeshAsset.h"
+#include "FontAsset.h"
 #include "Rendering/RenderConstants.h"
 
 namespace tyr
@@ -89,6 +90,12 @@ namespace tyr
 		// Null until loaded.
 		const CollisionMesh* GetCollisionMesh(AssetID assetID) const;
 
+		// A font file, CPU only, for the UI to bake its letters from.
+		void LoadFont(AssetID assetID);
+		void DeleteFont(AssetID assetID);
+		// Null until loaded.
+		const FontFile* GetFont(AssetID assetID) const;
+
 		void LoadLocation(AssetID assetID);
 
 #if TYR_EDITOR
@@ -113,6 +120,7 @@ namespace tyr
 		static constexpr uint c_MaxSkeletons = 64;
 		static constexpr uint c_MaxAnimations = 1024;
 		static constexpr uint c_MaxCollisionMeshes = RenderConstants::c_MaxMeshes;
+		static constexpr uint c_MaxFonts = 16;
 		// Each finished-load queue holds every load of its kind that can be in flight at once.
 		static constexpr uint c_TextureLoadQueueSize = 4096;
 		static constexpr uint c_MaterialLoadQueueSize = 1024;
@@ -123,7 +131,7 @@ namespace tyr
 		TYR_STATIC_ASSERT(c_MaterialLoadQueueSize >= RenderConstants::c_MaxMaterials, "Material loads could overflow their queue.");
 		TYR_STATIC_ASSERT(c_MeshHeaderLoadQueueSize >= RenderConstants::c_MaxMeshes, "Mesh loads could overflow their queue.");
 		TYR_STATIC_ASSERT(c_MeshLodLoadQueueSize >= RenderConstants::c_MaxMeshLODs, "Mesh LOD loads could overflow their queue.");
-		TYR_STATIC_ASSERT(c_CpuAssetLoadQueueSize >= c_MaxSkeletons + c_MaxAnimations + c_MaxCollisionMeshes, "CPU asset loads could overflow their queue.");
+		TYR_STATIC_ASSERT(c_CpuAssetLoadQueueSize >= c_MaxSkeletons + c_MaxAnimations + c_MaxCollisionMeshes + c_MaxFonts, "CPU asset loads could overflow their queue.");
 
 		// Called once per frame from the main thread - also the only place allowed to
 		// create/delete renderer resources, since doing so isn't safe against a worker
@@ -192,6 +200,7 @@ namespace tyr
 		LocalObjectPool<Skeleton, c_MaxSkeletons, ResetObjectPolicy> m_SkeletonPool;
 		LocalObjectPool<AnimationClip, c_MaxAnimations, ResetObjectPolicy> m_AnimationPool;
 		LocalObjectPool<CollisionMesh, c_MaxCollisionMeshes, ResetObjectPolicy> m_CollisionMeshPool;
+		LocalObjectPool<FontFile, c_MaxFonts, ResetObjectPolicy> m_FontPool;
 		// Loaded batches ready to be processed
 		MPSCRingBuffer<AssetLoadBatch*, 32> m_BatchesLoadedQueue;
 		// Headers/files loaded and ready for their main-thread follow-up (GPU/upload

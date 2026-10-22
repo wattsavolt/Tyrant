@@ -15,8 +15,6 @@ namespace tyr
 	{
 		// Polygons get up to this many corners.
 		constexpr int c_MaxVertsPerPoly = 6;
-		// The flag every walkable polygon has, which queries include.
-		constexpr unsigned short c_WalkFlag = 1;
 		// Detour's polygon references have this many bits for the tile and the polygon within it.
 		constexpr uint c_TileAndPolyBits = 22;
 		constexpr uint c_MaxTileBits = 14;
@@ -132,7 +130,8 @@ namespace tyr
 
 		// Builds one tile's Detour data, or returns false when the tile has nothing walkable.
 		bool BuildTile(rcContext& context, const rcConfig& config, const NavmeshBuildSettings& settings, const TileInput& input,
-			const NavmeshBounds* bounds, uint boundsCount, int tileX, int tileZ, unsigned char*& outData, int& outSize)
+			const NavmeshBounds* bounds, uint boundsCount, const NavmeshZone* zones, uint zoneCount, int tileX, int tileZ,
+			unsigned char*& outData, int& outSize)
 		{
 			const int triangleCount = static_cast<int>(input.areas.Size());
 			if (triangleCount == 0)
@@ -159,8 +158,24 @@ namespace tyr
 				return false;
 			}
 			ClearOutsideBounds(*build.compact, bounds, boundsCount);
-			if (!rcErodeWalkableArea(&context, config.walkableRadius, *build.compact)
-				|| !rcBuildDistanceField(&context, *build.compact)
+			if (!rcErodeWalkableArea(&context, config.walkableRadius, *build.compact))
+			{
+				return false;
+			}
+			// Marked after the walkable area's been shrunk from the walls, so the zones keep their shape.
+			for (uint i = 0; i < zoneCount; ++i)
+			{
+				const NavmeshZone& zone = zones[i];
+				float corners[12];
+				for (uint c = 0; c < 4; ++c)
+				{
+					corners[c * 3 + 0] = zone.corners[c].x;
+					corners[c * 3 + 1] = zone.corners[c].y;
+					corners[c * 3 + 2] = zone.corners[c].z;
+				}
+				rcMarkConvexPolyArea(&context, corners, 4, zone.minY, zone.maxY, zone.area, *build.compact);
+			}
+			if (!rcBuildDistanceField(&context, *build.compact)
 				|| !rcBuildRegions(&context, *build.compact, config.borderSize, config.minRegionArea, config.mergeRegionArea))
 			{
 				return false;
@@ -184,7 +199,10 @@ namespace tyr
 
 			for (int i = 0; i < build.polyMesh->npolys; ++i)
 			{
-				build.polyMesh->flags[i] = build.polyMesh->areas[i] == RC_WALKABLE_AREA ? c_WalkFlag : 0;
+				const unsigned char area = build.polyMesh->areas[i];
+				build.polyMesh->flags[i] = area == RC_WALKABLE_AREA ? NavmeshAreas::c_WalkFlag
+					: area == NavmeshAreas::c_Door ? NavmeshAreas::c_WalkFlag | NavmeshAreas::c_DoorFlag
+					: area == NavmeshAreas::c_Stairs ? NavmeshAreas::c_WalkFlag | NavmeshAreas::c_StairsFlag : 0;
 			}
 
 			dtNavMeshCreateParams params = {};
@@ -217,7 +235,7 @@ namespace tyr
 
 	namespace NavmeshBuilder
 	{
-		bool Build(const Vector3* triangles, uint triangleCount, const NavmeshBounds* bounds, uint boundsCount,
+		bool Build(const Vector3* triangles, uint triangleCount, const NavmeshBounds* bounds, uint boundsCount, const NavmeshZone* zones, uint zoneCount,
 			const NavmeshBuildSettings& settings, Array<uint8>& outData)
 		{
 			outData.Clear();
@@ -338,7 +356,7 @@ namespace tyr
 
 					unsigned char* tileData = nullptr;
 					int tileSize = 0;
-					if (!BuildTile(context, config, settings, input, bounds, boundsCount, tileX, tileZ, tileData, tileSize))
+					if (!BuildTile(context, config, settings, input, bounds, boundsCount, zones, zoneCount, tileX, tileZ, tileData, tileSize))
 					{
 						continue;
 					}

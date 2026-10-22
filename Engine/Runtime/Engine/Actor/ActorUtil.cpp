@@ -8,11 +8,11 @@ namespace tyr
 		{
 			const Entity entity = entities.CreateEntity();
 
-			ComponentTransform transform;
+			TransformComponent transform;
 			transform.local = desc.localTransform;
 			transform.world = desc.localTransform;
 			transform.parentEntity = parent;
-			entities.AddComponent<ComponentTransform>(entity, transform);
+			entities.AddComponent<TransformComponent>(entity, transform);
 
 			MeshComponent meshComponent;
 			// Materials left empty so the mesh's own materials are used.
@@ -47,13 +47,13 @@ namespace tyr
 
 		const Entity root = entities.CreateEntity();
 
-		ComponentTransform rootTransform;
+		TransformComponent rootTransform;
 		rootTransform.local.scale = Vector3::c_One;
 		rootTransform.local.rotation = Quaternion::c_Identity;
 		rootTransform.local.position = Vector3::c_Zero;
 		rootTransform.world = rootTransform.local;
 		rootTransform.parentEntity = c_InvalidEntity;
-		entities.AddComponent<ComponentTransform>(root, rootTransform);
+		entities.AddComponent<TransformComponent>(root, rootTransform);
 		result.Add(root);
 
 		for (uint i = 0; i < count; ++i)

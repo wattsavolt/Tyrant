@@ -40,7 +40,7 @@ namespace tyr
 		static constexpr float c_FixedTimeStep = 1.0f / 60.0f;
 		// A slow frame catches up by at most this many steps, so it can't fall further behind.
 		static constexpr uint c_MaxStepsPerFrame = 4;
-		static constexpr uint c_MaxPhysicsWorlds = 4;
+		static constexpr uint c_MaxPhysicsWorlds = 5;
 		static constexpr uint c_MaxBodies = 16384;
 		static constexpr uint c_MaxBodyPairs = 65536;
 		static constexpr uint c_MaxContactConstraints = 16384;

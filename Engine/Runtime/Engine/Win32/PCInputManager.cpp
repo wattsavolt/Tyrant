@@ -3,6 +3,7 @@
 #include "Window/Window.h"
 #include "Math/Math.h"
 #include <Xinput.h>
+#include <GameInput.h>
 #include <cstring>
 
 namespace tyr
@@ -44,6 +45,39 @@ namespace tyr
 			return (stick / magnitude) * normalizedMagnitude;
 		}
 
+		// The same for GameInput, whose sticks already run from -1 to 1.
+		Vector2 NormalizeStick(float x, float y, float deadzone)
+		{
+			const Vector2 stick(x, y);
+			const float magnitude = stick.Length();
+			if (magnitude < deadzone)
+			{
+				return Vector2::c_Zero;
+			}
+			return (stick / magnitude) * Math::Clamp01((magnitude - deadzone) / (1.0f - deadzone));
+		}
+
+		uint16 MapGameInputButtons(GameInputGamepadButtons buttons)
+		{
+			struct Mapping { GameInputGamepadButtons from; GamepadButton to; };
+			const Mapping mappings[] =
+			{
+				{ GameInputGamepadDPadUp, GamepadButton::DPadUp }, { GameInputGamepadDPadDown, GamepadButton::DPadDown },
+				{ GameInputGamepadDPadLeft, GamepadButton::DPadLeft }, { GameInputGamepadDPadRight, GamepadButton::DPadRight },
+				{ GameInputGamepadMenu, GamepadButton::Start }, { GameInputGamepadView, GamepadButton::Back },
+				{ GameInputGamepadLeftThumbstick, GamepadButton::LeftThumb }, { GameInputGamepadRightThumbstick, GamepadButton::RightThumb },
+				{ GameInputGamepadLeftShoulder, GamepadButton::LeftShoulder }, { GameInputGamepadRightShoulder, GamepadButton::RightShoulder },
+				{ GameInputGamepadA, GamepadButton::A }, { GameInputGamepadB, GamepadButton::B },
+				{ GameInputGamepadX, GamepadButton::X }, { GameInputGamepadY, GamepadButton::Y },
+			};
+			uint16 result = 0;
+			for (const Mapping& mapping : mappings)
+			{
+				result |= (buttons & mapping.from) != 0 ? (uint16)mapping.to : 0;
+			}
+			return result;
+		}
+
 		float NormalizeTrigger(BYTE rawValue, BYTE threshold)
 		{
 			if (rawValue < threshold)
@@ -68,11 +102,54 @@ namespace tyr
 	{
 		// XInput needs no explicit setup beyond linking xinput9_1_0.lib - XInputGetState works
 		// standalone, and XInputEnable is deprecated/a no-op since Windows 8.
+		// GameInput may be missing on older Windows, which leaves XInput on its own.
+		if (FAILED(GameInputCreate(&m_GameInput)))
+		{
+			m_GameInput = nullptr;
+		}
 	}
 
 	void PCInputManager::Shutdown()
 	{
+		if (m_GameInput)
+		{
+			m_GameInput->Release();
+			m_GameInput = nullptr;
+		}
+	}
 
+	void PCInputManager::UpdateGameInputGamepad()
+	{
+		GamepadState& pad = m_Gamepads[0];
+		if (!m_GameInput || pad.isConnected)
+		{
+			return;
+		}
+		IGameInputReading* reading = nullptr;
+		if (FAILED(m_GameInput->GetCurrentReading(GameInputKindGamepad, nullptr, &reading)) || !reading)
+		{
+			return;
+		}
+		GameInputGamepadState state{};
+		const bool hasState = reading->GetGamepadState(&state);
+		reading->Release();
+		if (!hasState)
+		{
+			return;
+		}
+
+		if (!m_GameInputPadSeen)
+		{
+			m_GameInputPadSeen = true;
+			TYR_LOG_INFO("Found a controller through GameInput.");
+		}
+		pad.isConnected = true;
+		pad.buttonsDown = MapGameInputButtons(state.buttons);
+		pad.leftStick = NormalizeStick(state.leftThumbstickX, state.leftThumbstickY, XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE / 32767.0f);
+		pad.rightStick = NormalizeStick(state.rightThumbstickX, state.rightThumbstickY, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE / 32767.0f);
+		const float triggerThreshold = XINPUT_GAMEPAD_TRIGGER_THRESHOLD / 255.0f;
+		pad.leftTrigger = Math::Clamp01((state.leftTrigger - triggerThreshold) / (1.0f - triggerThreshold));
+		pad.rightTrigger = Math::Clamp01((state.rightTrigger - triggerThreshold) / (1.0f - triggerThreshold));
 	}
 
 	void PCInputManager::Update()
@@ -123,5 +200,6 @@ namespace tyr
 			pad.leftTrigger = NormalizeTrigger(state.Gamepad.bLeftTrigger, XINPUT_GAMEPAD_TRIGGER_THRESHOLD);
 			pad.rightTrigger = NormalizeTrigger(state.Gamepad.bRightTrigger, XINPUT_GAMEPAD_TRIGGER_THRESHOLD);
 		}
+		UpdateGameInputGamepad();
 	}
 }

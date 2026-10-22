@@ -289,7 +289,7 @@ namespace tyr
 			}
 
 			worldManager.AddActorInstance(worldHandle, id, typeID, name.CStr(), folder, entities);
-			if (world.entities.HasComponent<ComponentTransform>(entities[0]))
+			if (world.entities.HasComponent<TransformComponent>(entities[0]))
 			{
 				worldManager.SetActorTransform(worldHandle, entities[0], transform);
 			}
@@ -456,7 +456,7 @@ namespace tyr
 		// Writes every value that differs from the actor type's default, returning how many.
 		uint WriteOverrides(ByteWriter& writer, const World& world, const ActorInstance& actor, const ActorTypeDesc& actorType)
 		{
-			const Id64 transformType = GetTypeID<ComponentTransform>();
+			const Id64 transformType = GetTypeID<TransformComponent>();
 			uint count = 0;
 			for (uint i = 0; i < actor.entities.Size() && i < actorType.entities.Size(); ++i)
 			{
@@ -499,9 +499,9 @@ namespace tyr
 		void WriteActor(ByteWriter& writer, const World& world, const ActorInstance& actor)
 		{
 			const Entity root = actor.RootEntity();
-			const ComponentTypeID transformTypeID = ComponentRegistry::GetComponentTypeID<ComponentTransform>();
+			const ComponentTypeID transformTypeID = ComponentRegistry::GetComponentTypeID<TransformComponent>();
 			WriteTransform(writer, world.entities.HasComponent(root, transformTypeID)
-				? static_cast<const ComponentTransform*>(world.entities.GetComponentData(root, transformTypeID))->local
+				? static_cast<const TransformComponent*>(world.entities.GetComponentData(root, transformTypeID))->local
 				: CreateIdentityTransform());
 
 			const uint countOffset = writer.WritePlaceholder();

@@ -44,7 +44,7 @@ namespace tyr
 
 	struct TypeInfo
 	{
-		static constexpr uint c_MaxFields = 20;
+		static constexpr uint c_MaxFields = 32;
 		static constexpr int c_InvalidVersion = -1;
 
 		TypeName name;

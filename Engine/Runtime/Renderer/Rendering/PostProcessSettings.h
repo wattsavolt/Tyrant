@@ -53,6 +53,8 @@ namespace tyr
 		// A colour washed over the image, strongest at its edges, such as red when hurt.
 		Vector3 flashColour = Vector3(0.6f, 0.0f, 0.0f);
 		float flash = 0.0f;
+		// Dark red creeping in from the edges, from 0 for unhurt to 1 for nearly dead.
+		float wounds = 0.0f;
 	};
 
 	// Bright light spilling into the pixels around it. Set per level.

@@ -10,6 +10,7 @@ namespace tyr
 {
 	class WindowModule;
 	class WorldManager;
+	struct McpGameTool;
 	struct WindowDesc;
 	struct WorldConfig;
 
@@ -27,6 +28,13 @@ namespace tyr
 		virtual void Update(float deltaTime) = 0;
 
 		virtual bool WantsExit() const = 0;
+
+		// Tools the game adds to the editor's MCP server, run with this app.
+		virtual uint GetMcpTools(const McpGameTool*& outTools) const
+		{
+			outTools = nullptr;
+			return 0;
+		}
 
 		// The level to open on Initialize, relative to the assets folder. Empty for none.
 		void SetStartLevel(const char* levelPath) { m_StartLevel = levelPath; }

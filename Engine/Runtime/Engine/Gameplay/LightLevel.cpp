@@ -72,11 +72,11 @@ namespace tyr
 			float total = 0.0f;
 			world.entities.ForEach<PointLightComponent>([&](Entity entity, const PointLightComponent& light)
 			{
-				if (!world.entities.HasComponent<ComponentTransform>(entity))
+				if (!world.entities.HasComponent<TransformComponent>(entity))
 				{
 					return;
 				}
-				const Vector3& lightPosition = world.entities.GetComponent<ComponentTransform>(entity).world.position;
+				const Vector3& lightPosition = world.entities.GetComponent<TransformComponent>(entity).world.position;
 				const float distance = (lightPosition - position).Length();
 				const float amount = light.intensity * GetBrightness(world.entities, entity) * RangeWindow(distance, light.range)
 					* Strongest(light.colour) / Attenuate(light.attenuation, distance);
@@ -88,11 +88,11 @@ namespace tyr
 
 			world.entities.ForEach<SpotLightComponent>([&](Entity entity, const SpotLightComponent& light)
 			{
-				if (!world.entities.HasComponent<ComponentTransform>(entity))
+				if (!world.entities.HasComponent<TransformComponent>(entity))
 				{
 					return;
 				}
-				const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+				const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 				const Vector3 toPosition = position - transform.position;
 				const float distance = toPosition.Length();
 				const Vector3 direction = transform.rotation.Rotate(Vector3::c_Forward);
@@ -122,11 +122,11 @@ namespace tyr
 			bool lit = false;
 			world.entities.ForEach<FlashlightComponent>([&](Entity entity, const FlashlightComponent& flashlight)
 			{
-				if (lit || !flashlight.on || !flashlight.held || !world.entities.HasComponent<ComponentTransform>(entity))
+				if (lit || !flashlight.on || !flashlight.held || !world.entities.HasComponent<TransformComponent>(entity))
 				{
 					return;
 				}
-				const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+				const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 				const Vector3 toPosition = position - transform.position;
 				const float distance = toPosition.Length();
 				if (distance > flashlight.beamRange || distance < 0.0001f)

@@ -36,9 +36,29 @@ namespace tyr
         return m_Modules[m_Map[id]];
     }
 
+    void ModuleManager::AddModuleForUpdate(Id64 id)
+    {
+        TYR_ASSERT(!m_ModulesInitialized);
+
+        const uint* index = m_Map.Find(id);
+        TYR_ASSERT(index);
+        if (!index)
+        {
+            return;
+        }
+        IModule* module = m_Modules[*index];
+        TYR_ASSERT(!m_UpdateOrder.Contains(module));
+        if (!m_UpdateOrder.Contains(module))
+        {
+            m_UpdateOrder.Add(module);
+        }
+    }
+
     void ModuleManager::InitializeModules()
     {
         TYR_ASSERT(!m_ModulesInitialized);
+        // A module left out of the update order would never update.
+        TYR_ASSERT(m_UpdateOrder.Size() == m_Modules.Size());
 
         for (IModule* module : m_Modules)
         {
@@ -52,9 +72,9 @@ namespace tyr
     {
         TYR_ASSERT(m_ModulesInitialized);
 
-        for (int i = m_Modules.Size() - 1; i >= 0; --i)
+        for (IModule* module : m_UpdateOrder)
         {
-            m_Modules[i]->BeginFrame();
+            module->BeginFrame();
         }
     }
 
@@ -63,9 +83,9 @@ namespace tyr
         TYR_ASSERT(m_ModulesInitialized);
 
         // Okay to update linearly as each module should declare tasks and have a completion task that is waited on by modules that depend on it
-        for (int i = m_Modules.Size() - 1; i >= 0; --i)
+        for (IModule* module : m_UpdateOrder)
         {
-            m_Modules[i]->Update(deltaTime);
+            module->Update(deltaTime);
         }
     }
 
@@ -73,9 +93,9 @@ namespace tyr
     {
         TYR_ASSERT(m_ModulesInitialized);
 
-        for (int i = m_Modules.Size() - 1; i >= 0; --i)
+        for (IModule* module : m_UpdateOrder)
         {
-            m_Modules[i]->EndFrame();
+            module->EndFrame();
         }
     }
 
@@ -99,6 +119,7 @@ namespace tyr
             delete module;
         }
         m_Modules.Clear();
+        m_UpdateOrder.Clear();
         m_Map.Clear();
     }
 }

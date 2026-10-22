@@ -17,6 +17,7 @@
 #include "RenderAPI/Sync.h"
 #include "Memory/StackAllocation.h"
 #include "Math/Matrix4.h"
+#include "Math/Half2.h"
 #include "RenderResource/RenderResourceUtil.h"
 #include "RenderTransfer/GPUTransferUtil.h"
 #include "RenderTransfer/RenderTransferTypes.h"
@@ -567,7 +568,7 @@ namespace tyr
 					EnsureLightingOutputBound(m_RenderFrameIndex, targets.colourTexture);
 					EnsureShadowMaskArraysBound(m_RenderFrameIndex, targets.shadowMasksRaw, targets.shadowMasks);
 					EnsureTaaResolveOutputBound(m_RenderFrameIndex, targets.resolvedColourTexture);
-					EnsureEditorGridOutputBound(m_RenderFrameIndex, targets.overlayColourTexture);
+					EnsureGridOutputBound(m_RenderFrameIndex, targets.overlayColourTexture);
 					EnsureDisplayOutputBound(m_RenderFrameIndex, targets.displayColourTexture);
 					EnsureBloomBound(m_RenderFrameIndex, targets);
 
@@ -1483,8 +1484,9 @@ namespace tyr
 			uint viewportIndex;
 		};
 
-		// Matches EditorGridCS.hlsl's push constant cbuffer byte-for-byte.
-		struct EditorGridPushConstants
+		// Matches GridCS.hlsl's push constant cbuffer byte-for-byte. Exactly 128 bytes, the
+		// most push constants every device takes.
+		struct GridPushConstants
 		{
 			Matrix4 invViewProj;
 			uint sourceIndex;
@@ -1494,8 +1496,28 @@ namespace tyr
 			uint renderFrameIndex;
 			uint majorLineEvery;
 			float cellSize;
-			uint gridEnabled;
+			float planeHeight;
+			// RGBA8, red in the lowest byte.
+			uint minorLineColour;
+			uint majorLineColour;
+			uint xAxisColour;
+			uint zAxisColour;
+			float minorLineWidth;
+			float majorLineWidth;
+			float axisLineWidth;
+			// Where it starts and finishes fading out.
+			Half2 fadeRange;
 		};
+		static_assert(sizeof(GridPushConstants) == 128, "GridPushConstants must fit the smallest push constant limit");
+
+		uint PackColour(const Vector4& colour)
+		{
+			const uint r = static_cast<uint>(Math::Clamp01(colour.x) * 255.0f + 0.5f);
+			const uint g = static_cast<uint>(Math::Clamp01(colour.y) * 255.0f + 0.5f);
+			const uint b = static_cast<uint>(Math::Clamp01(colour.z) * 255.0f + 0.5f);
+			const uint a = static_cast<uint>(Math::Clamp01(colour.w) * 255.0f + 0.5f);
+			return r | (g << 8) | (b << 16) | (a << 24);
+		}
 
 		// Matches DebugLineVS.hlsl's push constant cbuffer byte-for-byte.
 		struct DebugLinePushConstants
@@ -1769,6 +1791,7 @@ namespace tyr
 		pushConstants.flashR = effects.flashColour.x;
 		pushConstants.flashG = effects.flashColour.y;
 		pushConstants.flashB = effects.flashColour.z;
+		pushConstants.wounds = effects.wounds;
 		cmdList.PushConstants(m_Resources.tonemapPipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstants), &pushConstants);
 		cmdList.Dispatch((viewportData->width + 7) / 8, (viewportData->height + 7) / 8, 1);
 	}
@@ -1800,7 +1823,7 @@ namespace tyr
 		cmdList.Dispatch((pushConstants.width + 7) / 8, (pushConstants.height + 7) / 8, 1);
 	}
 
-	void Renderer::RecordEditorGridPass(CommandList& cmdList, uint renderFrameIndex, uint sourceIndex)
+	void Renderer::RecordGridPass(CommandList& cmdList, uint renderFrameIndex, uint sourceIndex)
 	{
 		const RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
 		if (!viewportData || viewportData->width == 0 || viewportData->height == 0)
@@ -1810,20 +1833,31 @@ namespace tyr
 
 		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
 
-		cmdList.BindComputePipeline(m_Resources.editorGridPipeline);
-		cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.editorGridPipeline);
+		cmdList.BindComputePipeline(m_Resources.gridPipeline);
+		cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.gridPipeline);
 
-		EditorGridPushConstants pushConstants{};
+		const ViewportGridDesc& grid = renderFrame.viewportGrid;
+		GridPushConstants pushConstants{};
 		pushConstants.invViewProj = renderFrame.overlayViewProj.Inverse();
-		pushConstants.gridEnabled = renderFrame.viewportGrid.enabled ? 1u : 0u;
 		pushConstants.sourceIndex = sourceIndex;
 		pushConstants.depthIndex = viewportData->depthBuffer.h.index;
 		pushConstants.width = viewportData->width;
 		pushConstants.height = viewportData->height;
 		pushConstants.renderFrameIndex = renderFrameIndex;
-		pushConstants.majorLineEvery = renderFrame.viewportGrid.majorLineEvery;
-		pushConstants.cellSize = renderFrame.viewportGrid.cellSize;
-		cmdList.PushConstants(m_Resources.editorGridPipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(EditorGridPushConstants), &pushConstants);
+		pushConstants.majorLineEvery = grid.majorLineEvery;
+		pushConstants.cellSize = grid.cellSize;
+		pushConstants.planeHeight = grid.planeHeight;
+		// With the grid off its lines are see-through, so the pass only copies the image for
+		// debug lines to be drawn over.
+		pushConstants.minorLineColour = grid.enabled ? PackColour(grid.minorLineColour) : 0u;
+		pushConstants.majorLineColour = grid.enabled ? PackColour(grid.majorLineColour) : 0u;
+		pushConstants.xAxisColour = grid.enabled ? PackColour(grid.xAxisColour) : 0u;
+		pushConstants.zAxisColour = grid.enabled ? PackColour(grid.zAxisColour) : 0u;
+		pushConstants.minorLineWidth = grid.minorLineWidth;
+		pushConstants.majorLineWidth = grid.majorLineWidth;
+		pushConstants.axisLineWidth = grid.axisLineWidth;
+		pushConstants.fadeRange = Half2(grid.fadeStart, grid.fadeEnd);
+		cmdList.PushConstants(m_Resources.gridPipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(GridPushConstants), &pushConstants);
 
 		const uint groupCountX = (viewportData->width + 7) / 8;
 		const uint groupCountY = (viewportData->height + 7) / 8;
@@ -2623,14 +2657,14 @@ namespace tyr
 			{
 				const uint gridSourceIndex = viewportData->displayColourTexture.h.index;
 
-				graph.AddPass("EditorGrid",
+				graph.AddPass("Grid",
 					[displayColourTexture, depthBuffer, overlayColourTexture](RenderGraphBuilder& builder)
 					{
 						builder.ReadTexture(*displayColourTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
 						builder.ReadTexture(*depthBuffer, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
 						builder.WriteTexture(*overlayColourTexture, PIPELINE_STAGE_COMPUTE_SHADER_BIT, BARRIER_ACCESS_SHADER_WRITE_BIT, IMAGE_LAYOUT_GENERAL);
 					},
-					[this, renderFrameIndex, gridSourceIndex](CommandList& cl) { RecordEditorGridPass(cl, renderFrameIndex, gridSourceIndex); },
+					[this, renderFrameIndex, gridSourceIndex](CommandList& cl) { RecordGridPass(cl, renderFrameIndex, gridSourceIndex); },
 					RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
 
 				if (renderFrame.debugLineDepthTestedCount + renderFrame.debugLineOnTopCount > 0)
@@ -3348,9 +3382,9 @@ namespace tyr
 		m_TaaResolveOutputBoundTextures[renderFrameIndex] = resolvedColourTexture;
 	}
 
-	void Renderer::EnsureEditorGridOutputBound(uint renderFrameIndex, TextureHandle overlayColourTexture)
+	void Renderer::EnsureGridOutputBound(uint renderFrameIndex, TextureHandle overlayColourTexture)
 	{
-		if (!overlayColourTexture || m_EditorGridOutputBoundTextures[renderFrameIndex] == overlayColourTexture)
+		if (!overlayColourTexture || m_GridOutputBoundTextures[renderFrameIndex] == overlayColourTexture)
 		{
 			return;
 		}
@@ -3361,8 +3395,8 @@ namespace tyr
 		bindingInfo.hasSampler = false;
 		// Always accessed in the general layout, whatever layout the texture is in now.
 		bindingInfo.layout = IMAGE_LAYOUT_GENERAL;
-		QueueImageBindingUpdate(TYR_BINDING_EDITOR_GRID_OUTPUT, renderFrameIndex, bindingInfo);
-		m_EditorGridOutputBoundTextures[renderFrameIndex] = overlayColourTexture;
+		QueueImageBindingUpdate(TYR_BINDING_GRID_OUTPUT, renderFrameIndex, bindingInfo);
+		m_GridOutputBoundTextures[renderFrameIndex] = overlayColourTexture;
 	}
 
 	void Renderer::EnsureDisplayOutputBound(uint renderFrameIndex, TextureHandle displayColourTexture)
@@ -3620,10 +3654,10 @@ namespace tyr
 		{
 			ShaderDesc desc;
 			desc.entryPoint = "main";
-			desc.fileName = "EditorGridCS";
+			desc.fileName = "GridCS";
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_COMPUTE_BIT;
-			m_Resources.editorGridComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+			m_Resources.gridComputeShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
 		}
 		{
 			ShaderDesc desc;
@@ -3733,7 +3767,7 @@ namespace tyr
 		m_Ctx.device->DeleteShaderModule(m_Resources.shadowRTComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.shadowDenoiseComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.taaResolveComputeShader);
-		m_Ctx.device->DeleteShaderModule(m_Resources.editorGridComputeShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.gridComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.guiVertexShader);
 		for (ShaderModuleHandle shader : m_Resources.guiPixelShaders)
 		{
@@ -3868,7 +3902,7 @@ namespace tyr
 			}
 			{
 				// TYR_BINDING_LIGHTING_OUTPUT, TYR_BINDING_SHADOW_MASKS_RAW/SHADOW_MASKS,
-				// TYR_BINDING_TAA_RESOLVE_OUTPUT, TYR_BINDING_EDITOR_GRID_OUTPUT and
+				// TYR_BINDING_TAA_RESOLVE_OUTPUT, TYR_BINDING_GRID_OUTPUT and
 				// TYR_BINDING_DISPLAY_OUTPUT - six storage-image arrays, each one entry per
 				// buffered RenderFrame slot, and TYR_BINDING_BLOOM's levels for each slot.
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
@@ -3961,7 +3995,7 @@ namespace tyr
 			AddBinding(TYR_BINDING_SHADOW_LIGHT_SLOT_MAP, DescriptorType::StorageBuffer, 1, computeAndFragmentStages);
 			AddBinding(TYR_BINDING_TAA_RESOLVE_OUTPUT, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
-			AddBinding(TYR_BINDING_EDITOR_GRID_OUTPUT, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
+			AddBinding(TYR_BINDING_GRID_OUTPUT, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount,
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 			AddBinding(TYR_BINDING_LIGHT_INDICES, DescriptorType::StorageBuffer, 1, computeAndFragmentStages);
 			AddBinding(TYR_BINDING_DEBUG_LINE_VERTEX, DescriptorType::StorageBuffer, 1, SHADER_STAGE_VERTEX_BIT);
@@ -4300,17 +4334,17 @@ namespace tyr
 
 		m_Resources.taaResolvePipeline = m_Ctx.device->CreateComputePipeline(taaResolveDesc);
 
-		ComputePipelineDesc editorGridDesc;
-		editorGridDesc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
+		ComputePipelineDesc gridDesc;
+		gridDesc.pipelineLayoutDesc.descriptorSetLayouts.Add(m_Resources.descriptorSetLayout);
 
-		PushConstantRange& editorGridPushConstantRange = editorGridDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
-		editorGridPushConstantRange.stageFlags = SHADER_STAGE_COMPUTE_BIT;
-		editorGridPushConstantRange.offset = 0;
-		editorGridPushConstantRange.size = sizeof(EditorGridPushConstants);
+		PushConstantRange& gridPushConstantRange = gridDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
+		gridPushConstantRange.stageFlags = SHADER_STAGE_COMPUTE_BIT;
+		gridPushConstantRange.offset = 0;
+		gridPushConstantRange.size = sizeof(GridPushConstants);
 
-		editorGridDesc.shader = m_Resources.editorGridComputeShader;
+		gridDesc.shader = m_Resources.gridComputeShader;
 
-		m_Resources.editorGridPipeline = m_Ctx.device->CreateComputePipeline(editorGridDesc);
+		m_Resources.gridPipeline = m_Ctx.device->CreateComputePipeline(gridDesc);
 
 		// Auto exposure and tone mapping.
 		ComputePipelineDesc postDesc;
@@ -4367,7 +4401,7 @@ namespace tyr
 		m_Ctx.device->DeleteComputePipeline(m_Resources.shadowRTPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.shadowDenoisePipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.taaResolvePipeline);
-		m_Ctx.device->DeleteComputePipeline(m_Resources.editorGridPipeline);
+		m_Ctx.device->DeleteComputePipeline(m_Resources.gridPipeline);
 		m_Ctx.device->DeleteDescriptorSet(m_Resources.descriptorSet);
 		m_Ctx.device->DeleteDescriptorSetLayout(m_Resources.descriptorSetLayout);
 		m_Ctx.device->DeleteDescriptorPool(m_Resources.descriptorPool);

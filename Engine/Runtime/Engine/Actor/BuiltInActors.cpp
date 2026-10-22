@@ -5,9 +5,9 @@ namespace tyr
 {
 	namespace
 	{
-		ComponentTransform CreateIdentityTransform()
+		TransformComponent CreateIdentityTransform()
 		{
-			ComponentTransform transform;
+			TransformComponent transform;
 			transform.local.position = Vector3::c_Zero;
 			transform.local.rotation = Quaternion::c_Identity;
 			transform.local.scale = Vector3::c_One;
@@ -94,6 +94,7 @@ namespace tyr
 		root.AddComponent(CreateIdentityTransform());
 		root.AddComponent(CharacterComponent{});
 		root.AddComponent(InventoryComponent{});
+		root.AddComponent(DocumentsComponent{});
 		HealthComponent health{};
 		health.hurtSound = "event:/Player/Hurt";
 		health.deathSound = "event:/Player/Death";
@@ -173,14 +174,14 @@ namespace tyr
 		root.AddComponent(LightSwitchComponent{});
 	TYR_ACTOR_END()
 
-	// Gives the world power for its lights and door panels once the player starts it.
-	TYR_ACTOR_START(GeneratorActor)
+	// A mesh the game does something with when it's used, such as a locker, named by its activator's kind.
+	TYR_ACTOR_START(ActivatorActor)
 		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
 		root.AddComponent(CreateIdentityTransform());
 		root.AddComponent(MeshComponent{});
 		root.AddComponent(BoxComponent{});
 		root.AddComponent(ColliderComponent{});
-		root.AddComponent(GeneratorComponent{});
+		root.AddComponent(ActivatorComponent{});
 	TYR_ACTOR_END()
 
 	// An item lying in the world, such as a key card, that the player can take.
@@ -217,19 +218,6 @@ namespace tyr
 		root.AddComponent(NavAgentComponent{});
 	TYR_ACTOR_END()
 
-	// An enemy: a walking character that senses, hunts and attacks whatever has a
-	// PerceivableComponent. Its mesh, if it has one, faces +Z.
-	TYR_ACTOR_START(EnemyActor)
-		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
-		root.AddComponent(CreateIdentityTransform());
-		root.AddComponent(MeshComponent{});
-		root.AddComponent(CharacterComponent{});
-		root.AddComponent(NavAgentComponent{});
-		root.AddComponent(PerceptionComponent{});
-		root.AddComponent(EnemyComponent{});
-		root.AddComponent(HealthComponent{});
-	TYR_ACTOR_END()
-
 	// A sound that keeps playing while the game runs, such as wind outside or a humming machine.
 	// Picked from the hierarchy, since it has no bounds to click.
 	TYR_ACTOR_START(AmbientSoundActor)
@@ -238,12 +226,33 @@ namespace tyr
 		root.AddComponent(AmbientSoundComponent{});
 	TYR_ACTOR_END()
 
+	// A box set off when the player walks into it, for whatever waits on it.
+	TYR_ACTOR_START(TriggerVolumeActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(TriggerVolumeComponent{});
+	TYR_ACTOR_END()
+
+	// A box that counts as indoors, switching outdoor lights off while the camera is in it.
+	TYR_ACTOR_START(IndoorVolumeActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(IndoorVolumeComponent{});
+	TYR_ACTOR_END()
+
 	// A box the navmesh is built in. Its bounds don't take clicks in the viewport, since they're
 	// usually big enough to hold the camera, so it's picked from the hierarchy.
 	TYR_ACTOR_START(NavmeshBoundsActor)
 		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
 		root.AddComponent(CreateIdentityTransform());
 		root.AddComponent(NavmeshBoundsComponent{});
+	TYR_ACTOR_END()
+
+	// A box marking the navmesh in it as an area, such as stairs, picked from the hierarchy.
+	TYR_ACTOR_START(NavmeshAreaActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(NavmeshAreaComponent{});
 	TYR_ACTOR_END()
 
 	// A torch, with a narrow beam and a dim spill around it. The game gives the player one.
@@ -260,6 +269,9 @@ namespace tyr
 		root.AddComponent(CreateIdentityTransform());
 		root.AddComponent(light);
 		root.AddComponent(FlashlightComponent{});
+		// The hand holding it, and the arm, drawn as one skinned mesh around the light.
+		root.AddComponent(SkeletalMeshComponent{});
+		root.AddComponent(AnimatorComponent{});
 	TYR_ACTOR_END()
 
 	TYR_ACTOR_START(SpotLightActor)

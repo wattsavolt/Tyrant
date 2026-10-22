@@ -33,12 +33,20 @@ namespace tyr
 		// The closest body hit along the ray, within maxDistance.
 		bool Raycast(const Vector3& origin, const Vector3& direction, float maxDistance, PhysicsRayHit& outHit) const;
 
+		// How far, and which way across the ground, a capsule from a to b has to move to come out of
+		// every body it's sunk into: those that never move, and those that do if asked, apart from the two
+		// ignored. Contacts pushing mostly up or down, such as with the floor, are left out.
+		Vector3 FindCapsulePush(const Vector3& a, const Vector3& b, float radius, bool includeMoving = false,
+			uint ignoreBody = PhysicsConstants::c_InvalidBodyID, uint ignoreBody2 = PhysicsConstants::c_InvalidBodyID) const;
+
 		// PhysicsConstants::c_InvalidCharacter when the scene already has as many as it can move.
 		uint AddCharacter(const CharacterDesc& desc);
 		void RemoveCharacter(uint character);
 		// Moves the character over the time, walking up steps, sticking to floors, riding what
 		// it stands on and falling otherwise.
 		CharacterState MoveCharacter(uint character, const CharacterMove& move, float deltaTime);
+		// Puts the character straight at the position, stopped.
+		void SetCharacterPosition(uint character, const Vector3& position);
 
 	private:
 		PhysicsContext& m_Context;

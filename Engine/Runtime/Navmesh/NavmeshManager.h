@@ -25,8 +25,9 @@ namespace tyr
 		bool FindRandomPoint(Handle navmesh, const Vector3& centre, float radius, Vector3& outPoint) const;
 
 		// The straightest path along the navmesh from near the start to near the end. When the end
-		// can't be reached, the path goes as close to it as it can and is marked partial.
-		bool FindPath(Handle navmesh, const Vector3& start, const Vector3& end, NavPath& outPath) const;
+		// can't be reached, the path goes as close to it as it can and is marked partial. Stairs are
+		// left out unless asked for.
+		bool FindPath(Handle navmesh, const Vector3& start, const Vector3& end, bool useStairs, NavPath& outPath) const;
 
 		// Each polygon's edges within radius of the centre, as pairs of points, for drawing.
 		void AddDebugLines(Handle navmesh, const Vector3& centre, float radius, Array<Vector3>& outLines) const;

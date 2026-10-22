@@ -3,6 +3,7 @@
 #include "World/WorldManager.h"
 #include "World/World.h"
 #include "ECS/Components.h"
+#include "ECS/AssetFields.h"
 #include "Actor/ActorRegistry.h"
 #include "AssetBrowserPanel.h"
 #include "AssetSystem/AssetManager.h"
@@ -86,6 +87,13 @@ namespace tyr
 		m_Reflector.RegisterFieldReflector(GetTypeID<AnimatorComponent>(), MakeFieldKey("clip"), &ReflectAsset, animationExtension);
 		m_Reflector.RegisterFieldReflector(GetTypeID<DecalComponent>(), MakeFieldKey("material"), &ReflectAsset, materialExtension);
 		m_Reflector.RegisterFieldReflector(GetTypeID<AnimatorComponent>(), MakeFieldKey("layerClip"), &ReflectAsset, animationExtension);
+		// The game's own components' asset fields.
+		uint assetFieldCount = 0;
+		const AssetField* assetFields = AssetFields::GetAll(assetFieldCount);
+		for (uint i = 0; i < assetFieldCount; ++i)
+		{
+			m_Reflector.RegisterFieldReflector(assetFields[i].componentType, assetFields[i].fieldKey, &ReflectAsset, const_cast<char*>(assetFields[i].extension));
+		}
 	}
 
 	bool PropertiesPanel::ReflectAsset(PropertiesReflector& reflector, const Field& field, uint8* object, const uint8* defaults, void* userData)
@@ -270,7 +278,7 @@ namespace tyr
 
 		// The root's transform is where the actor was placed, not a change to its type.
 		const Id64& reflectionTypeID = ComponentRegistry::Instance().GetReflectionTypeID(typeID);
-		if (isRoot && reflectionTypeID == GetTypeID<ComponentTransform>())
+		if (isRoot && reflectionTypeID == GetTypeID<TransformComponent>())
 		{
 			return nullptr;
 		}

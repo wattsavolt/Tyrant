@@ -111,8 +111,9 @@ if (NOT TYR_FINAL_MODE)
 	target_link_libraries(TyrantEngine PRIVATE imgui)
 endif()
 
-# Nuklear - always-on runtime GUI (in-game HUD/menu), driven by GUIModule
-target_link_libraries(TyrantEngine PRIVATE nuklear)
+# Nuklear - always-on runtime GUI (in-game HUD/menu), driven by GUIModule. Public so games can
+# draw with it through GUI/GameUI.h.
+target_link_libraries(TyrantEngine PUBLIC nuklear)
 
 # Physics, through TyrantPhysics, which keeps Jolt to itself.
 target_link_libraries(TyrantEngine PUBLIC TyrantPhysics)
@@ -134,7 +135,7 @@ endif()
 
 ## OS libs
 if(WIN32)
-	target_link_libraries(TyrantEngine PRIVATE Winmm xinput9_1_0 dxguid.lib)
+	target_link_libraries(TyrantEngine PRIVATE Winmm xinput9_1_0 GameInput dxguid.lib)
 	target_link_libraries(TyrantEngine PRIVATE DbgHelp IPHLPApi Rpcrt4)
 elseif(LINUX)
 	target_link_libraries(TyrantEngine PRIVATE dl pthread)

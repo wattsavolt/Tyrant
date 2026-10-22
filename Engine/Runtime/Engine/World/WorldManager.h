@@ -87,6 +87,11 @@ namespace tyr
 		// Plays animator clips, such as cross-fading to another with AnimationSystem::Play.
 		AnimationSystem& GetAnimationSystem() { return m_AnimationSystem; }
 
+		// Redraws an entity where its transform has been moved to, such as by the game.
+		void UpdateEntityTransform(Handle worldHandle, Entity entity);
+		// Takes out an entity that isn't part of an actor, such as one the game made while playing.
+		void RemoveEntity(Handle worldHandle, Entity entity);
+
 		// Raycasts and other queries against a simulated world's physics.
 		PhysicsComponentsManager& GetPhysicsComponentsManager() { return m_PhysicsComponentsManager; }
 
@@ -124,6 +129,8 @@ namespace tyr
 		void UpdateLightFixtures(World& world, float deltaTime);
 		// Keeps held flashlights at the camera, once it's been placed this frame.
 		void UpdateFlashlights(World& world, float deltaTime);
+		// Works out whether the camera is indoors, switching outdoor lights off or on when that changes.
+		void UpdateIndoors(World& world);
 		// Plays the sounds asked for this frame and keeps ambient sounds going, for a world being played.
 		void UpdateSounds(World& world);
 		// Moves opening and closing doors. Their kinematic bodies follow on the next physics step.
@@ -136,6 +143,8 @@ namespace tyr
 		void PropagateActorTransforms(World& world, const ActorInstance& instance, Entity moved);
 		// Sends the entity's world transform to its mesh instance and lights, if it has them yet.
 		void UpdateEntityTransform(World& world, Entity entity);
+		// Makes items that can be picked up pulse with a shine, stronger as the player gets near.
+		void UpdatePickupShine(World& world, float deltaTime);
 		// Removes the light from the renderer, if it was ever added.
 		// Sends the level settings' sky and exposure to the world's scene, loading the sky's texture.
 		void UpdateSkyAndExposure(World& world);

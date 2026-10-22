@@ -15,6 +15,7 @@ namespace tyr
 			noise.position = position;
 			noise.radius = radius;
 			noise.source = source;
+			noise.id = ++world.noiseCount;
 			if (world.noises.Size() < c_MaxNoiseEvents)
 			{
 				world.noises.Add(noise);

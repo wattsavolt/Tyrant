@@ -17,6 +17,12 @@ namespace tyr
 		float walkSpeed = 2.2f;
 		float sprintSpeed = 4.5f;
 		float crouchSpeed = 1.2f;
+		// Seconds of running from rested, and seconds to get all of it back, which starts once it's
+		// stopped running for staminaRecoverDelay. Run out, it can't run again until it has this share back.
+		float sprintStamina = 10.0f;
+		float staminaRecoverTime = 7.0f;
+		float staminaRecoverDelay = 1.0f;
+		float exhaustedUntil = 0.4f;
 		// How quickly it gets up to speed or stops, in metres per second per second.
 		float acceleration = 14.0f;
 		float airAcceleration = 3.0f;
@@ -30,21 +36,24 @@ namespace tyr
 		float gamepadLookSpeed = 160.0f;
 		// How far up or down it can look, in degrees.
 		float maxPitch = 85.0f;
-		// Metres walked between footsteps, and how far each is heard, by gait.
+		// Metres walked between footsteps, how far enemies hear each, and how loud each sounds against a
+		// running step, by gait.
 		float walkStride = 0.75f;
 		float sprintStride = 1.0f;
 		float crouchStride = 0.55f;
-		float walkNoise = 6.0f;
-		float sprintNoise = 15.0f;
-		float crouchNoise = 1.5f;
+		float walkNoise = 2.0f;
+		float sprintNoise = 6.0f;
+		float crouchNoise = 0.0f;
+		float walkStepVolume = 0.45f;
+		float crouchStepVolume = 0.25f;
 		// Played at the feet with each footstep, quieter for quieter gaits.
 		SoundName footstepSound = "event:/Player/Footstep";
 	};
 
 	// Moves an entity with a CharacterComponent from mouse and keyboard or gamepad input, and puts
 	// the world's camera at its eyes. WASD or the left stick moves, Shift or the left stick click
-	// sprints, and Ctrl held or C toggles crouching. There's no jumping. Each footstep is a noise
-	// enemies can hear, louder the faster the gait.
+	// sprints while there's stamina left, and Ctrl held or C toggles crouching. There's no jumping.
+	// Each footstep is a noise enemies can hear, louder the faster the gait.
 	class TYR_ENGINE_API FirstPersonController final
 	{
 	public:
@@ -60,6 +69,9 @@ namespace tyr
 		// Goes up with each footstep, which was heard out to the radius, for footstep sounds.
 		uint GetStepCount() const { return m_StepCount; }
 		float GetLastStepRadius() const { return m_LastStepRadius; }
+		// From 0, run out, to 1, rested.
+		float GetStamina() const { return m_Stamina; }
+		bool IsExhausted() const { return m_Exhausted; }
 
 		FirstPersonSettings settings;
 
@@ -71,6 +83,11 @@ namespace tyr
 		Vector3 m_Velocity;
 		float m_EyeHeight = 0.0f;
 		bool m_CrouchToggled = false;
+		// Running from a click of the controller's left stick, until the stick is let go.
+		bool m_PadSprint = false;
+		float m_Stamina = 1.0f;
+		bool m_Exhausted = false;
+		float m_StaminaRecoverWait = 0.0f;
 		// Where the character was last frame, and how far it's walked since its last footstep.
 		Vector3 m_LastPosition;
 		bool m_HasLastPosition = false;

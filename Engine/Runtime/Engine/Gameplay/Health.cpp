@@ -21,16 +21,22 @@ namespace tyr
 				return false;
 			}
 			HealthComponent& health = world.entities.GetComponent<HealthComponent>(entity);
+			if (!health.damaged)
+			{
+				health.health = health.maxHealth;
+				health.damaged = true;
+			}
 			if (health.health <= 0.0f)
 			{
 				return false;
 			}
 			health.health = std::max(health.health - amount, 0.0f);
+			health.damageCount++;
 			health.hurt = std::min(health.hurt + amount / (std::max(health.maxHealth, 1.0f) * c_FullHurtShare), 1.0f);
 			const bool died = health.health <= 0.0f;
-			if (world.entities.HasComponent<ComponentTransform>(entity))
+			if (world.entities.HasComponent<TransformComponent>(entity))
 			{
-				Sounds::Play(world, died ? health.deathSound : health.hurtSound, world.entities.GetComponent<ComponentTransform>(entity).world.position);
+				Sounds::Play(world, died ? health.deathSound : health.hurtSound, world.entities.GetComponent<TransformComponent>(entity).world.position);
 			}
 			return died;
 		}
@@ -41,13 +47,19 @@ namespace tyr
 			{
 				HealthComponent& health = world.entities.GetComponent<HealthComponent>(entity);
 				health.health = health.maxHealth;
+				health.damaged = true;
 				health.hurt = 0.0f;
 			}
 		}
 
 		bool IsDead(const World& world, Entity entity)
 		{
-			return world.entities.HasComponent<HealthComponent>(entity) && world.entities.GetComponent<HealthComponent>(entity).health <= 0.0f;
+			if (!world.entities.HasComponent<HealthComponent>(entity))
+			{
+				return false;
+			}
+			const HealthComponent& health = world.entities.GetComponent<HealthComponent>(entity);
+			return health.damaged && health.health <= 0.0f;
 		}
 	}
 }

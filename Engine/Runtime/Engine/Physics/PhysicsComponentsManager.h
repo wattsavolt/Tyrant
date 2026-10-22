@@ -42,6 +42,12 @@ namespace tyr
 		// The closest collider hit along the ray, within maxDistance.
 		bool Raycast(Handle physicsWorld, const Vector3& origin, const Vector3& direction, float maxDistance, RayCastEntityHit& outHit) const;
 
+		// How far, and which way across the ground, a capsule from a to b has to move to come out of
+		// every collider it's sunk into, leaving out the floor and ceiling. Moving colliders count if asked,
+		// apart from those on the two entities ignored.
+		Vector3 FindCapsulePush(Handle physicsWorld, const Vector3& a, const Vector3& b, float radius, bool includeMoving = false,
+			const World* world = nullptr, Entity ignore = c_InvalidEntity, Entity ignore2 = c_InvalidEntity) const;
+
 		// The shape a collider makes on an entity of the scale, with a reference the caller releases.
 		// Null when it has no size yet, or its collision mesh hasn't loaded.
 		static const PhysicsShape* CreateColliderShape(const ColliderComponent& collider, const Vector3& scale, MotionType motionType, const AssetManager& assetManager);

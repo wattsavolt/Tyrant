@@ -20,11 +20,11 @@ namespace tyr
 
 			world.entities.ForEach<ScentComponent>([&world](Entity entity, ScentComponent& scent)
 			{
-				if (!world.entities.HasComponent<ComponentTransform>(entity))
+				if (!world.entities.HasComponent<TransformComponent>(entity))
 				{
 					return;
 				}
-				const Vector3& position = world.entities.GetComponent<ComponentTransform>(entity).world.position;
+				const Vector3& position = world.entities.GetComponent<TransformComponent>(entity).world.position;
 				const Vector3 moved = position - scent.lastMarker;
 				if (scent.hasMarker && moved.Dot(moved) < scent.spacing * scent.spacing)
 				{

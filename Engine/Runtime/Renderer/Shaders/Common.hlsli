@@ -21,6 +21,7 @@ struct VS_OUTPUT
 	float2 uv : TEXCOORD0;
 	nointerpolation uint materialIndex : MATERIAL0;
 	nointerpolation float emissiveScale : EMISSIVE0;
+	nointerpolation float highlight : HIGHLIGHT0;
 };
 
 struct MaterialData

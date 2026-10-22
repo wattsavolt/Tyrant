@@ -16,8 +16,9 @@ namespace tyr
     {
         EngineLoop engineLoop;
         engineLoop.Initialize([]() {
-
             TYR_REGISTER_MODULE(AppModule);
+        }, []() {
+            TYR_ADD_MODULE_FOR_UPDATE(AppModule);
         });
         AppModule* appModule;
         TYR_GET_MODULE(AppModule, appModule);

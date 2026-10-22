@@ -16,7 +16,7 @@ namespace tyr
 	// The most entities one compile-time actor type can declare, and the most components
 	// one of its entities can carry.
 	constexpr uint c_MaxActorTypeEntities = 32;
-	constexpr uint c_MaxActorEntityComponents = 8;
+	constexpr uint c_MaxActorEntityComponents = 16;
 
 	// A placed actor's name, which gameplay can also use to refer to it.
 	constexpr uint c_MaxActorName = 63;

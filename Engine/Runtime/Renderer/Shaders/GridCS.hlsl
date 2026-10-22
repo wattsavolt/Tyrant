@@ -1,12 +1,12 @@
-#ifndef EDITOR_GRID_CS_HLSli
-#define EDITOR_GRID_CS_HLSli
+#ifndef GRID_CS_HLSL
+#define GRID_CS_HLSL
 
 #include "Common.hlsli"
 
 TYR_VK_BINDING(TYR_BINDING_TEXTURES, 0) Texture2D textures[] : register(t11);
-TYR_VK_BINDING(TYR_BINDING_EDITOR_GRID_OUTPUT, 0) RWTexture2D<float4> outputImages[TYR_BUFFERED_FRAME_COUNT] : register(u24);
+TYR_VK_BINDING(TYR_BINDING_GRID_OUTPUT, 0) RWTexture2D<float4> outputImages[TYR_BUFFERED_FRAME_COUNT] : register(u24);
 
-// Matches EditorGridPushConstants in Renderer.cpp byte for byte.
+// Matches GridPushConstants in Renderer.cpp byte for byte.
 struct PushConstants
 {
 	// Without TAA jitter, since the grid is drawn after TAA.
@@ -18,23 +18,26 @@ struct PushConstants
 	uint renderFrameIndex;
 	uint majorLineEvery;
 	float cellSize;
-	// Zero just copies the image, for when only debug lines are drawn over it.
-	uint gridEnabled;
+	float planeHeight;
+	// Linear RGBA8 colours, red in the lowest byte. All see-through just copies the image, for
+	// when only debug lines are drawn over it.
+	uint minorLineColour;
+	uint majorLineColour;
+	uint xAxisColour;
+	uint zAxisColour;
+	// Fractions of a cell (minor, axis) or of a major cell (major).
+	float minorLineWidth;
+	float majorLineWidth;
+	float axisLineWidth;
+	// Two halves: the distances from the camera, in major cells, it starts and finishes fading out.
+	uint fadeRange;
 };
 TYR_VK_PUSH_CONSTANT PushConstants g_PushConstants;
 
-// Line widths are fractions of a cell (minor, axis) or of a major cell (major).
-static const float c_MinorLineWidth = 0.01f;
-static const float c_MajorLineWidth = 0.0025f;
-static const float c_AxisLineWidth = 0.025f;
-// Linear colours, since the image being drawn over is linear.
-static const float4 c_MinorLineColour = float4(0.25f, 0.25f, 0.25f, 0.45f);
-static const float4 c_MajorLineColour = float4(0.4f, 0.4f, 0.4f, 0.7f);
-static const float4 c_XAxisColour = float4(0.8f, 0.1f, 0.1f, 0.9f);
-static const float4 c_ZAxisColour = float4(0.1f, 0.25f, 0.9f, 0.9f);
-// The grid fades out between these distances from the camera, in major cells.
-static const float c_FadeStartMajorCells = 10.0f;
-static const float c_FadeEndMajorCells = 20.0f;
+float4 UnpackColour(uint packed)
+{
+	return float4(packed & 0xFF, (packed >> 8) & 0xFF, (packed >> 16) & 0xFF, packed >> 24) / 255.0f;
+}
 
 float3 Unproject(float2 ndc, float deviceDepth)
 {
@@ -49,7 +52,7 @@ float2 PixelToNdc(float2 pixel)
 	return float2(uv.x * 2.0f - 1.0f, 1.0f - uv.y * 2.0f);
 }
 
-// Where the camera ray through the pixel position hits the y = 0 plane. Returns false when the
+// Where the camera ray through the pixel position hits the grid's plane. Returns false when the
 // ray points away from it.
 bool IntersectGround(float2 pixel, out float3 rayOrigin, out float3 hit)
 {
@@ -59,7 +62,7 @@ bool IntersectGround(float2 pixel, out float3 rayOrigin, out float3 hit)
 	const float3 rayDirection = Unproject(ndc, 0.0f) - rayOrigin;
 	// A ray parallel to the plane never hits it. The safe divisor keeps hit finite regardless.
 	const bool parallel = abs(rayDirection.y) < 1e-6f;
-	const float t = -rayOrigin.y / (parallel ? 1e-6f : rayDirection.y);
+	const float t = (g_PushConstants.planeHeight - rayOrigin.y) / (parallel ? 1e-6f : rayDirection.y);
 	hit = rayOrigin + rayDirection * t;
 	return and(!parallel, t > 0.0f);
 }
@@ -132,17 +135,18 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 	const float2 worldDeriv = float2(length(float2(ddxWorld.x, ddyWorld.x)), length(float2(ddxWorld.y, ddyWorld.y)));
 
 	float4 grid = float4(0.0f, 0.0f, 0.0f, 0.0f);
-	BlendLine(grid, c_MinorLineColour, PristineGrid(hit.xz / cellSize, worldDeriv / cellSize, c_MinorLineWidth));
-	BlendLine(grid, c_MajorLineColour, PristineGrid(hit.xz / majorCellSize, worldDeriv / majorCellSize, c_MajorLineWidth));
+	BlendLine(grid, UnpackColour(g_PushConstants.minorLineColour), PristineGrid(hit.xz / cellSize, worldDeriv / cellSize, g_PushConstants.minorLineWidth));
+	BlendLine(grid, UnpackColour(g_PushConstants.majorLineColour), PristineGrid(hit.xz / majorCellSize, worldDeriv / majorCellSize, g_PushConstants.majorLineWidth));
 	// The X axis runs along z = 0 and the Z axis along x = 0.
-	BlendLine(grid, c_XAxisColour, AxisLine(hit.z / cellSize, worldDeriv.y / cellSize, c_AxisLineWidth));
-	BlendLine(grid, c_ZAxisColour, AxisLine(hit.x / cellSize, worldDeriv.x / cellSize, c_AxisLineWidth));
+	BlendLine(grid, UnpackColour(g_PushConstants.xAxisColour), AxisLine(hit.z / cellSize, worldDeriv.y / cellSize, g_PushConstants.axisLineWidth));
+	BlendLine(grid, UnpackColour(g_PushConstants.zAxisColour), AxisLine(hit.x / cellSize, worldDeriv.x / cellSize, g_PushConstants.axisLineWidth));
 
 	const float horizontalDistance = distance(rayOrigin.xz, hit.xz);
-	const float fade = 1.0f - smoothstep(c_FadeStartMajorCells * majorCellSize, c_FadeEndMajorCells * majorCellSize, horizontalDistance);
+	const float2 fadeRange = float2(f16tof32(g_PushConstants.fadeRange & 0xFFFF), f16tof32(g_PushConstants.fadeRange >> 16)) * majorCellSize;
+	const float fade = 1.0f - smoothstep(fadeRange.x, fadeRange.y, horizontalDistance);
 
-	// Shown only when the grid is on, the pixel sees the ground, and nothing is in front of it.
-	const float shown = and(and(g_PushConstants.gridEnabled != 0, hitsGround), !occluded) ? 1.0f : 0.0f;
+	// Shown only when the pixel sees the plane and nothing is in front of it.
+	const float shown = and(hitsGround, !occluded) ? 1.0f : 0.0f;
 
 	// grid.rgb is already the lines blended over black, weighted by grid.a.
 	const float alpha = grid.a * fade * shown;

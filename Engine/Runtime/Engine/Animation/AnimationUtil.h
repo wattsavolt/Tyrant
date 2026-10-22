@@ -19,6 +19,13 @@ namespace tyr
 		// Bones without keys keep their bind pose.
 		static void SampleClip(const AnimationClip& clip, const Skeleton& skeleton, float time, BoneTransform* outPose);
 
+		// How far the clip's first root bone moves from its first key to its last, in model space.
+		static Vector3 GetRootTravel(const AnimationClip& clip);
+
+		// Holds the root bone over where it starts on the ground, keeping its height, so the clip
+		// plays on the spot and the body stays over whatever moves it.
+		static void RemoveRootTravel(const AnimationClip& clip, const Skeleton& skeleton, BoneTransform* pose);
+
 		// Moves pose a toward b by weight, 0 keeping a and 1 giving b. out may be a or b.
 		static void BlendPoses(const BoneTransform* a, const BoneTransform* b, float weight, uint boneCount, BoneTransform* out);
 

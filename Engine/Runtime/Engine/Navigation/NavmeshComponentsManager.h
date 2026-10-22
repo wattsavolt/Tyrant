@@ -29,7 +29,7 @@ namespace tyr
 #endif
 
 		bool HasNavmesh(const World& world) const;
-		bool FindPath(const World& world, const Vector3& start, const Vector3& end, NavPath& outPath) const;
+		bool FindPath(const World& world, const Vector3& start, const Vector3& end, bool useStairs, NavPath& outPath) const;
 		// A random walkable point reachable from near the centre, about within radius of it.
 		bool FindRandomPoint(const World& world, const Vector3& centre, float radius, Vector3& outPoint) const;
 		// The navmesh's polygon edges within radius of the centre, as pairs of points, for drawing.
@@ -41,6 +41,7 @@ namespace tyr
 		// Reused between builds, so building again doesn't allocate once it's grown to fit.
 		Array<Vector3> m_Triangles;
 		Array<NavmeshBounds> m_Bounds;
+		Array<NavmeshZone> m_Zones;
 #endif
 	};
 }

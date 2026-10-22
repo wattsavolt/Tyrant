@@ -47,6 +47,7 @@ namespace tyr
 		const ImTextureID texID = (ImTextureID)(intptr_t)(texture.h.index + 1);
 		const ImVec2 imageMin = ImGui::GetCursorScreenPos();
 		ImGui::Image(texID, ImVec2((float)width, (float)height));
+		events.image = PanelRect{ imageMin.x, imageMin.y, (float)width, (float)height };
 		const bool imageHovered = ImGui::IsItemHovered();
 		DrawDebugTexts(world, imageMin.x, imageMin.y, width, height);
 		if (state.showStats)
@@ -185,7 +186,7 @@ namespace tyr
 
 	bool EditorViewport::DrawGizmo(World& world, float imageX, float imageY, uint width, uint height, bool canInteract, const EditState& state, Events& events)
 	{
-		if (state.selectedActor == c_InvalidEntity || !world.entities.HasComponent<ComponentTransform>(state.selectedActor))
+		if (state.selectedActor == c_InvalidEntity || !world.entities.HasComponent<TransformComponent>(state.selectedActor))
 		{
 			return false;
 		}
@@ -208,7 +209,7 @@ namespace tyr
 		// Grid snapping applies to moving, the same as placing.
 		const float translationSnap = state.snapToGrid ? state.gridCellSize : 0.0f;
 
-		Transform transform = world.entities.GetComponent<ComponentTransform>(state.selectedActor).world;
+		Transform transform = world.entities.GetComponent<TransformComponent>(state.selectedActor).world;
 		if (m_Gizmo.Manipulate(gizmoView, m_GizmoOperation, m_GizmoWorldSpace, canInteract, translationSnap, transform))
 		{
 			events.transformChanged = true;

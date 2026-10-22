@@ -9,11 +9,11 @@ namespace tyr
 		TYR_REFL_FIELD(&Transform::position, "Position", true, true, true);
 	TYR_REFL_CLASS_END();
 
-	TYR_COMPONENT_START(ComponentTransform, 0);
-		TYR_COMPONENT_FIELD(&ComponentTransform::local, "Local", true, true, true);
+	TYR_COMPONENT_START(TransformComponent, 0);
+		TYR_COMPONENT_FIELD(&TransformComponent::local, "Local", true, true, true);
 		// Worked out from the local transform and parent, so not edited directly.
-		TYR_COMPONENT_FIELD(&ComponentTransform::world, "World", false, false, true);
-		TYR_COMPONENT_FIELD(&ComponentTransform::parentEntity, "Parent Entity", false, false, true);
+		TYR_COMPONENT_FIELD(&TransformComponent::world, "World", false, false, true);
+		TYR_COMPONENT_FIELD(&TransformComponent::parentEntity, "Parent Entity", false, false, true);
 	TYR_COMPONENT_END();
 
 	TYR_COMPONENT_START(MeshComponent, 0);
@@ -68,6 +68,11 @@ namespace tyr
 		TYR_COMPONENT_FIELD(&NavAgentComponent::acceleration, "Acceleration", true, true, true);
 		TYR_COMPONENT_FIELD(&NavAgentComponent::turnSpeed, "Turn Speed", true, true, true);
 		TYR_COMPONENT_FIELD(&NavAgentComponent::arriveDistance, "Arrive Distance", true, true, true);
+		TYR_COMPONENT_FIELD(&NavAgentComponent::doorBashes, "Door Bashes", true, true, true);
+		TYR_COMPONENT_FIELD(&NavAgentComponent::doorBashInterval, "Door Bash Interval", true, true, true);
+		TYR_COMPONENT_FIELD(&NavAgentComponent::doorBashHitDelay, "Door Bash Hit Delay", true, true, true);
+		TYR_COMPONENT_FIELD(&NavAgentComponent::doorBashReach, "Door Bash Reach", true, true, true);
+		TYR_COMPONENT_FIELD(&NavAgentComponent::usesStairs, "Uses Stairs", true, true, true);
 	TYR_COMPONENT_END();
 
 	TYR_COMPONENT_START(BoxComponent, 0);
@@ -88,6 +93,7 @@ namespace tyr
 		TYR_COMPONENT_FIELD(&PointLightComponent::range, "Range", true, true, true);
 		TYR_COMPONENT_FIELD(&PointLightComponent::attenuation, "Attenuation", true, true, true);
 		TYR_COMPONENT_FIELD(&PointLightComponent::castsShadow, "Casts Shadow", true, true, true);
+		TYR_COMPONENT_FIELD(&PointLightComponent::outdoor, "Outdoor", true, true, true);
 	TYR_COMPONENT_END();
 
 	TYR_COMPONENT_START(DecalComponent, 0);
@@ -107,6 +113,7 @@ namespace tyr
 		TYR_COMPONENT_FIELD(&SpotLightComponent::coneFalloff, "Cone Falloff", true, true, true);
 		TYR_COMPONENT_FIELD(&SpotLightComponent::attenuation, "Attenuation", true, true, true);
 		TYR_COMPONENT_FIELD(&SpotLightComponent::castsShadow, "Casts Shadow", true, true, true);
+		TYR_COMPONENT_FIELD(&SpotLightComponent::outdoor, "Outdoor", true, true, true);
 	TYR_COMPONENT_END();
 
 	TYR_COMPONENT_START(DoorComponent, 0);
@@ -115,12 +122,15 @@ namespace tyr
 		TYR_COMPONENT_FIELD(&DoorComponent::opensAway, "Opens Away", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorComponent::slideOffset, "Slide Offset", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorComponent::openTime, "Open Time", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorComponent::burstOpenTime, "Burst Open Time", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorComponent::lock, "Lock", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorComponent::key, "Key", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorComponent::linkedDoor, "Linked Door", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorComponent::openSound, "Open Sound", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorComponent::closeSound, "Close Sound", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorComponent::lockedSound, "Locked Sound", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorComponent::bashSound, "Bash Sound", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorComponent::noiseRadius, "Noise Radius", true, true, true);
 	TYR_COMPONENT_END();
 
 	TYR_COMPONENT_START(DoorPanelComponent, 0);
@@ -162,6 +172,10 @@ namespace tyr
 
 	TYR_COMPONENT_START(PerceptionComponent, 0);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::touchRange, "Touch Range", true, true, true);
+		TYR_COMPONENT_FIELD(&PerceptionComponent::nearby, "Nearby", true, true, true);
+		TYR_COMPONENT_FIELD(&PerceptionComponent::nearbyRange, "Nearby Range", true, true, true);
+		TYR_COMPONENT_FIELD(&PerceptionComponent::nearbyAngle, "Nearby Angle", true, true, true);
+		TYR_COMPONENT_FIELD(&PerceptionComponent::trackRange, "Track Range", true, true, true);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::hearing, "Hearing", true, true, true);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::hearingScale, "Hearing Scale", true, true, true);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::smell, "Smell", true, true, true);
@@ -172,23 +186,14 @@ namespace tyr
 		TYR_COMPONENT_FIELD(&PerceptionComponent::sightAngle, "Sight Angle", true, true, true);
 	TYR_COMPONENT_END();
 
-	TYR_COMPONENT_START(EnemyComponent, 0);
-		TYR_COMPONENT_FIELD(&EnemyComponent::walkSpeed, "Walk Speed", true, true, true);
-		TYR_COMPONENT_FIELD(&EnemyComponent::chaseSpeed, "Chase Speed", true, true, true);
-		TYR_COMPONENT_FIELD(&EnemyComponent::wanderRadius, "Wander Radius", true, true, true);
-		TYR_COMPONENT_FIELD(&EnemyComponent::wanderPause, "Wander Pause", true, true, true);
-		TYR_COMPONENT_FIELD(&EnemyComponent::attackRange, "Attack Range", true, true, true);
-		TYR_COMPONENT_FIELD(&EnemyComponent::attackDamage, "Attack Damage", true, true, true);
-		TYR_COMPONENT_FIELD(&EnemyComponent::attackInterval, "Attack Interval", true, true, true);
-		TYR_COMPONENT_FIELD(&EnemyComponent::investigateTime, "Investigate Time", true, true, true);
-		TYR_COMPONENT_FIELD(&EnemyComponent::searchTime, "Search Time", true, true, true);
-		TYR_COMPONENT_FIELD(&EnemyComponent::memory, "Memory", true, true, true);
-		TYR_COMPONENT_FIELD(&EnemyComponent::dazedByFlashlight, "Dazed By Flashlight", true, true, true);
-		TYR_COMPONENT_FIELD(&EnemyComponent::dazedRecovery, "Dazed Recovery", true, true, true);
-		TYR_COMPONENT_FIELD(&EnemyComponent::alertSound, "Alert Sound", true, true, true);
-		TYR_COMPONENT_FIELD(&EnemyComponent::attackSound, "Attack Sound", true, true, true);
-		TYR_COMPONENT_FIELD(&EnemyComponent::idleSound, "Idle Sound", true, true, true);
-		TYR_COMPONENT_FIELD(&EnemyComponent::idleSoundInterval, "Idle Sound Interval", true, true, true);
+	TYR_COMPONENT_START(LimbCollisionComponent, 0);
+		TYR_COMPONENT_FIELD(&LimbCollisionComponent::limbRadius, "Limb Radius", true, true, true);
+		TYR_COMPONENT_FIELD(&LimbCollisionComponent::minBoneLength, "Min Bone Length", true, true, true);
+		TYR_COMPONENT_FIELD(&LimbCollisionComponent::maxPushSpeed, "Max Push Speed", true, true, true);
+		TYR_COMPONENT_FIELD(&LimbCollisionComponent::leftArm, "Left Arm", true, true, true);
+		TYR_COMPONENT_FIELD(&LimbCollisionComponent::rightArm, "Right Arm", true, true, true);
+		TYR_COMPONENT_FIELD(&LimbCollisionComponent::armTurnSpeed, "Arm Turn Speed", true, true, true);
+		TYR_COMPONENT_FIELD(&LimbCollisionComponent::maxArmTurn, "Max Arm Turn", true, true, true);
 	TYR_COMPONENT_END();
 
 	TYR_COMPONENT_START(HealthComponent, 0);
@@ -197,17 +202,29 @@ namespace tyr
 		TYR_COMPONENT_FIELD(&HealthComponent::deathSound, "Death Sound", true, true, true);
 	TYR_COMPONENT_END();
 
+	TYR_COMPONENT_START(IndoorVolumeComponent, 0);
+		TYR_COMPONENT_FIELD(&IndoorVolumeComponent::halfExtents, "Half Extents", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(TriggerVolumeComponent, 0);
+		TYR_COMPONENT_FIELD(&TriggerVolumeComponent::halfExtents, "Half Extents", true, true, true);
+		TYR_COMPONENT_FIELD(&TriggerVolumeComponent::once, "Once", true, true, true);
+	TYR_COMPONENT_END();
+
 	TYR_COMPONENT_START(NavmeshBoundsComponent, 0);
 		TYR_COMPONENT_FIELD(&NavmeshBoundsComponent::halfExtents, "Half Extents", true, true, true);
 	TYR_COMPONENT_END();
 
-	TYR_COMPONENT_START(GeneratorComponent, 0);
-		TYR_COMPONENT_FIELD(&GeneratorComponent::running, "Running", true, true, true);
-		TYR_COMPONENT_FIELD(&GeneratorComponent::startSound, "Start Sound", true, true, true);
+	TYR_COMPONENT_START(NavmeshAreaComponent, 0);
+		TYR_COMPONENT_FIELD(&NavmeshAreaComponent::halfExtents, "Half Extents", true, true, true);
+		TYR_COMPONENT_FIELD(&NavmeshAreaComponent::area, "Area", true, true, true);
 	TYR_COMPONENT_END();
 
 	TYR_COMPONENT_START(PickupComponent, 0);
 		TYR_COMPONENT_FIELD(&PickupComponent::item, "Item", true, true, true);
+		TYR_COMPONENT_FIELD(&PickupComponent::count, "Count", true, true, true);
+		TYR_COMPONENT_FIELD(&PickupComponent::stackLimit, "Stack Limit", true, true, true);
+		TYR_COMPONENT_FIELD(&PickupComponent::document, "Document", true, true, true);
 		TYR_COMPONENT_FIELD(&PickupComponent::pickupSound, "Pickup Sound", true, true, true);
 	TYR_COMPONENT_END();
 
@@ -217,5 +234,16 @@ namespace tyr
 
 	TYR_COMPONENT_START(InventoryComponent, 0);
 		TYR_COMPONENT_FIELD(&InventoryComponent::items, "Items", true, true, true);
+		TYR_COMPONENT_FIELD(&InventoryComponent::slots, "Slots", true, true, true);
+		TYR_COMPONENT_FIELD(&InventoryComponent::discardSpentKeys, "Discard Spent Keys", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(DocumentsComponent, 0);
+		TYR_COMPONENT_FIELD(&DocumentsComponent::documents, "Documents", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(ActivatorComponent, 0);
+		TYR_COMPONENT_FIELD(&ActivatorComponent::kind, "Kind", true, true, true);
+		TYR_COMPONENT_FIELD(&ActivatorComponent::action, "Action", true, true, true);
 	TYR_COMPONENT_END();
 }

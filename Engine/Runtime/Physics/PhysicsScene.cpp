@@ -11,6 +11,7 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
@@ -85,6 +86,68 @@ namespace tyr
 			const JPH::Vec3 offset(0.0f, halfCylinder + safeRadius, 0.0f);
 			return JPH::RotatedTranslatedShapeSettings(offset, JPH::Quat::sIdentity(), new JPH::CapsuleShape(halfCylinder, safeRadius)).Create().Get();
 		}
+	}
+
+	namespace
+	{
+		// Gathers the furthest push out of a contact each way along x and z, so a wall made of many
+		// triangles pushes once rather than once per triangle. Nothing is allocated.
+		class CapsulePushCollector final : public JPH::CollideShapeCollector
+		{
+		public:
+			void AddHit(const JPH::CollideShapeResult& result) override
+			{
+				const float axisLength = result.mPenetrationAxis.Length();
+				if (result.mPenetrationDepth <= 0.0f || axisLength < 1.0e-6f)
+				{
+					return;
+				}
+				// The axis moves the body out of the capsule, so the capsule goes the other way.
+				const JPH::Vec3 push = result.mPenetrationAxis * (-result.mPenetrationDepth / axisLength);
+				if (Math::Abs(push.GetY()) > c_MaxVerticalShare * result.mPenetrationDepth)
+				{
+					return;
+				}
+				positive = JPH::Vec3::sMax(positive, push);
+				negative = JPH::Vec3::sMin(negative, push);
+			}
+
+			static constexpr float c_MaxVerticalShare = 0.7f;
+			JPH::Vec3 positive = JPH::Vec3::sZero();
+			JPH::Vec3 negative = JPH::Vec3::sZero();
+		};
+
+		// Things that never move, and things that do when asked.
+		class CapsuleLayerFilter final : public JPH::ObjectLayerFilter
+		{
+		public:
+			explicit CapsuleLayerFilter(bool includeMoving) : m_IncludeMoving(includeMoving) {}
+
+			bool ShouldCollide(JPH::ObjectLayer layer) const override
+			{
+				return m_IncludeMoving || layer == ObjectLayers::c_NonMoving;
+			}
+
+		private:
+			bool m_IncludeMoving;
+		};
+
+		// Leaves out up to two bodies, such as both halves of a door being bashed open.
+		class IgnoreBodiesFilter final : public JPH::BodyFilter
+		{
+		public:
+			IgnoreBodiesFilter(uint first, uint second) : m_First(first), m_Second(second) {}
+
+			bool ShouldCollide(const JPH::BodyID& body) const override
+			{
+				const uint id = body.GetIndexAndSequenceNumber();
+				return id != m_First && id != m_Second;
+			}
+
+		private:
+			uint m_First;
+			uint m_Second;
+		};
 	}
 
 	// A character, with a shape for each stance.
@@ -227,6 +290,31 @@ namespace tyr
 		return true;
 	}
 
+	Vector3 PhysicsScene::FindCapsulePush(const Vector3& a, const Vector3& b, float radius, bool includeMoving, uint ignoreBody, uint ignoreBody2) const
+	{
+		const JPH::Vec3 start = ToJolt(a);
+		const JPH::Vec3 offset = ToJolt(b) - start;
+		const float length = offset.Length();
+		if (length < 1.0e-4f || radius <= 0.0f)
+		{
+			return Vector3::c_Zero;
+		}
+		// Made on the stack for this one query.
+		JPH::CapsuleShape capsule(length * 0.5f, radius);
+		capsule.SetEmbedded();
+		const JPH::Quat rotation = JPH::Quat::sFromTo(JPH::Vec3::sAxisY(), offset / length);
+		const JPH::RMat44 transform = JPH::RMat44::sRotationTranslation(rotation, start + offset * 0.5f);
+
+		JPH::CollideShapeSettings settings;
+		CapsulePushCollector collector;
+		const CapsuleLayerFilter layers(includeMoving);
+		const IgnoreBodiesFilter bodies(ignoreBody, ignoreBody2);
+		m_Data->system.GetNarrowPhaseQuery().CollideShape(&capsule, JPH::Vec3::sReplicate(1.0f), transform, settings, JPH::RVec3::sZero(), collector,
+			JPH::BroadPhaseLayerFilter(), layers, bodies);
+		const JPH::Vec3 push = collector.positive + collector.negative;
+		return Vector3(push.GetX(), 0.0f, push.GetZ());
+	}
+
 	uint PhysicsScene::AddCharacter(const CharacterDesc& desc)
 	{
 		uint slot = 0;
@@ -265,6 +353,13 @@ namespace tyr
 			m_Data->characterCollision.Remove(m_Data->characters[character].character);
 			m_Data->characters[character] = PhysicsCharacter();
 		}
+	}
+
+	void PhysicsScene::SetCharacterPosition(uint character, const Vector3& position)
+	{
+		JPH::CharacterVirtual& virtualCharacter = *m_Data->characters[character].character;
+		virtualCharacter.SetPosition(ToJolt(position));
+		virtualCharacter.SetLinearVelocity(JPH::Vec3::sZero());
 	}
 
 	CharacterState PhysicsScene::MoveCharacter(uint character, const CharacterMove& move, float deltaTime)

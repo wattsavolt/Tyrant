@@ -24,7 +24,12 @@ namespace tyr
 		ModuleManager();
 		~ModuleManager();
 
+		// Modules are initialized in the order they're registered, and shut down the other way round.
 		void RegisterModule(Id64 id, IModule* module);
+
+		// Adds a registered module to the frame's update order. BeginFrame, Update and EndFrame each
+		// run over every module in the order they're added, and every module is added once.
+		void AddModuleForUpdate(Id64 id);
 
 		const IModule* GetModule(Id64 id) const;
 
@@ -44,6 +49,7 @@ namespace tyr
 
 	private:
 		LocalArray<IModule*, c_MaxModules> m_Modules;
+		LocalArray<IModule*, c_MaxModules> m_UpdateOrder;
 		HashMap<Id64, uint> m_Map;
 		bool m_ModulesInitialized;
 	};
@@ -51,6 +57,11 @@ namespace tyr
 #define TYR_REGISTER_MODULE(type)	{ \
 										const Id64 typeID = GetTypeID<type>(); \
 										ModuleManager::Instance().RegisterModule(typeID, new type()); \
+									}
+
+#define TYR_ADD_MODULE_FOR_UPDATE(type)	{ \
+										const Id64 typeID = GetTypeID<type>(); \
+										ModuleManager::Instance().AddModuleForUpdate(typeID); \
 									}
 
 #define TYR_GET_MODULE(type, var)	{ \

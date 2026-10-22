@@ -22,6 +22,8 @@ namespace tyr
 		LocalArray<MaterialHandle, MeshConstants::c_MaxSubmeshes> materials;
 		// Scales its materials' emissive, such as 0 for a lamp that's switched off.
 		float emissiveScale = 1.0f;
+		// How strongly it shines to show it can be picked up.
+		float highlight = 0.0f;
 	};
 
 	struct SkeletalMeshInstanceInfo

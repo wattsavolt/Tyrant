@@ -28,7 +28,6 @@
 #include "Debug/DebugDraw.h"
 #include "Gameplay/Doors.h"
 #include "Gameplay/Noise.h"
-#include "AI/EnemyBrains.h"
 #include "AssetSystem/MeshAsset.h"
 #include "Utility/PathUtil.h"
 #include "Math/Math.h"
@@ -176,14 +175,14 @@ namespace tyr
 			hitEntity = c_InvalidEntity;
 			world.entities.ForEach<BoxComponent>([&](Entity entity, BoxComponent& box)
 			{
-				if (!world.entities.HasComponent<ComponentTransform>(entity))
+				if (!world.entities.HasComponent<TransformComponent>(entity))
 				{
 					return;
 				}
 
 				Vector3 boxMin;
 				Vector3 boxMax;
-				CalculateWorldBounds(box, world.entities.GetComponent<ComponentTransform>(entity).world, boxMin, boxMax);
+				CalculateWorldBounds(box, world.entities.GetComponent<TransformComponent>(entity).world, boxMin, boxMax);
 				RayHit hit;
 				if (IntersectBox(ray.origin, ray.direction, boxMin, boxMax, hit) && hit.distance < nearestHit.distance)
 				{
@@ -582,6 +581,7 @@ namespace tyr
 		{
 			DrawAgentPaths(m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld()));
 		}
+		m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld()).debugAI = m_EditorUI->GetViewSettings().showAIDebug;
 		if (m_EditorUI->GetViewSettings().showAIDebug)
 		{
 			DrawAIDebug(m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld()));
@@ -599,14 +599,30 @@ namespace tyr
 		World& activeWorld = m_WorldManager->GetWorld(m_WorldManager->GetActiveWorld());
 		EditorViewport::Events events;
 		m_EditorViewport->Draw(viewportRect, activeWorld, *m_InputManager, deltaTime, editState, events);
+		// The game's UI goes over its image.
+		if (m_PlayState == PlayState::Editing)
+		{
+			m_GUIModule->ClearGameViewRect();
+		}
+		else
+		{
+			m_GUIModule->SetGameViewRect(events.image.x, events.image.y, events.image.width, events.image.height);
+		}
 
 		if (m_PlayState == PlayState::Playing)
 		{
-			if (events.playClicked)
+			// A controller takes over the game with any of its main buttons, and gives the editor back with View.
+			const GamepadButton padTakeOver[] = { GamepadButton::A, GamepadButton::B, GamepadButton::X, GamepadButton::Y, GamepadButton::Start };
+			bool padPressed = false;
+			for (GamepadButton button : padTakeOver)
+			{
+				padPressed = padPressed || m_InputManager->IsGamepadButtonPressed(button);
+			}
+			if (events.playClicked || (!m_GameInputCaptured && padPressed))
 			{
 				SetGameInputCaptured(true);
 			}
-			else if (m_GameInputCaptured && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+			else if (m_GameInputCaptured && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || m_InputManager->IsGamepadButtonPressed(GamepadButton::Back)))
 			{
 				SetGameInputCaptured(false);
 			}
@@ -711,7 +727,7 @@ namespace tyr
 	{
 		world.entities.ForEach<ColliderComponent>([&world, this](Entity entity, ColliderComponent& collider)
 		{
-			if (!world.entities.HasComponent<ComponentTransform>(entity))
+			if (!world.entities.HasComponent<TransformComponent>(entity))
 			{
 				return;
 			}
@@ -724,7 +740,7 @@ namespace tyr
 			}
 
 			// Sized the same way the physics bodies are.
-			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+			const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 			const Vector3 scale(Math::Abs(transform.scale.x), Math::Abs(transform.scale.y), Math::Abs(transform.scale.z));
 			const Vector3 center = transform.position + transform.rotation.Rotate(collider.center * transform.scale);
 			switch (static_cast<ColliderShape>(collider.shape))
@@ -761,12 +777,12 @@ namespace tyr
 
 		world.entities.ForEach<CharacterComponent>([&world](Entity entity, CharacterComponent& character)
 		{
-			if (!world.entities.HasComponent<ComponentTransform>(entity))
+			if (!world.entities.HasComponent<TransformComponent>(entity))
 			{
 				return;
 			}
 			const float height = character.crouched ? character.crouchHeight : character.height;
-			const Vector3 centre = world.entities.GetComponent<ComponentTransform>(entity).world.position + Vector3(0.0f, height * 0.5f, 0.0f);
+			const Vector3 centre = world.entities.GetComponent<TransformComponent>(entity).world.position + Vector3(0.0f, height * 0.5f, 0.0f);
 			DebugDraw::Capsule(centre, character.radius, std::max(height * 0.5f - character.radius, 0.0f), Quaternion::c_Identity, DebugColour::c_Orange);
 		});
 	}
@@ -779,11 +795,11 @@ namespace tyr
 		// Navmesh bounds show with the navmesh, and while selected.
 		world.entities.ForEach<NavmeshBoundsComponent>([&world, &viewSettings, this](Entity entity, NavmeshBoundsComponent& bounds)
 		{
-			if ((!viewSettings.showNavmesh && entity != m_SelectedActor) || !world.entities.HasComponent<ComponentTransform>(entity))
+			if ((!viewSettings.showNavmesh && entity != m_SelectedActor) || !world.entities.HasComponent<TransformComponent>(entity))
 			{
 				return;
 			}
-			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+			const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 			DebugDraw::Box(transform.position, bounds.halfExtents * transform.scale, transform.rotation,
 				entity == m_SelectedActor ? DebugColour::c_Yellow : DebugColour::c_Green);
 		});
@@ -792,11 +808,11 @@ namespace tyr
 		{
 			world.entities.ForEach<BoxComponent>([&world, this](Entity entity, BoxComponent& box)
 			{
-				if (!world.entities.HasComponent<ComponentTransform>(entity))
+				if (!world.entities.HasComponent<TransformComponent>(entity))
 				{
 					return;
 				}
-				const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+				const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 				const Vector3 center = transform.position + transform.rotation.Rotate(box.center * transform.scale);
 				const uint colour = entity == m_SelectedActor ? DebugColour::c_Yellow : DebugColour::c_Cyan;
 				DebugDraw::Box(center, box.halfExtents * transform.scale, transform.rotation, colour);
@@ -807,20 +823,20 @@ namespace tyr
 		{
 			world.entities.ForEach<PointLightComponent>([&world](Entity entity, PointLightComponent& light)
 			{
-				if (world.entities.HasComponent<ComponentTransform>(entity))
+				if (world.entities.HasComponent<TransformComponent>(entity))
 				{
-					DebugDraw::Sphere(world.entities.GetComponent<ComponentTransform>(entity).world.position, light.range, DebugColour::c_Yellow);
+					DebugDraw::Sphere(world.entities.GetComponent<TransformComponent>(entity).world.position, light.range, DebugColour::c_Yellow);
 				}
 			});
 
 			world.entities.ForEach<SpotLightComponent>([&world](Entity entity, SpotLightComponent& light)
 			{
-				if (!world.entities.HasComponent<ComponentTransform>(entity))
+				if (!world.entities.HasComponent<TransformComponent>(entity))
 				{
 					return;
 				}
 				// The edge is where the falloff, cos(angle) to the power of coneFalloff, drops to a tenth.
-				const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+				const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 				const float halfAngle = light.coneFalloff > 0.0f ? Math::Acos(Math::Pow(0.1f, 1.0f / light.coneFalloff)) : Math::c_HalfPi;
 				DebugDraw::Cone(transform.position, transform.rotation.Rotate(Vector3::c_Forward), light.range, halfAngle, DebugColour::c_Yellow);
 			});
@@ -828,9 +844,9 @@ namespace tyr
 			// A directional light has no position, so its direction is shown from its actor.
 			world.entities.ForEach<DirLightComponent>([&world](Entity entity, DirLightComponent& light)
 			{
-				if (world.entities.HasComponent<ComponentTransform>(entity))
+				if (world.entities.HasComponent<TransformComponent>(entity))
 				{
-					const Vector3 start = world.entities.GetComponent<ComponentTransform>(entity).world.position;
+					const Vector3 start = world.entities.GetComponent<TransformComponent>(entity).world.position;
 					DebugDraw::Arrow(start, start + Vector3::SafeNormalize(light.direction) * c_DirLightArrowLength, DebugColour::c_Orange);
 				}
 			});
@@ -839,11 +855,11 @@ namespace tyr
 		// A decal's box is all there is to see of it before it has a material.
 		world.entities.ForEach<DecalComponent>([&world, this](Entity entity, DecalComponent& /*decal*/)
 		{
-			if (!world.entities.HasComponent<ComponentTransform>(entity))
+			if (!world.entities.HasComponent<TransformComponent>(entity))
 			{
 				return;
 			}
-			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+			const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 			const uint colour = entity == m_SelectedActor ? DebugColour::c_Yellow : DebugColour::c_Green;
 			DebugDraw::Box(transform.position, transform.scale * 0.5f, transform.rotation, colour);
 			// Points the way it projects.
@@ -852,9 +868,9 @@ namespace tyr
 		});
 
 		// A selected door shows how it opens, and a selected panel points at its door.
-		if (m_SelectedActor != c_InvalidEntity && world.entities.HasComponent<ComponentTransform>(m_SelectedActor))
+		if (m_SelectedActor != c_InvalidEntity && world.entities.HasComponent<TransformComponent>(m_SelectedActor))
 		{
-			const Transform& transform = world.entities.GetComponent<ComponentTransform>(m_SelectedActor).world;
+			const Transform& transform = world.entities.GetComponent<TransformComponent>(m_SelectedActor).world;
 			if (world.entities.HasComponent<DoorComponent>(m_SelectedActor))
 			{
 				DrawDoorMotion(world, m_SelectedActor, transform);
@@ -864,7 +880,7 @@ namespace tyr
 				const Entity door = Doors::Find(world, world.entities.GetComponent<DoorPanelComponent>(m_SelectedActor).door);
 				if (door != c_InvalidEntity)
 				{
-					DebugDraw::Arrow(transform.position, world.entities.GetComponent<ComponentTransform>(door).world.position, DebugColour::c_Cyan);
+					DebugDraw::Arrow(transform.position, world.entities.GetComponent<TransformComponent>(door).world.position, DebugColour::c_Cyan);
 				}
 			}
 			if (world.entities.HasComponent<LightSwitchComponent>(m_SelectedActor))
@@ -875,7 +891,7 @@ namespace tyr
 					const Entity root = actor.RootEntity();
 					if (world.entities.HasComponent<LightFixtureComponent>(root) && world.entities.GetComponent<LightFixtureComponent>(root).circuit == circuit)
 					{
-						DebugDraw::Arrow(transform.position, world.entities.GetComponent<ComponentTransform>(root).world.position, DebugColour::c_Yellow);
+						DebugDraw::Arrow(transform.position, world.entities.GetComponent<TransformComponent>(root).world.position, DebugColour::c_Yellow);
 					}
 				}
 			}
@@ -885,11 +901,11 @@ namespace tyr
 		for (const ActorInstance& actor : world.actorInstances)
 		{
 			const Entity root = actor.RootEntity();
-			if (actor.typeID != c_PlayerStartType || !world.entities.HasComponent<ComponentTransform>(root))
+			if (actor.typeID != c_PlayerStartType || !world.entities.HasComponent<TransformComponent>(root))
 			{
 				continue;
 			}
-			const Transform& transform = world.entities.GetComponent<ComponentTransform>(root).world;
+			const Transform& transform = world.entities.GetComponent<TransformComponent>(root).world;
 			const uint colour = root == m_SelectedActor ? DebugColour::c_Yellow : DebugColour::c_Cyan;
 			const Vector3 centre = transform.position + Vector3(0.0f, 0.9f, 0.0f);
 			DebugDraw::Capsule(centre, 0.3f, 0.6f, Quaternion::c_Identity, colour);
@@ -901,9 +917,9 @@ namespace tyr
 			for (const ActorInstance& actor : world.actorInstances)
 			{
 				const Entity root = actor.RootEntity();
-				if (world.entities.HasComponent<ComponentTransform>(root))
+				if (world.entities.HasComponent<TransformComponent>(root))
 				{
-					DebugDraw::Text(world.entities.GetComponent<ComponentTransform>(root).world.position, actor.name.CStr(), DebugColour::c_White);
+					DebugDraw::Text(world.entities.GetComponent<TransformComponent>(root).world.position, actor.name.CStr(), DebugColour::c_White);
 				}
 			}
 		}
@@ -1074,9 +1090,9 @@ namespace tyr
 			return;
 		}
 
-		if (world.entities.HasComponent<ComponentTransform>(rootEntity))
+		if (world.entities.HasComponent<TransformComponent>(rootEntity))
 		{
-			Transform transform = world.entities.GetComponent<ComponentTransform>(rootEntity).local;
+			Transform transform = world.entities.GetComponent<TransformComponent>(rootEntity).local;
 			transform.position = GetBackgroundDropPosition(GetCameraRay());
 			m_WorldManager->SetActorTransform(m_LevelEditorWorld, rootEntity, transform);
 		}
@@ -1127,11 +1143,11 @@ namespace tyr
 		const Vector3 lift(0.0f, 0.1f, 0.0f);
 		world.entities.ForEach<NavAgentComponent>([&world, &lift](Entity entity, NavAgentComponent& agent)
 		{
-			if (!agent.hasTarget || !world.entities.HasComponent<ComponentTransform>(entity))
+			if (!agent.hasTarget || !world.entities.HasComponent<TransformComponent>(entity))
 			{
 				return;
 			}
-			Vector3 previous = world.entities.GetComponent<ComponentTransform>(entity).world.position + lift;
+			Vector3 previous = world.entities.GetComponent<TransformComponent>(entity).world.position + lift;
 			for (uint i = agent.nextCorner; i < agent.path.points.Size(); ++i)
 			{
 				const Vector3 corner = agent.path.points[i] + lift;
@@ -1144,26 +1160,18 @@ namespace tyr
 
 	void Editor::DrawAIDebug(World& world)
 	{
-		static const char* c_SenseNames[] = { "", "sight", "hearing", "smell", "touch" };
-		world.entities.ForEach<EnemyComponent>([&world](Entity entity, EnemyComponent& enemy)
+		static const char* c_SenseNames[] = { "", "sight", "hearing", "smell", "touch", "nearby", "tracked" };
+		// What each one knows of its target. The game labels what they're doing above it.
+		world.entities.ForEach<PerceptionComponent>([&world](Entity entity, PerceptionComponent& perception)
 		{
-			if (!world.entities.HasComponent<ComponentTransform>(entity) || !world.entities.HasComponent<PerceptionComponent>(entity))
+			if (!world.entities.HasComponent<TransformComponent>(entity) || !perception.targetKnown)
 			{
 				return;
 			}
-			const PerceptionComponent& perception = world.entities.GetComponent<PerceptionComponent>(entity);
-			const Vector3 head = world.entities.GetComponent<ComponentTransform>(entity).world.position + Vector3(0.0f, 2.0f, 0.0f);
+			const Vector3 head = world.entities.GetComponent<TransformComponent>(entity).world.position + Vector3(0.0f, 2.0f, 0.0f);
 			char label[DebugText::c_MaxLength + 1];
-			if (perception.targetKnown)
-			{
-				snprintf(label, sizeof(label), "%s (%s, %.1fs)", EnemyBrains::GetStateName(enemy.state),
-					c_SenseNames[std::min<uint>(perception.targetSense, 4)], perception.targetAge);
-				DebugDraw::Line(head, perception.targetPosition + Vector3(0.0f, 0.1f, 0.0f), DebugColour::c_Red);
-			}
-			else
-			{
-				snprintf(label, sizeof(label), "%s", EnemyBrains::GetStateName(enemy.state));
-			}
+			snprintf(label, sizeof(label), "%s, %.1fs", c_SenseNames[std::min<uint>(perception.targetSense, 6)], perception.targetAge);
+			DebugDraw::Line(head, perception.targetPosition + Vector3(0.0f, 0.1f, 0.0f), DebugColour::c_Red);
 			DebugDraw::Text(head, label, DebugColour::c_White);
 		});
 
@@ -1217,20 +1225,20 @@ namespace tyr
 				break;
 			}
 		}
-		if (!selected || !world.camera || !world.entities.HasComponent<ComponentTransform>(m_SelectedActor))
+		if (!selected || !world.camera || !world.entities.HasComponent<TransformComponent>(m_SelectedActor))
 		{
 			return;
 		}
 
 		// The box around every bounded entity's corners, or a small one at the actor's position.
-		const Vector3 position = world.entities.GetComponent<ComponentTransform>(m_SelectedActor).world.position;
+		const Vector3 position = world.entities.GetComponent<TransformComponent>(m_SelectedActor).world.position;
 		Vector3 boundsMin = position - Vector3(0.5f, 0.5f, 0.5f);
 		Vector3 boundsMax = position + Vector3(0.5f, 0.5f, 0.5f);
 		bool hasBounds = false;
 		for (Entity entity : selected->entities)
 		{
 			const bool hasBox = world.entities.HasComponent<BoxComponent>(entity);
-			if ((!hasBox && !world.entities.HasComponent<NavmeshBoundsComponent>(entity)) || !world.entities.HasComponent<ComponentTransform>(entity))
+			if ((!hasBox && !world.entities.HasComponent<NavmeshBoundsComponent>(entity)) || !world.entities.HasComponent<TransformComponent>(entity))
 			{
 				continue;
 			}
@@ -1244,7 +1252,7 @@ namespace tyr
 				box.center = Vector3::c_Zero;
 				box.halfExtents = world.entities.GetComponent<NavmeshBoundsComponent>(entity).halfExtents;
 			}
-			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+			const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 			for (uint corner = 0; corner < 8; ++corner)
 			{
 				const Vector3 offset((corner & 1) ? box.halfExtents.x : -box.halfExtents.x, (corner & 2) ? box.halfExtents.y : -box.halfExtents.y,
@@ -1365,7 +1373,7 @@ namespace tyr
 		box.center = (header.aabbMin + header.aabbMax) * 0.5f;
 		box.halfExtents = (header.aabbMax - header.aabbMin) * 0.5f;
 
-		Transform transform = world.entities.GetComponent<ComponentTransform>(rootEntity).local;
+		Transform transform = world.entities.GetComponent<TransformComponent>(rootEntity).local;
 		transform.position = position;
 		m_WorldManager->SetActorTransform(m_LevelEditorWorld, rootEntity, transform);
 		return rootEntity;

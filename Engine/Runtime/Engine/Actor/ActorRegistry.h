@@ -21,7 +21,7 @@ namespace tyr
 		const HashMap<Id64, ActorTypeDesc>& GetAll() const { return m_ActorTypes; }
 
 		// Builds one instance of actorTypeId's entities into entities, wiring up
-		// ComponentTransform::parentEntity per the definition's local-name parent links.
+		// TransformComponent::parentEntity per the definition's local-name parent links.
 		LocalArray<Entity, c_MaxActorTypeEntities> InstantiateActor(const Id64& actorTypeId, EntitySystem& entities) const;
 
 	private:

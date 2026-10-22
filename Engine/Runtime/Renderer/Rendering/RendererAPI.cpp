@@ -569,6 +569,7 @@ namespace tyr
 		const BoundingSphere& sphere = instance.skinnedSphere;
 		shaderMeshInstance.skinnedSphere = Vector4(sphere.m_Centre.x, sphere.m_Centre.y, sphere.m_Centre.z, sphere.m_Radius);
 		shaderMeshInstance.emissiveScale = 1.0f;
+		shaderMeshInstance.highlight = 0.0f;
 		WriteMeshInstance(shaderMeshInstance, instance.meshInstance.h.index);
 	}
 
@@ -585,6 +586,7 @@ namespace tyr
 		shaderMeshInstance.prevSkinnedVertexOffset = TYR_INVALID_INDEX;
 		shaderMeshInstance.skinnedSphere = Vector4(0.0f, 0.0f, 0.0f, 0.0f);
 		shaderMeshInstance.emissiveScale = info.emissiveScale;
+		shaderMeshInstance.highlight = info.highlight;
 		WriteMeshInstance(shaderMeshInstance, index);
 	}
 

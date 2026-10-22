@@ -1,5 +1,6 @@
 #include "Sounds.h"
 #include "World/World.h"
+#include "Gameplay/Noise.h"
 
 namespace tyr
 {
@@ -16,6 +17,15 @@ namespace tyr
 			request.position = position;
 			request.volume = volume;
 			world.sounds.Add(request);
+		}
+
+		void PlayHeard(World& world, const SoundName& sound, const Vector3& position, float noiseRadius, Entity source)
+		{
+			Play(world, sound, position);
+			if (world.simulate)
+			{
+				Noise::Emit(world, position, noiseRadius, source);
+			}
 		}
 	}
 }

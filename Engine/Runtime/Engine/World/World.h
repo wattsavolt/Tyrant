@@ -75,8 +75,10 @@ namespace tyr
 		bool simulate = true;
 		// Holds physics and animation still, such as while the editor has the game paused.
 		bool paused = false;
-		// Whether its lights and door panels have power, worked out each update.
+		// Whether its lights and door panels have power, which the game decides.
 		bool powered = true;
+		// Set by the editor while it shows AI debugging, for the game to label its own AI too.
+		bool debugAI = false;
 		EntitySystem entities;
 		// The entities version the renderer-side mesh instances and lights were last synced at.
 		uint syncedEntitiesVersion = 0;
@@ -101,11 +103,18 @@ namespace tyr
 		bool navmeshChanged = false;
 		// Recent noises, for anything listening, and scent left behind, for anything smelling.
 		LocalArray<NoiseEvent, c_MaxNoiseEvents> noises;
+		uint noiseCount = 0;
 		LocalArray<ScentMarker, c_MaxScentMarkers> scents;
 		// Sounds asked for this frame, played and cleared at the end of it.
 		LocalArray<SoundRequest, c_MaxSoundRequests> sounds;
 		// Set by gameplay, such as fading out or flashing red when the player is hurt.
 		ScreenEffects screenEffects;
+		// Whether the camera is in an IndoorVolumeComponent, which switches outdoor lights off.
+		bool cameraIndoors = false;
+		// Set by tools to turn the player's view, in radians, which the controller then takes up.
+		bool viewRequested = false;
+		float requestedYaw = 0.0f;
+		float requestedPitch = 0.0f;
 
 		// Puts a recycled pool slot back to a blank state before it's filled in again for a
 		// new world. entities.Reset() drops every entity/archetype from whatever level was
@@ -134,9 +143,12 @@ namespace tyr
 			cameraOffset = Vector3::c_Zero;
 			actorInstances.Clear();
 			noises.Clear();
+			noiseCount = 0;
 			scents.Clear();
 			sounds.Clear();
 			screenEffects = {};
+			viewRequested = false;
+			cameraIndoors = false;
 			navmeshData.Clear();
 			navmesh = {};
 			navmeshChanged = false;

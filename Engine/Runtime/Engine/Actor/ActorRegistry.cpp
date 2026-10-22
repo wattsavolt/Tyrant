@@ -82,10 +82,10 @@ namespace tyr
 			// AddEntity(..., parentLocalName) call somewhere in this actor type.
 			TYR_ASSERT(parentEntity != c_InvalidEntity);
 
-			// Requires this entity to already have a ComponentTransform from its own
-			// AddComponent calls - an entity that declares a parent but no ComponentTransform
+			// Requires this entity to already have a TransformComponent from its own
+			// AddComponent calls - an entity that declares a parent but no TransformComponent
 			// is a malformed actor definition.
-			ComponentTransform& transform = entities.GetComponent<ComponentTransform>(nameToEntity[i].entity);
+			TransformComponent& transform = entities.GetComponent<TransformComponent>(nameToEntity[i].entity);
 			transform.parentEntity = parentEntity;
 		}
 

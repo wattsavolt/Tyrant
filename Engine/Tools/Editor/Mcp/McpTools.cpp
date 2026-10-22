@@ -1,6 +1,5 @@
 #include "McpTools.h"
 #include "AI/NavAgents.h"
-#include "AI/EnemyBrains.h"
 #include "Gameplay/LightLevel.h"
 #include "Gameplay/Noise.h"
 #include "McpServer.h"
@@ -17,6 +16,7 @@
 #include "ECS/ComponentRegistry.h"
 #include "Importing/ModelImporter.h"
 #include "Importing/MaterialImporter.h"
+#include "Importing/FontImporter.h"
 #include "Logging/Logger.h"
 #include "Memory/StackAllocation.h"
 #include "Reflection/TypeRegistry.h"
@@ -27,8 +27,11 @@
 #include "World/WorldManager.h"
 #include "ECS/Components.h"
 #include "Gameplay/Interaction.h"
+#include "Gameplay/Inventory.h"
 #include "Math/Math.h"
 #include "Platform/Platform.h"
+#include "App/AppBase.h"
+#include "App/McpGameTool.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
@@ -127,6 +130,65 @@ namespace tyr
 		}
 	}
 
+	namespace
+	{
+		// A game tool's arguments, read from the request.
+		class GameToolArguments final : public McpArguments
+		{
+		public:
+			explicit GameToolArguments(const dom::object& args)
+				: m_Args(args)
+			{
+			}
+
+			bool GetString(const char* key, char* out, size_t outSize) const override
+			{
+				std::string_view text;
+				if (m_Args[key].get_string().get(text) || text.size() >= outSize)
+				{
+					return false;
+				}
+				snprintf(out, outSize, "%.*s", static_cast<int>(text.size()), text.data());
+				return true;
+			}
+
+			bool GetNumber(const char* key, double& out) const override
+			{
+				return !m_Args[key].get_double().get(out);
+			}
+
+			bool GetBool(const char* key, bool& out) const override
+			{
+				return !m_Args[key].get_bool().get(out);
+			}
+
+		private:
+			const dom::object& m_Args;
+		};
+
+		// A game tool's result, written into the reply.
+		class GameToolResult final : public McpResult
+		{
+		public:
+			explicit GameToolResult(JsonWriter& writer)
+				: m_Writer(writer)
+			{
+			}
+
+			void BeginObject() override { m_Writer.BeginObject(); }
+			void EndObject() override { m_Writer.EndObject(); }
+			void BeginArray() override { m_Writer.BeginArray(); }
+			void EndArray() override { m_Writer.EndArray(); }
+			void Key(const char* key) override { m_Writer.Key(key); }
+			void String(const char* value) override { m_Writer.String(value); }
+			void Number(double value) override { m_Writer.Number(value); }
+			void Bool(bool value) override { m_Writer.Bool(value); }
+
+		private:
+			JsonWriter& m_Writer;
+		};
+	}
+
 	const McpTools::Tool McpTools::c_Tools[] =
 	{
 		{ "get_editor_state", "The editor's state: whether the game is playing, the open level and whether it has unsaved changes, whether there's anything to undo or redo, the selected actor and the camera.",
@@ -163,15 +225,13 @@ namespace tyr
 			R"({"type":"object","properties":{}})", &McpTools::Stop },
 		{ "build_navmesh", "Builds the level's navmesh from everything in it that doesn't move. Save the level to keep it.",
 			R"({"type":"object","properties":{}})", &McpTools::BuildNavmesh },
-		{ "find_path", "Finds a walkable path across the navmesh of the world on screen, as the corners to walk to.",
-			R"({"type":"object","properties":{"from":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"to":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3}},"required":["from","to"]})", &McpTools::FindPath },
+		{ "find_path", "Finds a walkable path across the navmesh of the world on screen, as the corners to walk to. Stairs are only crossed with useStairs, as by an enemy that changes floors.",
+			R"({"type":"object","properties":{"from":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"to":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"useStairs":{"type":"boolean","default":false}},"required":["from","to"]})", &McpTools::FindPath },
 		{ "move_agent", "While playing, sends an actor with a NavAgentComponent walking to a position along the navmesh, and says where it is now and how it's getting on.",
 			R"({"type":"object","properties":{"actor":{"type":"string"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"Leave out to only report"}},"required":["actor"]})", &McpTools::MoveAgent },
-		{ "get_enemy", "While playing, says what an enemy is doing and what it knows of its target.",
-			R"({"type":"object","properties":{"actor":{"type":"string"}},"required":["actor"]})", &McpTools::GetEnemy },
 		{ "get_light_level", "How lit a position is in the world on screen, from its lights with walls blocking them, and whether a held flashlight's beam is on it.",
 			R"({"type":"object","properties":{"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3}},"required":["position"]})", &McpTools::GetLightLevel },
-		{ "make_noise", "While playing, makes a noise enemies can hear, as if the player made it where they stand, out to radius metres. Footsteps carry 1.5 crouching, 6 walking and 15 sprinting.",
+		{ "make_noise", "While playing, makes a noise enemies can hear, as if the player made it where they stand, out to radius metres. Footsteps carry 1 crouching, 3 walking and 15 sprinting.",
 			R"({"type":"object","properties":{"radius":{"type":"number","default":6}}})", &McpTools::MakeNoise },
 		{ "play_animation", "While playing, cross-fades an actor with an AnimatorComponent to another animation clip over fade seconds.",
 			R"({"type":"object","properties":{"actor":{"type":"string"},"clip":{"type":"string","description":"An .anim asset path"},"fade":{"type":"number","default":0.25},"loop":{"type":"boolean","default":true}},"required":["actor","clip"]})", &McpTools::PlayAnimation },
@@ -195,16 +255,22 @@ namespace tyr
 			R"({"type":"object","properties":{"values":{"type":"object"}},"required":["values"]})", &McpTools::SetLevelSettings },
 		{ "import_sky", "Imports an equirectangular HDR image (.hdr), such as one from Poly Haven, as a sky cubemap for set_level_settings' Sky Texture. Importing to the same folder and name again keeps its asset ID.",
 			R"({"type":"object","properties":{"sourcePath":{"type":"string","description":"Absolute path to the .hdr file"},"outputFolder":{"type":"string","description":"Folder under Assets, such as Skies/Night"},"name":{"type":"string"},"faceSize":{"type":"integer","description":"Pixels across each face, 0 to match the image","default":0}},"required":["sourcePath","outputFolder","name"]})", &McpTools::ImportSky },
+		{ "import_texture", "Imports a PNG or other image as a texture, such as an item's picture for the game's UI. Importing to the same folder and name again keeps its asset ID.",
+			R"({"type":"object","properties":{"sourcePath":{"type":"string","description":"Absolute path to the image"},"outputFolder":{"type":"string","description":"Folder under Assets, such as Items/Icons"},"name":{"type":"string"},"srgb":{"type":"boolean","description":"Colour rather than data, default true"}},"required":["sourcePath","outputFolder","name"]})", &McpTools::ImportTexture },
+		{ "import_font", "Imports a .ttf or .otf file as a font, for the game's UI to bake its text from. Importing to the same folder and name again keeps its asset ID.",
+			R"({"type":"object","properties":{"sourcePath":{"type":"string","description":"Absolute path to the font file"},"outputFolder":{"type":"string","description":"Folder under Assets, default Fonts"},"name":{"type":"string"}},"required":["sourcePath","name"]})", &McpTools::ImportFont },
 		{ "get_display", "The display settings (HDR on or off, paper white, UI and peak brightness in nits), what the window's display reports, and whether HDR10 or SDR is being output.",
 			R"({"type":"object","properties":{}})", &McpTools::GetDisplay },
 		{ "set_display", "Changes the display settings get_display shows. Only the values given change.",
 			R"({"type":"object","properties":{"hdr":{"type":"boolean"},"paperWhiteNits":{"type":"number"},"uiNits":{"type":"number"},"peakNits":{"type":"number","description":"0 uses what the display reports"}}})", &McpTools::SetDisplay },
 		{ "set_material_layer", "Gives a material a layer: another material's albedo, normal and AO roughness metallic textures, blended over its own in patches, such as grass over gravel. set_material's Layer UV Scale, Layer Patch Size (metres), Layer Coverage (0 to 1) and Layer Sharpness shape it. An empty layerMaterial removes the layer. Saves the material.",
 			R"({"type":"object","properties":{"path":{"type":"string"},"layerMaterial":{"type":"string","description":"The .mat to take the textures from, or empty to remove the layer"}},"required":["path","layerMaterial"]})", &McpTools::SetMaterialLayer },
-		{ "interact", "While playing, uses an actor in the game as the player would with E: opens or closes a door, uses a door panel, or picks up an item. Returns whether it worked and the message the player would see.",
+		{ "interact", "While playing, uses an actor in the game as the player would with E: opens or closes a door, uses a door panel, picks up an item, or hides in a hiding spot. While hiding, any actor gets them back out. Returns whether it worked and the message the player would see.",
 			R"({"type":"object","properties":{"actor":{"type":"string"}},"required":["actor"]})", &McpTools::Interact },
-		{ "give_item", "While playing, puts an item such as a key card into the player's inventory.",
-			R"({"type":"object","properties":{"item":{"type":"string"}},"required":["item"]})", &McpTools::GiveItem },
+		{ "set_player_view", "While playing, turns the player's view: yaw in degrees round from +Z towards +X, and pitch in degrees, negative looking down.",
+			R"({"type":"object","properties":{"yaw":{"type":"number"},"pitch":{"type":"number"}},"required":["yaw","pitch"]})", &McpTools::SetPlayerView },
+		{ "give_item", "While playing, puts an item such as a key card into the player's inventory, or a note or code into their documents.",
+			R"({"type":"object","properties":{"item":{"type":"string"},"count":{"type":"integer","description":"How many, default 1."},"stack_limit":{"type":"integer","description":"How many fit in one slot, default 1."},"document":{"type":"boolean","description":"Kept as a document, taking no slot. Default false."}},"required":["item"]})", &McpTools::GiveItem },
 	};
 
 	McpTools::McpTools(Editor& editor)
@@ -372,6 +438,17 @@ namespace tyr
 				m_Result.Raw(tool.inputSchema);
 				m_Result.EndObject();
 			}
+			const McpGameTool* gameTools = nullptr;
+			const uint gameToolCount = m_Editor.m_App.GetMcpTools(gameTools);
+			for (uint i = 0; i < gameToolCount; ++i)
+			{
+				m_Result.BeginObject();
+				m_Result.KeyString("name", gameTools[i].name);
+				m_Result.KeyString("description", gameTools[i].description);
+				m_Result.Key("inputSchema");
+				m_Result.Raw(gameTools[i].inputSchema);
+				m_Result.EndObject();
+			}
 			m_Result.EndArray();
 			m_Result.EndObject();
 			ReplyResult(server, connection, id);
@@ -387,14 +464,31 @@ namespace tyr
 					tool = Equals(name, candidate.name) ? &candidate : tool;
 				}
 			}
+			dom::object args = m_EmptyArgs;
+			params["arguments"].get_object().get(args);
+
+			// Tools the game adds run with the game's app.
+			const McpGameTool* gameTools = nullptr;
+			const uint gameToolCount = tool ? 0 : m_Editor.m_App.GetMcpTools(gameTools);
+			for (uint i = 0; i < gameToolCount; ++i)
+			{
+				if (Equals(name, gameTools[i].name))
+				{
+					m_Result.Clear();
+					const GameToolArguments gameArgs(args);
+					GameToolResult gameResult(m_Result);
+					McpToolError error;
+					const bool succeeded = gameTools[i].run(m_Editor.m_App, gameArgs, gameResult, error);
+					snprintf(m_Error, sizeof(m_Error), "%s", error.CStr());
+					ReplyToolResult(server, connection, id, !succeeded);
+					return;
+				}
+			}
 			if (!tool)
 			{
 				ReplyError(server, connection, &id, c_InvalidParams, "Unknown tool.");
 				return;
 			}
-
-			dom::object args = m_EmptyArgs;
-			params["arguments"].get_object().get(args);
 
 			m_Result.Clear();
 			m_Error[0] = '\0';
@@ -672,9 +766,9 @@ namespace tyr
 		m_Result.KeyString("type", type ? type->name.CStr() : "");
 		m_Result.KeyString("folder", actor.folderPath.CStr());
 		const Entity root = actor.RootEntity();
-		if (world.entities.HasComponent<ComponentTransform>(root))
+		if (world.entities.HasComponent<TransformComponent>(root))
 		{
-			WriteTransform(world.entities.GetComponent<ComponentTransform>(root).local);
+			WriteTransform(world.entities.GetComponent<TransformComponent>(root).local);
 		}
 	}
 
@@ -1037,9 +1131,9 @@ namespace tyr
 		}
 
 		// In front of the camera unless placed, as the actor picker does.
-		if (world.entities.HasComponent<ComponentTransform>(root))
+		if (world.entities.HasComponent<TransformComponent>(root))
 		{
-			Transform transform = world.entities.GetComponent<ComponentTransform>(root).local;
+			Transform transform = world.entities.GetComponent<TransformComponent>(root).local;
 			transform.position = hasPosition ? position : m_Editor.GetBackgroundDropPosition(m_Editor.GetCameraRay());
 			transform.rotation = hasRotation ? rotation : transform.rotation;
 			transform.scale = hasScale ? scale : transform.scale;
@@ -1117,12 +1211,12 @@ namespace tyr
 			return ToolResult::Failed;
 		}
 		const Entity root = actor->RootEntity();
-		if (!world.entities.HasComponent<ComponentTransform>(root))
+		if (!world.entities.HasComponent<TransformComponent>(root))
 		{
 			return Fail("%s has no transform.", name);
 		}
 
-		Transform transform = world.entities.GetComponent<ComponentTransform>(root).local;
+		Transform transform = world.entities.GetComponent<TransformComponent>(root).local;
 		transform.position = hasPosition ? position : transform.position;
 		transform.rotation = hasRotation ? rotation : transform.rotation;
 		transform.scale = hasScale ? scale : transform.scale;
@@ -1375,6 +1469,17 @@ namespace tyr
 		{
 			return ToolResult::Failed;
 		}
+		// While there's only one thing to do, such as get out of hiding, using anything does it, as E does.
+		if (Interaction::UseOnlyAction(*world, player))
+		{
+			m_Result.BeginObject();
+			m_Result.Key("used");
+			m_Result.Bool(true);
+			m_Result.Key("message");
+			m_Result.String("Did the only thing there was to do.");
+			m_Result.EndObject();
+			return ToolResult::Done;
+		}
 		const ActorInstance* actor = FindActor(*world, name);
 		if (!actor)
 		{
@@ -1401,6 +1506,29 @@ namespace tyr
 		return ToolResult::Done;
 	}
 
+	McpTools::ToolResult McpTools::SetPlayerView(const dom::object& args)
+	{
+		double yaw = 0.0;
+		double pitch = 0.0;
+		if (!GetNumber(args, "yaw", yaw) || !GetNumber(args, "pitch", pitch))
+		{
+			return Fail("yaw and pitch are needed.");
+		}
+		World* world = nullptr;
+		Handle worldHandle;
+		if (FindGamePlayer(world, worldHandle) == c_InvalidEntity)
+		{
+			return ToolResult::Failed;
+		}
+		world->viewRequested = true;
+		world->requestedYaw = static_cast<float>(yaw) * Math::c_DegToRad;
+		world->requestedPitch = static_cast<float>(pitch) * Math::c_DegToRad;
+		m_Result.BeginObject();
+		m_Result.KeyBool("requested", true);
+		m_Result.EndObject();
+		return ToolResult::Done;
+	}
+
 	McpTools::ToolResult McpTools::GiveItem(const dom::object& args)
 	{
 		char item[ItemName::c_Capacity + 1];
@@ -1416,17 +1544,53 @@ namespace tyr
 			return ToolResult::Failed;
 		}
 		InventoryComponent& inventory = world->entities.GetComponent<InventoryComponent>(player);
-		if (inventory.items.Size() >= GameplayConstants::c_MaxInventoryItems)
+		dom::element documentElement;
+		bool document = false;
+		if (!args["document"].get(documentElement))
+		{
+			documentElement.get_bool().get(document);
+		}
+		if (document)
+		{
+			if (!world->entities.HasComponent<DocumentsComponent>(player)
+				|| !Inventory::AddDocument(world->entities.GetComponent<DocumentsComponent>(player), ItemName(item)))
+			{
+				return Fail("The player has no room for more documents.");
+			}
+		}
+		double count = 1.0;
+		double stackLimit = 1.0;
+		GetNumber(args, "count", count);
+		GetNumber(args, "stack_limit", stackLimit);
+		count = std::clamp(count, 1.0, 255.0);
+		stackLimit = std::clamp(stackLimit, 1.0, 255.0);
+		if (!document && Inventory::Add(inventory, ItemName(item), static_cast<uint>(count), static_cast<uint>(stackLimit)) == 0)
 		{
 			return Fail("The player's inventory is full.");
 		}
-		inventory.items.Add(ItemName(item));
 		m_Result.BeginObject();
+		m_Result.Key("slots");
+		m_Result.Number(static_cast<double>(inventory.slots));
 		m_Result.Key("items");
 		m_Result.BeginArray();
-		for (const ItemName& held : inventory.items)
+		for (uint i = 0; i < inventory.items.Size(); ++i)
 		{
-			m_Result.String(held.CStr());
+			m_Result.BeginObject();
+			m_Result.Key("item");
+			m_Result.String(inventory.items[i].CStr());
+			m_Result.Key("count");
+			m_Result.Number(static_cast<double>(inventory.counts[i]));
+			m_Result.EndObject();
+		}
+		m_Result.EndArray();
+		m_Result.Key("documents");
+		m_Result.BeginArray();
+		if (world->entities.HasComponent<DocumentsComponent>(player))
+		{
+			for (const ItemName& kept : world->entities.GetComponent<DocumentsComponent>(player).documents)
+			{
+				m_Result.String(kept.CStr());
+			}
 		}
 		m_Result.EndArray();
 		m_Result.EndObject();
@@ -1466,8 +1630,10 @@ namespace tyr
 		{
 			return Fail("The world has no navmesh. Build one with build_navmesh.");
 		}
+		bool useStairs = false;
+		args["useStairs"].get(useStairs);
 		NavPath path;
-		if (!navmesh.FindPath(world, from, to, path))
+		if (!navmesh.FindPath(world, from, to, useStairs, path))
 		{
 			return Fail("There's no navmesh near the start or end.");
 		}
@@ -1526,7 +1692,7 @@ namespace tyr
 		}
 
 		const NavAgentComponent& agent = world.entities.GetComponent<NavAgentComponent>(agentEntity);
-		const Vector3& at = world.entities.GetComponent<ComponentTransform>(agentEntity).world.position;
+		const Vector3& at = world.entities.GetComponent<TransformComponent>(agentEntity).world.position;
 		m_Result.BeginObject();
 		m_Result.Key("position");
 		m_Result.BeginArray();
@@ -1538,59 +1704,6 @@ namespace tyr
 		m_Result.KeyBool("arrived", agent.arrived);
 		m_Result.KeyBool("stuck", agent.stuck);
 		m_Result.KeyUInt("cornersLeft", agent.path.points.Size() > agent.nextCorner ? agent.path.points.Size() - agent.nextCorner : 0);
-		m_Result.EndObject();
-		return ToolResult::Done;
-	}
-
-	McpTools::ToolResult McpTools::GetEnemy(const dom::object& args)
-	{
-		char actorName[ActorName::c_Capacity + 1];
-		const bool hasActor = GetString(args, "actor", actorName, sizeof(actorName));
-		if (HasArgumentError())
-		{
-			return ToolResult::Failed;
-		}
-		if (!hasActor)
-		{
-			return Fail("actor is needed.");
-		}
-		World& world = m_Editor.m_WorldManager->GetWorld(m_Editor.m_WorldManager->GetActiveWorld());
-		Entity enemyEntity = c_InvalidEntity;
-		for (const ActorInstance& actor : world.actorInstances)
-		{
-			if (strcmp(actor.name.CStr(), actorName) == 0 && world.entities.HasComponent<EnemyComponent>(actor.RootEntity()))
-			{
-				enemyEntity = actor.RootEntity();
-				break;
-			}
-		}
-		if (enemyEntity == c_InvalidEntity)
-		{
-			return Fail("There's no actor with that name and an EnemyComponent in the world on screen.");
-		}
-
-		static const char* c_SenseNames[] = { "none", "sight", "hearing", "smell", "touch" };
-		const EnemyComponent& enemy = world.entities.GetComponent<EnemyComponent>(enemyEntity);
-		const PerceptionComponent& perception = world.entities.GetComponent<PerceptionComponent>(enemyEntity);
-		const Vector3& at = world.entities.GetComponent<ComponentTransform>(enemyEntity).world.position;
-		m_Result.BeginObject();
-		m_Result.KeyString("state", EnemyBrains::GetStateName(enemy.state));
-		m_Result.Key("position");
-		m_Result.BeginArray();
-		m_Result.Number(at.x);
-		m_Result.Number(at.y);
-		m_Result.Number(at.z);
-		m_Result.EndArray();
-		m_Result.KeyBool("targetKnown", perception.targetKnown);
-		m_Result.KeyString("sense", c_SenseNames[std::min<uint>(perception.targetSense, 4)]);
-		m_Result.KeyNumber("knowledgeAge", perception.targetAge);
-		m_Result.Key("targetPosition");
-		m_Result.BeginArray();
-		m_Result.Number(perception.targetPosition.x);
-		m_Result.Number(perception.targetPosition.y);
-		m_Result.Number(perception.targetPosition.z);
-		m_Result.EndArray();
-		m_Result.KeyUInt("scentMarkers", world.scents.Size());
 		m_Result.EndObject();
 		return ToolResult::Done;
 	}
@@ -1628,7 +1741,7 @@ namespace tyr
 		Entity player = c_InvalidEntity;
 		world.entities.ForEach<PerceivableComponent>([&world, &player](Entity entity, PerceivableComponent& /*perceivable*/)
 		{
-			if (player == c_InvalidEntity && world.entities.HasComponent<ComponentTransform>(entity))
+			if (player == c_InvalidEntity && world.entities.HasComponent<TransformComponent>(entity))
 			{
 				player = entity;
 			}
@@ -1637,7 +1750,7 @@ namespace tyr
 		{
 			return Fail("There's no player to make a noise. Call play first.");
 		}
-		const Vector3& position = world.entities.GetComponent<ComponentTransform>(player).world.position;
+		const Vector3& position = world.entities.GetComponent<TransformComponent>(player).world.position;
 		Noise::Emit(world, position, static_cast<float>(radius), player);
 		m_Result.BeginObject();
 		m_Result.KeyBool("made", true);
@@ -2072,6 +2185,77 @@ namespace tyr
 
 		m_Result.BeginObject();
 		m_Result.KeyString("path", AssetRegistry::Instance().GetAssetData(textureID).filePath.CStr());
+		m_Result.EndObject();
+		return ToolResult::Done;
+	}
+
+	McpTools::ToolResult McpTools::ImportTexture(const dom::object& args)
+	{
+		char sourcePath[PathConstants::c_MaxPathTotalSize];
+		char outputFolder[PathConstants::c_MaxRelativePathTotalSize];
+		char name[PathConstants::c_MaxFileNameTotalSize];
+		const bool hasSource = GetString(args, "sourcePath", sourcePath, sizeof(sourcePath));
+		const bool hasFolder = GetString(args, "outputFolder", outputFolder, sizeof(outputFolder));
+		const bool hasName = GetString(args, "name", name, sizeof(name));
+		dom::element srgbElement;
+		bool srgb = true;
+		if (!args["srgb"].get(srgbElement))
+		{
+			srgbElement.get_bool().get(srgb);
+		}
+		if (HasArgumentError())
+		{
+			return ToolResult::Failed;
+		}
+		if (!hasSource || !hasFolder || !hasName)
+		{
+			return Fail("sourcePath, outputFolder and name are needed.");
+		}
+		if (!Platform::FileExists(sourcePath))
+		{
+			return Fail("There's no file at %s.", sourcePath);
+		}
+
+		AssetID textureID;
+		if (!MaterialImporter::Instance().ImportTexture(TextureSource{ sourcePath }, outputFolder, name, srgb, textureID))
+		{
+			return Fail("The import failed. read_log has the details.");
+		}
+		m_Editor.RefreshAssets();
+		AssetRegistry::Instance().Save();
+
+		m_Result.BeginObject();
+		m_Result.KeyString("path", AssetRegistry::Instance().GetAssetData(textureID).filePath.CStr());
+		m_Result.EndObject();
+		return ToolResult::Done;
+	}
+
+	McpTools::ToolResult McpTools::ImportFont(const dom::object& args)
+	{
+		char sourcePath[PathConstants::c_MaxPathTotalSize];
+		char outputFolder[PathConstants::c_MaxRelativePathTotalSize] = "Fonts";
+		char name[PathConstants::c_MaxFileNameTotalSize];
+		const bool hasSource = GetString(args, "sourcePath", sourcePath, sizeof(sourcePath));
+		GetString(args, "outputFolder", outputFolder, sizeof(outputFolder));
+		const bool hasName = GetString(args, "name", name, sizeof(name));
+		if (HasArgumentError())
+		{
+			return ToolResult::Failed;
+		}
+		if (!hasSource || !hasName)
+		{
+			return Fail("sourcePath and name are needed.");
+		}
+
+		AssetID fontID;
+		if (!FontImporter::ImportFont(sourcePath, outputFolder, name, fontID))
+		{
+			return Fail("The import failed. read_log has the details.");
+		}
+		AssetRegistry::Instance().Save();
+
+		m_Result.BeginObject();
+		m_Result.KeyString("path", AssetRegistry::Instance().GetAssetData(fontID).filePath.CStr());
 		m_Result.EndObject();
 		return ToolResult::Done;
 	}

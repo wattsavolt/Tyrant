@@ -46,7 +46,11 @@ namespace tyr
 	{
 		dtNavMesh* mesh = nullptr;
 		dtNavMeshQuery* query = nullptr;
+		// Paths cross door zones at a cost; spots to go to are never picked in one. Only the stairs
+		// filter lets paths onto stairs.
 		dtQueryFilter filter;
+		dtQueryFilter stairsFilter;
+		dtQueryFilter spotFilter;
 	};
 
 	NavmeshManager::NavmeshManager()
@@ -83,6 +87,11 @@ namespace tyr
 		NavmeshData* navmesh = new NavmeshData();
 		navmesh->mesh = dtAllocNavMesh();
 		navmesh->query = dtAllocNavMeshQuery();
+		navmesh->filter.setAreaCost(NavmeshAreas::c_Door, NavmeshAreas::c_DoorCost);
+		navmesh->spotFilter.setAreaCost(NavmeshAreas::c_Door, NavmeshAreas::c_DoorCost);
+		navmesh->filter.setExcludeFlags(NavmeshAreas::c_StairsFlag);
+		navmesh->stairsFilter.setAreaCost(NavmeshAreas::c_Door, NavmeshAreas::c_DoorCost);
+		navmesh->spotFilter.setExcludeFlags(NavmeshAreas::c_DoorFlag | NavmeshAreas::c_StairsFlag);
 		bool failed = dtStatusFailed(navmesh->mesh->init(&params));
 
 		size_t offset = sizeof(header);
@@ -161,7 +170,9 @@ namespace tyr
 		}
 		dtPolyRef randomPolygon = 0;
 		float point[3];
-		if (dtStatusFailed(data.query->findRandomPointAroundCircle(startPolygon, start, radius, &data.filter, &Random01, &randomPolygon, point)))
+		// Standing in a door zone itself, it can only search from there with the door zones included.
+		if (dtStatusFailed(data.query->findRandomPointAroundCircle(startPolygon, start, radius, &data.spotFilter, &Random01, &randomPolygon, point))
+			&& dtStatusFailed(data.query->findRandomPointAroundCircle(startPolygon, start, radius, &data.filter, &Random01, &randomPolygon, point)))
 		{
 			return false;
 		}
@@ -169,9 +180,10 @@ namespace tyr
 		return true;
 	}
 
-	bool NavmeshManager::FindPath(Handle navmesh, const Vector3& start, const Vector3& end, NavPath& outPath) const
+	bool NavmeshManager::FindPath(Handle navmesh, const Vector3& start, const Vector3& end, bool useStairs, NavPath& outPath) const
 	{
 		const NavmeshData& data = *m_Navmeshes[navmesh];
+		const dtQueryFilter& filter = useStairs ? data.stairsFilter : data.filter;
 		outPath.points.Clear();
 		outPath.partial = false;
 		outPath.truncated = false;
@@ -180,8 +192,8 @@ namespace tyr
 		dtPolyRef endPolygon = 0;
 		float startPoint[3];
 		float endPoint[3];
-		data.query->findNearestPoly(&start.x, c_PathSearchExtents, &data.filter, &startPolygon, startPoint);
-		data.query->findNearestPoly(&end.x, c_PathSearchExtents, &data.filter, &endPolygon, endPoint);
+		data.query->findNearestPoly(&start.x, c_PathSearchExtents, &filter, &startPolygon, startPoint);
+		data.query->findNearestPoly(&end.x, c_PathSearchExtents, &filter, &endPolygon, endPoint);
 		if (startPolygon == 0 || endPolygon == 0)
 		{
 			return false;
@@ -189,7 +201,7 @@ namespace tyr
 
 		dtPolyRef polygons[NavmeshConstants::c_MaxPathPolys];
 		int polygonCount = 0;
-		if (dtStatusFailed(data.query->findPath(startPolygon, endPolygon, startPoint, endPoint, &data.filter, polygons, &polygonCount,
+		if (dtStatusFailed(data.query->findPath(startPolygon, endPolygon, startPoint, endPoint, &filter, polygons, &polygonCount,
 			static_cast<int>(NavmeshConstants::c_MaxPathPolys))) || polygonCount == 0)
 		{
 			return false;

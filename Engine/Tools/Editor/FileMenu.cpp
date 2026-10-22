@@ -5,6 +5,7 @@
 #include "Math/Math.h"
 #include "Importing/ModelImporter.h"
 #include "Importing/MaterialImporter.h"
+#include "Importing/FontImporter.h"
 #include "AssetSystem/AssetRegistry.h"
 #include "AssetSystem/AssetUtil.h"
 #include "AssetSystem/AssetConstants.h"
@@ -33,6 +34,11 @@ namespace tyr
 		{
 			const char* pathExtension = strrchr(path, '.');
 			return pathExtension && strcmp(pathExtension, extension) == 0;
+		}
+
+		bool IsFontPath(const char* path)
+		{
+			return HasExtension(path, ".ttf") || HasExtension(path, ".otf") || HasExtension(path, ".TTF") || HasExtension(path, ".OTF");
 		}
 
 		// Letters, numbers, spaces, dashes and underscores, so it's always a valid file name.
@@ -374,13 +380,23 @@ namespace tyr
 	void FileMenu::Import()
 	{
 		const bool picked = Platform::ShowOpenFileDialog(m_PendingFilePath, sizeof(m_PendingFilePath),
-			"Models and Skies\0*.gltf;*.glb;*.hdr\0glTF Models\0*.gltf;*.glb\0HDR Skies\0*.hdr\0", "Import");
+			"Models, Skies and Fonts\0*.gltf;*.glb;*.hdr;*.ttf;*.otf\0glTF Models\0*.gltf;*.glb\0HDR Skies\0*.hdr\0Fonts\0*.ttf;*.otf\0", "Import");
 		if (!picked)
 		{
 			return;
 		}
 
 		PathUtil::GetFileNameWithoutExtension(m_PendingFilePath, m_PendingModelName);
+		// Fonts have nothing to choose, so they go straight into Fonts.
+		if (IsFontPath(m_PendingFilePath))
+		{
+			AssetID fontID;
+			if (FontImporter::ImportFont(m_PendingFilePath, "Fonts", m_PendingModelName, fontID))
+			{
+				AssetRegistry::Instance().Save();
+			}
+			return;
+		}
 		if (HasExtension(m_PendingFilePath, ".hdr"))
 		{
 			snprintf(m_PendingOutputFolder, sizeof(m_PendingOutputFolder), "Skies/%s", m_PendingModelName);

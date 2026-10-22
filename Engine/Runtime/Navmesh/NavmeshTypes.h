@@ -16,6 +16,29 @@ namespace tyr
 		static constexpr uint c_DataVersion = 0x4E415601;
 	};
 
+	// What a navmesh polygon is, and what can use it. Beside a door, where its leaf swings to, walking
+	// costs more and nothing picks a spot to stand. Stairs are only walked by those allowed to change floors.
+	struct NavmeshAreas
+	{
+		static constexpr uint8 c_Door = 1;
+		static constexpr uint8 c_Stairs = 2;
+		static constexpr uint16 c_WalkFlag = 1;
+		static constexpr uint16 c_DoorFlag = 2;
+		static constexpr uint16 c_StairsFlag = 4;
+		// How many times dearer a door zone is to walk through than open floor.
+		static constexpr float c_DoorCost = 6.0f;
+	};
+
+	// A four-cornered patch of floor marked as one of the NavmeshAreas, such as a door zone, between
+	// two heights, in world space. The corners go round it in order.
+	struct NavmeshZone
+	{
+		Vector3 corners[4];
+		float minY = 0.0f;
+		float maxY = 0.0f;
+		uint8 area = NavmeshAreas::c_Door;
+	};
+
 	// The size of what walks the navmesh, and how finely it's built, in metres and degrees.
 	struct NavmeshBuildSettings
 	{

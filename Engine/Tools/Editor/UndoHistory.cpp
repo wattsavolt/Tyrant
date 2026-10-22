@@ -263,7 +263,7 @@ namespace tyr
 				&& target.typeID == current.typeID
 				&& size - target.overridesOffset == currentSize - current.overridesOffset
 				&& memcmp(state + target.overridesOffset, currentState + current.overridesOffset, size - target.overridesOffset) == 0
-				&& world.entities.HasComponent<ComponentTransform>(root))
+				&& world.entities.HasComponent<TransformComponent>(root))
 			{
 				actor->name = target.name;
 				actor->folderPath = target.folder;

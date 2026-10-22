@@ -133,13 +133,13 @@ namespace tyr
 	{
 		world.entities.ForEach<CharacterComponent>([&](Entity entity, CharacterComponent& character)
 		{
-			if (character.characterIndex != PhysicsConstants::c_InvalidCharacter || !world.entities.HasComponent<ComponentTransform>(entity))
+			if (character.characterIndex != PhysicsConstants::c_InvalidCharacter || !world.entities.HasComponent<TransformComponent>(entity))
 			{
 				return;
 			}
 
 			CharacterDesc desc;
-			desc.position = world.entities.GetComponent<ComponentTransform>(entity).world.position;
+			desc.position = world.entities.GetComponent<TransformComponent>(entity).world.position;
 			desc.radius = character.radius;
 			desc.height = character.height;
 			desc.crouchHeight = character.crouchHeight;
@@ -164,6 +164,17 @@ namespace tyr
 		{
 			if (character.characterIndex == PhysicsConstants::c_InvalidCharacter)
 			{
+				return;
+			}
+			if (character.teleport)
+			{
+				character.teleport = false;
+				scene.SetCharacterPosition(character.characterIndex, character.teleportPosition);
+				character.currentPosition = character.teleportPosition;
+			}
+			if (character.frozen)
+			{
+				character.previousPosition = character.currentPosition;
 				return;
 			}
 			CharacterMove move;
@@ -193,13 +204,28 @@ namespace tyr
 		return true;
 	}
 
+	Vector3 PhysicsComponentsManager::FindCapsulePush(Handle physicsWorld, const Vector3& a, const Vector3& b, float radius, bool includeMoving,
+		const World* world, Entity ignore, Entity ignore2) const
+	{
+		uint bodies[2] = { PhysicsConstants::c_InvalidBodyID, PhysicsConstants::c_InvalidBodyID };
+		const Entity ignored[2] = { ignore, ignore2 };
+		for (uint i = 0; i < 2 && world; ++i)
+		{
+			if (ignored[i] != c_InvalidEntity && world->entities.HasComponent<ColliderComponent>(ignored[i]))
+			{
+				bodies[i] = world->entities.GetComponent<ColliderComponent>(ignored[i]).bodyID;
+			}
+		}
+		return m_PhysicsManager->GetScene(physicsWorld).FindCapsulePush(a, b, radius, includeMoving, bodies[0], bodies[1]);
+	}
+
 	void PhysicsComponentsManager::CreateBodies(PhysicsScene& scene, World& world, const AssetManager& assetManager)
 	{
 		bool addedAny = false;
 		world.entities.ForEach<ColliderComponent>([&](Entity entity, ColliderComponent& collider)
 		{
 			// A box sized from its mesh waits for the mesh to load.
-			if (collider.bodyID != PhysicsConstants::c_InvalidBodyID || !HasSize(collider) || !world.entities.HasComponent<ComponentTransform>(entity))
+			if (collider.bodyID != PhysicsConstants::c_InvalidBodyID || !HasSize(collider) || !world.entities.HasComponent<TransformComponent>(entity))
 			{
 				return;
 			}
@@ -212,7 +238,7 @@ namespace tyr
 				motionType = static_cast<MotionType>(rigidBody->motionType);
 			}
 
-			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+			const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 			const ColliderShape colliderShape = static_cast<ColliderShape>(collider.shape);
 			const PhysicsShape* shape = CreateColliderShape(collider, transform.scale, motionType, assetManager);
 			if (!shape)
@@ -273,7 +299,7 @@ namespace tyr
 			const ColliderComponent& collider = world.entities.GetComponent<ColliderComponent>(entity);
 			if (collider.bodyID != PhysicsConstants::c_InvalidBodyID)
 			{
-				const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+				const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 				scene.MoveKinematic(collider.bodyID, transform.position, transform.rotation, PhysicsConstants::c_FixedTimeStep);
 			}
 		});

@@ -139,7 +139,11 @@ GBufferOutput main(VS_OUTPUT input)
 	output.albedoAO = float4(albedo, ao);
 	output.normalRoughMetal = float4(EncodeOct(perturbedNormal), roughness, metallic);
 	output.motion = motion;
-	output.emissive = float4(material.emissive * input.emissiveScale, 0.0f);
+	// An item that can be picked up glows faintly and catches a bright rim, so it stands out in the dark.
+	const float facing = saturate(dot(perturbedNormal, normalize(camPos - input.worldPos.xyz)));
+	const float rim = pow(1.0f - facing, 3.0f);
+	const float3 shine = input.highlight * (0.5f + albedo * 2.0f + rim * 5.0f) * float3(1.0f, 0.93f, 0.78f);
+	output.emissive = float4(material.emissive * input.emissiveScale + shine, 0.0f);
 	return output;
 }
 

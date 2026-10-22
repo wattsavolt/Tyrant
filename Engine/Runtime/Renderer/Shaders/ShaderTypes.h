@@ -48,7 +48,7 @@
 #define TYR_BINDING_TAA_RESOLVE_OUTPUT 23
 // The viewport grid's storage-image output, one per buffered RenderFrame slot - same shape as
 // TYR_BINDING_TAA_RESOLVE_OUTPUT.
-#define TYR_BINDING_EDITOR_GRID_OUTPUT 24
+#define TYR_BINDING_GRID_OUTPUT 24
 // The active scene's lights this frame, as slots in the light buffers above: directional, then
 // point (from TYR_MAX_DIR_LIGHTS), then spot (from TYR_MAX_DIR_LIGHTS + TYR_MAX_POINT_LIGHTS).
 #define TYR_BINDING_LIGHT_INDICES 25
@@ -439,7 +439,8 @@ namespace tyr
 		TYR_SHADER_FLOAT4 skinnedSphere;
 		// Scales its materials' emissive, such as 0 for a lamp that's switched off.
 		float emissiveScale;
-		float _pad0;
+		// How strongly it shines to show it can be picked up, 0 for most things.
+		float highlight;
 		float _pad1;
 		float _pad2;
 	};
@@ -513,6 +514,8 @@ namespace tyr
 		float flashR;
 		float flashG;
 		float flashB;
+		// Dark red creeping in from the edges, from 0 to 1, showing how badly hurt the player is.
+		float wounds;
 	};
 
 	TYR_SHADER_STRUCT(BloomPushConstants)

@@ -14,6 +14,7 @@ namespace tyr
 		static constexpr const char* c_SkeletonFileExtension = ".skel";
 		static constexpr const char* c_AnimationFileExtension = ".anim";
 		static constexpr const char* c_CollisionMeshFileExtension = ".coll";
+		static constexpr const char* c_FontFileExtension = ".font";
 		static constexpr const char* c_LevelFileExtension = ".level";
 		static constexpr const char* c_LevelFolderName = "Levels";
 		static constexpr const char* c_MaterialFolderName = "Materials";

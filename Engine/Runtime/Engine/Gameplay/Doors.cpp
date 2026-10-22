@@ -3,37 +3,64 @@
 #include "World/World.h"
 #include "Math/Math.h"
 #include "Gameplay/Sounds.h"
+#include <algorithm>
 
 namespace tyr
 {
 	namespace
 	{
-		void SetOpenSingle(World& world, Entity entity, bool open, const Vector3& userPosition)
+		// How far open a blow knocks a shut door before it falls back.
+		constexpr float c_BashJolt = 0.15f;
+		// Seconds a broken door takes to fall flat.
+		constexpr float c_FallTime = 0.55f;
+
+		// Turns a door that opens away from the user that way. Only while it's shut, so it never flips mid-swing.
+		void TurnAwayFrom(World& world, Entity entity, DoorComponent& door, const Vector3& userPosition)
+		{
+			if (door.openAmount != 0.0f || !door.opensAway || static_cast<DoorMotion>(door.motion) != DoorMotion::Swing)
+			{
+				return;
+			}
+			// The middle of the leaf moves this way as it starts to turn.
+			float leafX = 1.0f;
+			if (world.entities.HasComponent<BoxComponent>(entity) && world.entities.GetComponent<BoxComponent>(entity).center.x != 0.0f)
+			{
+				leafX = world.entities.GetComponent<BoxComponent>(entity).center.x;
+			}
+			const Vector3 leaf(leafX, 0.0f, 0.0f);
+			const Vector3 movement = Quaternion(Vector3::c_Up, door.openAngle * Math::c_DegToRad * 0.01f).Rotate(leaf) - leaf;
+			const Vector3 toUser = door.closedRotation.Inverse().Rotate(userPosition - door.closedPosition);
+			door.swingSign = movement.Dot(toUser) > 0.0f ? -1.0f : 1.0f;
+		}
+
+		void BashSingle(World& world, Entity entity, const Vector3& userPosition)
+		{
+			Doors::CaptureClosedPose(world, entity);
+			DoorComponent& door = world.entities.GetComponent<DoorComponent>(entity);
+			if (door.targetAmount > 0.0f || door.broken)
+			{
+				return;
+			}
+			TurnAwayFrom(world, entity, door, userPosition);
+			door.openAmount = c_BashJolt;
+		}
+
+		void SetOpenSingle(World& world, Entity entity, bool open, const Vector3& userPosition, Entity user, bool burst)
 		{
 			Doors::CaptureClosedPose(world, entity);
 			DoorComponent& door = world.entities.GetComponent<DoorComponent>(entity);
 			const float target = open ? 1.0f : 0.0f;
-			if (door.targetAmount == target)
+			door.bursting = burst && open && !door.broken;
+			if (door.targetAmount == target || door.broken)
 			{
 				return;
 			}
-
-			// The way to turn is only picked while it's shut, so it never flips mid-swing.
-			if (open && door.openAmount == 0.0f && door.opensAway && static_cast<DoorMotion>(door.motion) == DoorMotion::Swing)
+			if (open)
 			{
-				// The middle of the leaf moves this way as it starts to turn.
-				float leafX = 1.0f;
-				if (world.entities.HasComponent<BoxComponent>(entity) && world.entities.GetComponent<BoxComponent>(entity).center.x != 0.0f)
-				{
-					leafX = world.entities.GetComponent<BoxComponent>(entity).center.x;
-				}
-				const Vector3 leaf(leafX, 0.0f, 0.0f);
-				const Vector3 movement = Quaternion(Vector3::c_Up, door.openAngle * Math::c_DegToRad * 0.01f).Rotate(leaf) - leaf;
-				const Vector3 toUser = door.closedRotation.Inverse().Rotate(userPosition - door.closedPosition);
-				door.swingSign = movement.Dot(toUser) > 0.0f ? -1.0f : 1.0f;
+				TurnAwayFrom(world, entity, door, userPosition);
 			}
 			door.targetAmount = target;
-			Sounds::Play(world, open ? door.openSound : door.closeSound, door.closedPosition);
+			Sounds::PlayHeard(world, open ? door.openSound : door.closeSound, door.closedPosition, door.noiseRadius, user);
 		}
 
 		Entity FindLinked(const World& world, Entity entity)
@@ -52,6 +79,14 @@ namespace tyr
 	{
 		void GetPose(const DoorComponent& door, Vector3& position, Quaternion& rotation)
 		{
+			// Broken off, it tips over about its bottom edge, faster as it goes, as if falling.
+			if (door.broken)
+			{
+				const float fall = Math::Clamp01(door.fallAmount);
+				position = door.closedPosition;
+				rotation = door.closedRotation * Quaternion(Vector3::c_Right, Math::c_HalfPi * fall * fall * door.fallSign);
+				return;
+			}
 			const float t = Math::Clamp01(door.openAmount);
 			const float eased = t * t * (3.0f - 2.0f * t);
 			if (static_cast<DoorMotion>(door.motion) == DoorMotion::Slide)
@@ -68,33 +103,94 @@ namespace tyr
 		void CaptureClosedPose(World& world, Entity entity)
 		{
 			DoorComponent& door = world.entities.GetComponent<DoorComponent>(entity);
-			if (door.closedPoseKnown || !world.entities.HasComponent<ComponentTransform>(entity))
+			if (door.closedPoseKnown || !world.entities.HasComponent<TransformComponent>(entity))
 			{
 				return;
 			}
-			const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+			const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 			door.closedPosition = transform.position;
 			door.closedRotation = transform.rotation;
 			door.closedPoseKnown = true;
 		}
 
-		void SetOpen(World& world, Entity entity, bool open, const Vector3& userPosition)
+		void SetOpen(World& world, Entity entity, bool open, const Vector3& userPosition, Entity user)
 		{
 			if (!world.entities.HasComponent<DoorComponent>(entity))
 			{
 				return;
 			}
-			SetOpenSingle(world, entity, open, userPosition);
+			SetOpenSingle(world, entity, open, userPosition, user, false);
 			const Entity linked = FindLinked(world, entity);
 			if (linked != c_InvalidEntity)
 			{
-				SetOpenSingle(world, linked, open, userPosition);
+				SetOpenSingle(world, linked, open, userPosition, user, false);
 			}
 		}
 
-		void Toggle(World& world, Entity entity, const Vector3& userPosition)
+		void BurstOpen(World& world, Entity entity, const Vector3& userPosition, Entity user)
 		{
-			SetOpen(world, entity, !IsOpening(world, entity), userPosition);
+			if (!world.entities.HasComponent<DoorComponent>(entity))
+			{
+				return;
+			}
+			SetOpenSingle(world, entity, true, userPosition, user, true);
+			const Entity linked = FindLinked(world, entity);
+			if (linked != c_InvalidEntity)
+			{
+				SetOpenSingle(world, linked, true, userPosition, user, true);
+			}
+		}
+
+		void Bash(World& world, Entity entity, const Vector3& userPosition, Entity user)
+		{
+			if (!world.entities.HasComponent<DoorComponent>(entity))
+			{
+				return;
+			}
+			BashSingle(world, entity, userPosition);
+			const Entity linked = FindLinked(world, entity);
+			if (linked != c_InvalidEntity)
+			{
+				BashSingle(world, linked, userPosition);
+			}
+			const DoorComponent& door = world.entities.GetComponent<DoorComponent>(entity);
+			Sounds::PlayHeard(world, door.bashSound, door.closedPosition, door.noiseRadius, user);
+		}
+
+		void Break(World& world, Entity entity, const Vector3& fromPosition)
+		{
+			if (!world.entities.HasComponent<DoorComponent>(entity))
+			{
+				return;
+			}
+			CaptureClosedPose(world, entity);
+			DoorComponent& door = world.entities.GetComponent<DoorComponent>(entity);
+			if (door.broken)
+			{
+				return;
+			}
+			door.broken = true;
+			door.fallAmount = 0.0f;
+			// It falls whichever way tips its top towards what broke it.
+			const Vector3 tippedUp = door.closedRotation.Rotate(Quaternion(Vector3::c_Right, Math::c_HalfPi).Rotate(Vector3::c_Up));
+			door.fallSign = tippedUp.Dot(fromPosition - door.closedPosition) >= 0.0f ? 1.0f : -1.0f;
+			door.openAmount = 0.0f;
+			door.targetAmount = 0.0f;
+		}
+
+		bool UpdateFall(DoorComponent& door, float deltaTime)
+		{
+			if (!door.broken || door.fallAmount >= 1.0f)
+			{
+				return false;
+			}
+			door.fallAmount = std::min(door.fallAmount + deltaTime / c_FallTime, 1.0f);
+			return true;
+		}
+
+		void Toggle(World& world, Entity entity, const Vector3& userPosition, Entity user)
+		{
+			SetOpen(world, entity, !IsOpening(world, entity), userPosition, user);
 		}
 
 		void Unlock(World& world, Entity entity)
@@ -135,7 +231,7 @@ namespace tyr
 			Quaternion closedRotation = door.closedRotation;
 			if (!door.closedPoseKnown)
 			{
-				const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+				const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 				closedPosition = transform.position;
 				closedRotation = transform.rotation;
 			}

@@ -2,7 +2,9 @@
 #include "ECS/Components.h"
 #include "World/World.h"
 #include "Physics/PhysicsComponentsManager.h"
+#include "Navigation/NavmeshComponentsManager.h"
 #include "Math/Math.h"
+#include <algorithm>
 
 namespace tyr
 {
@@ -15,8 +17,23 @@ namespace tyr
 		// Where an enemy senses from, and where on a target it looks, above their feet.
 		constexpr float c_EyeHeight = 1.4f;
 		constexpr float c_TargetChestHeight = 1.2f;
+		constexpr float c_TargetWaistHeight = 0.6f;
 		// A hit this close to what's being looked at, or listened for, isn't counted as being in the way.
 		constexpr float c_ClearDistance = 0.3f;
+		// Each wall a noise comes through halves how far it carries, and each shut door quarters it,
+		// counting this many halvings at most.
+		constexpr uint c_MaxNoiseHalvings = 4;
+		constexpr uint c_ShutDoorHalvings = 2;
+		// How far past a wall's surface the next one is looked for, so the same one isn't counted twice.
+		constexpr float c_WallStep = 0.4f;
+		// Following a noise round through doorways: how high above the floor shut doors are looked
+		// for, the most hits checked along each stretch, and how near the noise a door is counted
+		// as the one that made it, so it doesn't muffle itself.
+		constexpr float c_DoorCheckHeight = 1.0f;
+		constexpr uint c_MaxPathHits = 4;
+		constexpr float c_OwnDoorDistance = 1.0f;
+		// A door counts as shut until it's this far open.
+		constexpr float c_ShutDoorAmount = 0.5f;
 
 		bool Clear(World& world, const PhysicsComponentsManager& physics, const Vector3& from, const Vector3& to)
 		{
@@ -30,6 +47,110 @@ namespace tyr
 			return !physics.Raycast(world.physicsWorld, from, offset * (1.0f / distance), distance - c_ClearDistance, hit);
 		}
 
+		bool IsShutDoor(const World& world, const RayCastEntityHit& hit, const Vector3& noisePosition)
+		{
+			if (!world.entities.HasComponent<DoorComponent>(hit.entity) || (hit.position - noisePosition).Length() <= c_OwnDoorDistance)
+			{
+				return false;
+			}
+			const DoorComponent& door = world.entities.GetComponent<DoorComponent>(hit.entity);
+			return !door.broken && door.openAmount < c_ShutDoorAmount;
+		}
+
+		// How many times the walls, doors and the like between the two points halve a noise, up to the most that count.
+		uint CountHalvings(World& world, const PhysicsComponentsManager& physics, const Vector3& from, const Vector3& to, const Vector3& noisePosition)
+		{
+			uint count = 0;
+			Vector3 start = from;
+			for (uint hits = 0; hits < c_MaxNoiseHalvings && count < c_MaxNoiseHalvings; ++hits)
+			{
+				const Vector3 offset = to - start;
+				const float distance = offset.Length();
+				if (distance <= c_ClearDistance)
+				{
+					break;
+				}
+				const Vector3 direction = offset * (1.0f / distance);
+				RayCastEntityHit hit;
+				if (!physics.Raycast(world.physicsWorld, start, direction, distance - c_ClearDistance, hit))
+				{
+					break;
+				}
+				count += IsShutDoor(world, hit, noisePosition) ? c_ShutDoorHalvings : 1;
+				start = hit.position + direction * c_WallStep;
+			}
+			return std::min(count, c_MaxNoiseHalvings);
+		}
+
+		// How many shut doors are between the two points, leaving out one at the noise itself.
+		uint CountShutDoors(World& world, const PhysicsComponentsManager& physics, const Vector3& from, const Vector3& to, const Vector3& noisePosition)
+		{
+			uint doors = 0;
+			Vector3 start = from;
+			for (uint hits = 0; hits < c_MaxPathHits; ++hits)
+			{
+				const Vector3 offset = to - start;
+				const float distance = offset.Length();
+				if (distance <= c_ClearDistance)
+				{
+					break;
+				}
+				const Vector3 direction = offset * (1.0f / distance);
+				RayCastEntityHit hit;
+				if (!physics.Raycast(world.physicsWorld, start, direction, distance - c_ClearDistance, hit))
+				{
+					break;
+				}
+				doors += IsShutDoor(world, hit, noisePosition) ? 1 : 0;
+				start = hit.position + direction * c_WallStep;
+			}
+			return doors;
+		}
+
+		// Whether a noise carrying reach metres gets to the listener's feet, either straight through
+		// whatever's in the way, each wall or shut door halving it, or along the navmesh round through
+		// doorways, where only shut doors on the way halve it. The path is only searched for when going
+		// straight isn't enough.
+		bool Hears(World& world, const NavmeshComponentsManager& navmesh, const PhysicsComponentsManager& physics, const Vector3& eye,
+			const Vector3& feet, const Vector3& noisePosition, float reach)
+		{
+			const float distance = (noisePosition - feet).Length();
+			if (distance > reach)
+			{
+				return false;
+			}
+			const uint halvings = CountHalvings(world, physics, eye, noisePosition + Vector3(0.0f, 0.3f, 0.0f), noisePosition);
+			if (distance <= reach / static_cast<float>(1u << halvings))
+			{
+				return true;
+			}
+
+			NavPath path;
+			if (!navmesh.FindPath(world, noisePosition, feet, true, path) || path.partial || path.truncated)
+			{
+				return false;
+			}
+			const Vector3 up(0.0f, c_DoorCheckHeight, 0.0f);
+			float travelled = 0.0f;
+			Vector3 previous = noisePosition;
+			for (const Vector3& corner : path.points)
+			{
+				travelled += (corner - previous).Length();
+				if (travelled > reach)
+				{
+					return false;
+				}
+				const uint doors = CountShutDoors(world, physics, previous + up, corner + up, noisePosition);
+				reach /= static_cast<float>(1u << std::min(doors * c_ShutDoorHalvings, c_MaxNoiseHalvings));
+				if (travelled > reach)
+				{
+					return false;
+				}
+				previous = corner;
+			}
+			return true;
+		}
+
 		void Know(PerceptionComponent& perception, Entity target, const Vector3& position, Sense sense)
 		{
 			perception.targetKnown = true;
@@ -38,32 +159,64 @@ namespace tyr
 			perception.targetAge = 0.0f;
 			perception.targetSense = static_cast<uint8>(sense);
 		}
+
+		// Finds what it hunts within range and the width in front of it, with nothing in the way.
+		void SenseInFront(World& world, const PhysicsComponentsManager& physics, PerceptionComponent& perception, const Vector3& eye,
+			const Vector3& facing, float range, float angle, bool useVisibility, Sense sense)
+		{
+			const float halfAngleCos = Math::Cos(angle * 0.5f * Math::c_DegToRad);
+			world.entities.ForEach<PerceivableComponent>([&](Entity targetEntity, const PerceivableComponent& target)
+			{
+				if (target.hidden || !world.entities.HasComponent<TransformComponent>(targetEntity))
+				{
+					return;
+				}
+				const Vector3& targetPosition = world.entities.GetComponent<TransformComponent>(targetEntity).world.position;
+				const Vector3 chest = targetPosition + Vector3(0.0f, c_TargetChestHeight, 0.0f);
+				const Vector3 toTarget = chest - eye;
+				const float distance = toTarget.Length();
+				if (distance > range * (useVisibility ? target.visibility : 1.0f) || distance < 0.0001f)
+				{
+					return;
+				}
+				const Vector3 flat(toTarget.x, 0.0f, toTarget.z);
+				const float flatLength = flat.Length();
+				if (flatLength > 0.0001f && flat.Dot(facing) / flatLength < halfAngleCos)
+				{
+					return;
+				}
+				if (Clear(world, physics, eye, chest))
+				{
+					Know(perception, targetEntity, targetPosition, sense);
+				}
+			});
+		}
 	}
 
 	namespace Perception
 	{
-		void Update(World& world, const PhysicsComponentsManager& physics, float deltaTime)
+		void Update(World& world, const NavmeshComponentsManager& navmesh, const PhysicsComponentsManager& physics, float deltaTime)
 		{
 			world.entities.ForEach<PerceptionComponent>([&](Entity entity, PerceptionComponent& perception)
 			{
 				perception.targetAge += deltaTime;
 				perception.updateTimer -= deltaTime;
-				if (perception.updateTimer > 0.0f || !world.entities.HasComponent<ComponentTransform>(entity))
+				if (perception.updateTimer > 0.0f || !world.entities.HasComponent<TransformComponent>(entity))
 				{
 					return;
 				}
 				perception.updateTimer = c_UpdateInterval;
 
-				const Transform& transform = world.entities.GetComponent<ComponentTransform>(entity).world;
+				const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
 				const Vector3 eye = transform.position + Vector3(0.0f, c_EyeHeight, 0.0f);
 				const Vector3 facing = transform.rotation.Rotate(Vector3::c_Forward);
 
 				// Touch: whatever it hunts, close enough to brush against.
-				world.entities.ForEach<PerceivableComponent>([&](Entity targetEntity, const PerceivableComponent& /*target*/)
+				world.entities.ForEach<PerceivableComponent>([&](Entity targetEntity, const PerceivableComponent& target)
 				{
-					if (world.entities.HasComponent<ComponentTransform>(targetEntity))
+					if (!target.hidden && world.entities.HasComponent<TransformComponent>(targetEntity))
 					{
-						const Vector3& targetPosition = world.entities.GetComponent<ComponentTransform>(targetEntity).world.position;
+						const Vector3& targetPosition = world.entities.GetComponent<TransformComponent>(targetEntity).world.position;
 						if ((targetPosition - transform.position).Length() <= perception.touchRange)
 						{
 							Know(perception, targetEntity, targetPosition, Sense::Touch);
@@ -71,70 +224,71 @@ namespace tyr
 					}
 				});
 
-				// Sight: within range and the width of its view, with nothing in the way.
+				// Sight, and sensing what's close in front. Being harder to see only shortens sight.
 				if (perception.sight)
 				{
-					const float halfAngleCos = Math::Cos(perception.sightAngle * 0.5f * Math::c_DegToRad);
-					world.entities.ForEach<PerceivableComponent>([&](Entity targetEntity, const PerceivableComponent& target)
-					{
-						if (!world.entities.HasComponent<ComponentTransform>(targetEntity))
-						{
-							return;
-						}
-						const Vector3& targetPosition = world.entities.GetComponent<ComponentTransform>(targetEntity).world.position;
-						const Vector3 chest = targetPosition + Vector3(0.0f, c_TargetChestHeight, 0.0f);
-						const Vector3 toTarget = chest - eye;
-						const float distance = toTarget.Length();
-						if (distance > perception.sightRange * target.visibility || distance < 0.0001f)
-						{
-							return;
-						}
-						const Vector3 flat(toTarget.x, 0.0f, toTarget.z);
-						const float flatLength = flat.Length();
-						if (flatLength > 0.0001f && flat.Dot(facing) / flatLength < halfAngleCos)
-						{
-							return;
-						}
-						if (Clear(world, physics, eye, chest))
-						{
-							Know(perception, targetEntity, targetPosition, Sense::Sight);
-						}
-					});
+					SenseInFront(world, physics, perception, eye, facing, perception.sightRange, perception.sightAngle, true, Sense::Sight);
+				}
+				if (perception.nearby)
+				{
+					SenseInFront(world, physics, perception, eye, facing, perception.nearbyRange, perception.nearbyAngle, false, Sense::Nearby);
 				}
 
-				// Hearing: new noises within how far they carry, which a wall in the way halves.
+				// Once it's after its target, it keeps track of it while nothing's in the way between them,
+				// to its chest or, crouched behind something low, its waist.
+				const bool targetHidden = perception.target != c_InvalidEntity && world.entities.HasComponent<PerceivableComponent>(perception.target)
+					&& world.entities.GetComponent<PerceivableComponent>(perception.target).hidden;
+				if (perception.tracking && perception.targetKnown && perception.target != c_InvalidEntity && !targetHidden
+					&& world.entities.HasComponent<TransformComponent>(perception.target))
+				{
+					const Vector3& targetPosition = world.entities.GetComponent<TransformComponent>(perception.target).world.position;
+					const bool inRange = perception.trackRange > 0.0f && (targetPosition - transform.position).Length() <= perception.trackRange;
+					if (inRange && (Clear(world, physics, eye, targetPosition + Vector3(0.0f, c_TargetChestHeight, 0.0f))
+						|| Clear(world, physics, eye, targetPosition + Vector3(0.0f, c_TargetWaistHeight, 0.0f))))
+					{
+						Know(perception, perception.target, targetPosition, Sense::Tracked);
+					}
+				}
+
+				// Hearing: each new noise once, if it carries to its feet. Hearing what it hunts, such as its
+				// footsteps, tells it where that is. What it does about any other noise is up to its brain.
 				if (perception.hearing)
 				{
+					uint newestId = perception.lastNoiseId;
 					for (const NoiseEvent& noise : world.noises)
 					{
-						if (noise.age > c_FreshNoise || noise.source == entity)
+						if (noise.age > c_FreshNoise || noise.source == entity || noise.id <= perception.lastNoiseId)
 						{
 							continue;
 						}
-						const float distance = (noise.position - eye).Length();
-						float reach = noise.radius * perception.hearingScale;
-						if (distance > reach)
+						newestId = std::max(newestId, noise.id);
+						if (!Hears(world, navmesh, physics, eye, transform.position, noise.position, noise.radius * perception.hearingScale))
 						{
 							continue;
 						}
-						if (!Clear(world, physics, eye, noise.position + Vector3(0.0f, 0.3f, 0.0f)))
+						// Its target hiding can only be heard working the hiding place's door, which gives away
+						// that it's in there.
+						const bool fromTarget = noise.source != c_InvalidEntity && world.entities.HasComponent<PerceivableComponent>(noise.source);
+						if (fromTarget && world.entities.GetComponent<PerceivableComponent>(noise.source).hidden)
 						{
-							reach *= 0.5f;
+							perception.heardHiddenTarget = noise.source;
 						}
-						if (distance > reach)
-						{
-							continue;
-						}
-						if (noise.source != c_InvalidEntity && world.entities.HasComponent<PerceivableComponent>(noise.source))
+						else if (fromTarget)
 						{
 							Know(perception, noise.source, noise.position, Sense::Hearing);
 						}
-						else
+						// The loudest one heard wins.
+						if (perception.heardNoise && noise.radius < perception.noiseRadius)
 						{
-							perception.heardOther = true;
-							perception.otherPosition = noise.position;
+							continue;
 						}
+						perception.heardNoise = true;
+						perception.noiseRadius = noise.radius;
+						perception.noisePosition = noise.position;
+						perception.noiseSource = noise.source != c_InvalidEntity && world.entities.HasComponent<PerceivableComponent>(noise.source)
+							? noise.source : c_InvalidEntity;
 					}
+					perception.lastNoiseId = newestId;
 				}
 
 				// Smell: the freshest scent of a target near its nose, which leads it along the trail.

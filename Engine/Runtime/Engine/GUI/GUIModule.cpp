@@ -11,11 +11,10 @@
 #include "Window/WindowModule.h"
 #include "Input/InputModule.h"
 #include "Input/InputManager.h"
+#include "AssetSystem/FontAsset.h"
 
-#define NK_INCLUDE_FIXED_TYPES
-#define NK_INCLUDE_VERTEX_BUFFER_OUTPUT
 #define NK_IMPLEMENTATION
-#include "nuklear.h"
+#include "GameUI.h"
 
 #if !TYR_FINAL
 #include "imgui.h"
@@ -35,6 +34,13 @@ namespace tyr
 		constexpr uint c_NuklearCmdMemorySize = 64 * 1024;
 		constexpr uint c_NuklearVertexMemorySize = 512 * 1024;
 		constexpr uint c_NuklearIndexMemorySize = 128 * 1024;
+		// Enough for the fonts' glyphs, and for the scratch memory baking them takes, the pixels included.
+		constexpr uint c_NuklearFontMemorySize = 256 * 1024;
+		constexpr uint c_NuklearFontScratchSize = 8 * 1024 * 1024;
+		constexpr size_t c_NuklearFontAlignment = 16;
+		// Pixel heights of the game UI's fonts, in GameFont order.
+		constexpr float c_GameFontSizes[] = { 22.0f, 36.0f, 24.0f };
+		static_assert(sizeof(c_GameFontSizes) / sizeof(c_GameFontSizes[0]) == static_cast<uint>(GameFont::Count), "Each game font needs a size.");
 
 		// Matches GUIVertex (Rendering/GUIDrawData.h) field for field, so nk_convert can write
 		// straight into that layout instead of Nuklear's own default vertex format.
@@ -45,6 +51,105 @@ namespace tyr
 			{ NK_VERTEX_COLOR, NK_FORMAT_R8G8B8A8, offsetof(GUIVertex, colour) },
 			{ NK_VERTEX_LAYOUT_END }
 		};
+
+		// Creates a GPU texture for UI pixels and queues them for upload.
+		TextureHandle CreateGUITexture(RendererAPI& rendererAPI, const char* name, uint width, uint height, const void* pixels, uint rowSize)
+		{
+			TextureDesc desc;
+			desc.debugName = name;
+			desc.info.width = width;
+			desc.info.height = height;
+			desc.info.depth = 1;
+			desc.info.arrayLayerCount = 1;
+			desc.info.mipCount = 1;
+			desc.info.format = PixelFormat::PF_R8G8B8A8_UNORM;
+			desc.info.type = ImageType::Image2D;
+			desc.sampleCount = SampleCount::OneBit;
+			desc.usage = static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_TRANSFER_DST_BIT);
+			desc.layout = ImageLayout::IMAGE_LAYOUT_GENERAL;
+
+			const TextureHandle handle = rendererAPI.CreateTexture(desc);
+
+			// Uploaded texture rows have to be padded to the row pitch alignment.
+			const uint alignedRowSize = MemoryUtil::Align(rowSize, RenderConstants::c_RowPitchAlignment);
+			UploadBufferAllocation alloc;
+			if (rendererAPI.RequestResourceUploadAllocation((size_t)alignedRowSize * height, alloc))
+			{
+				const uint8* src = static_cast<const uint8*>(pixels);
+				uint8* dst = static_cast<uint8*>(alloc.cpuPtr);
+				for (uint row = 0; row < height; ++row)
+				{
+					memcpy(dst + (size_t)row * alignedRowSize, src + (size_t)row * rowSize, rowSize);
+				}
+				rendererAPI.FlushBufferUploadAllocation(alloc);
+
+				TextureUploadRequest request;
+				request.srcBuffer = alloc.buffer;
+				request.srcOffset = alloc.offset;
+				request.dstTexture = handle;
+				request.highestMip = 0;
+				request.mipCount = 1;
+				request.type = TextureUploadRequestType::GUI;
+				request.resourceId = alloc.resourceId;
+				rendererAPI.AddTextureUploadRequest(request);
+			}
+
+			return handle;
+		}
+
+		// Memory for Nuklear's font baking, handed out from the bottom up like a stack. Freeing the
+		// newest block gives it back, along with any freed ones under it, which suits the rasteriser
+		// freeing each glyph's memory once it's drawn.
+		struct FontArena
+		{
+			uint8* data;
+			size_t capacity;
+			size_t used;
+			// Where the newest block's header is, or SIZE_MAX with none.
+			size_t top;
+			size_t peak;
+		};
+
+		struct FontBlock
+		{
+			size_t previousTop;
+			bool freed;
+		};
+
+		constexpr size_t c_FontBlockHeader = (sizeof(FontBlock) + c_NuklearFontAlignment - 1) & ~(c_NuklearFontAlignment - 1);
+
+		void* FontArenaAlloc(nk_handle handle, void* /*old*/, nk_size size)
+		{
+			FontArena& arena = *static_cast<FontArena*>(handle.ptr);
+			const size_t start = (arena.used + c_NuklearFontAlignment - 1) & ~(c_NuklearFontAlignment - 1);
+			if (start + c_FontBlockHeader + size > arena.capacity)
+			{
+				TYR_ASSERT(false);
+				return nullptr;
+			}
+			FontBlock* block = reinterpret_cast<FontBlock*>(arena.data + start);
+			block->previousTop = arena.top;
+			block->freed = false;
+			arena.top = start;
+			arena.used = start + c_FontBlockHeader + size;
+			arena.peak = std::max(arena.peak, arena.used);
+			return arena.data + start + c_FontBlockHeader;
+		}
+
+		void FontArenaFree(nk_handle handle, void* memory)
+		{
+			if (!memory)
+			{
+				return;
+			}
+			FontArena& arena = *static_cast<FontArena*>(handle.ptr);
+			reinterpret_cast<FontBlock*>(static_cast<uint8*>(memory) - c_FontBlockHeader)->freed = true;
+			while (arena.top != SIZE_MAX && reinterpret_cast<FontBlock*>(arena.data + arena.top)->freed)
+			{
+				arena.used = arena.top;
+				arena.top = reinterpret_cast<FontBlock*>(arena.data + arena.top)->previousTop;
+			}
+		}
 
 #if !TYR_FINAL
 		// ImTextureData::BackendUserData is our one slot for backend bookkeeping - stash the
@@ -68,47 +173,7 @@ namespace tyr
 		// Creates a GPU texture for an ImGui texture and queues its pixels for upload.
 		TextureHandle CreateImGuiTexture(RendererAPI& rendererAPI, ImTextureData& tex)
 		{
-			TextureDesc desc;
-			desc.debugName = "ImGui Texture";
-			desc.info.width = (uint)tex.Width;
-			desc.info.height = (uint)tex.Height;
-			desc.info.depth = 1;
-			desc.info.arrayLayerCount = 1;
-			desc.info.mipCount = 1;
-			desc.info.format = PixelFormat::PF_R8G8B8A8_UNORM;
-			desc.info.type = ImageType::Image2D;
-			desc.sampleCount = SampleCount::OneBit;
-			desc.usage = static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_TRANSFER_DST_BIT);
-			desc.layout = ImageLayout::IMAGE_LAYOUT_GENERAL;
-
-			const TextureHandle handle = rendererAPI.CreateTexture(desc);
-
-			// Uploaded texture rows have to be padded to the row pitch alignment.
-			const uint rowSize = (uint)tex.GetPitch();
-			const uint alignedRowSize = MemoryUtil::Align(rowSize, RenderConstants::c_RowPitchAlignment);
-			UploadBufferAllocation alloc;
-			if (rendererAPI.RequestResourceUploadAllocation((size_t)alignedRowSize * tex.Height, alloc))
-			{
-				const uint8* src = static_cast<const uint8*>(tex.GetPixels());
-				uint8* dst = static_cast<uint8*>(alloc.cpuPtr);
-				for (int row = 0; row < tex.Height; ++row)
-				{
-					memcpy(dst + (size_t)row * alignedRowSize, src + (size_t)row * rowSize, rowSize);
-				}
-				rendererAPI.FlushBufferUploadAllocation(alloc);
-
-				TextureUploadRequest request;
-				request.srcBuffer = alloc.buffer;
-				request.srcOffset = alloc.offset;
-				request.dstTexture = handle;
-				request.highestMip = 0;
-				request.mipCount = 1;
-				request.type = TextureUploadRequestType::GUI;
-				request.resourceId = alloc.resourceId;
-				rendererAPI.AddTextureUploadRequest(request);
-			}
-
-			return handle;
+			return CreateGUITexture(rendererAPI, "ImGui Texture", (uint)tex.Width, (uint)tex.Height, tex.GetPixels(), (uint)tex.GetPitch());
 		}
 
 		// (Win32 virtual-key code, ImGuiKey) pairs - not exhaustive, just enough for menus,
@@ -181,10 +246,9 @@ namespace tyr
 		m_NuklearIndexMemory.Resize(c_NuklearIndexMemorySize);
 
 		m_NuklearContext = new nk_context();
-		// No font set up yet - baking one needs stb_truetype/stb_rect_pack, which aren't
-		// vendored yet. Text won't render until that's done; layout and non-text widgets
-		// still work without it.
 		nk_init_fixed(m_NuklearContext, m_NuklearContextMemory.Data(), m_NuklearContextMemory.Size(), nullptr);
+		const FontFile* noFiles[static_cast<uint>(GameFont::Count)] = {};
+		CreateGameFonts(noFiles);
 
 #if !TYR_FINAL
 		m_ImGuiContext = ImGui::CreateContext();
@@ -213,6 +277,129 @@ namespace tyr
 		nk_free(m_NuklearContext);
 		delete m_NuklearContext;
 		m_NuklearContext = nullptr;
+
+		// The fonts' memory is the module's own, so the atlas has nothing of its own to free.
+		delete m_FontAtlas;
+		m_FontAtlas = nullptr;
+		m_RendererAPI->DeleteTexture(m_FontTexture);
+	}
+
+	void GUIModule::SetGameFonts(const FontFile* const* files)
+	{
+		// Everything the old fonts had was in the module's memory, which the new ones reuse.
+		delete m_FontAtlas;
+		m_FontAtlas = nullptr;
+		for (nk_font*& font : m_Fonts)
+		{
+			font = nullptr;
+		}
+		m_RendererAPI->DeleteTexture(m_FontTexture);
+		m_FontTexture = {};
+		CreateGameFonts(files);
+	}
+
+	void GUIModule::CreateGameFonts(const FontFile* const* files)
+	{
+		// The fonts are kept in the module's memory. Baking's scratch memory is only needed until
+		// it's done.
+		m_NuklearFontMemory.Resize(c_NuklearFontMemorySize);
+		Array<uint8> scratch(Array<uint8>::UninitializedTag{}, c_NuklearFontScratchSize);
+		FontArena permanentArena{ m_NuklearFontMemory.Data(), m_NuklearFontMemory.Size(), 0, SIZE_MAX, 0 };
+		FontArena scratchArena{ scratch.Data(), scratch.Size(), 0, SIZE_MAX, 0 };
+		nk_allocator permanent;
+		permanent.userdata = nk_handle_ptr(&permanentArena);
+		permanent.alloc = &FontArenaAlloc;
+		permanent.free = &FontArenaFree;
+		nk_allocator temporary = permanent;
+		temporary.userdata = nk_handle_ptr(&scratchArena);
+
+		m_FontAtlas = new nk_font_atlas();
+		nk_font_atlas_init_custom(m_FontAtlas, &permanent, &temporary);
+		nk_font_atlas_begin(m_FontAtlas);
+		for (uint i = 0; i < static_cast<uint>(GameFont::Count); ++i)
+		{
+			if (files[i] && !files[i]->data.IsEmpty())
+			{
+				// Read from the file while baking rather than copied, as it outlives the baking.
+				struct nk_font_config config = nk_font_config(c_GameFontSizes[i]);
+				config.ttf_blob = const_cast<uint8*>(files[i]->data.Data());
+				config.ttf_size = files[i]->data.Size();
+				config.ttf_data_owned_by_atlas = 1;
+				// Drawn at whole pixels, so letters stay sharp.
+				config.pixel_snap = 1;
+				config.oversample_h = 1;
+				config.oversample_v = 1;
+				m_Fonts[i] = nk_font_atlas_add(m_FontAtlas, &config);
+			}
+			if (!m_Fonts[i])
+			{
+				m_Fonts[i] = nk_font_atlas_add_default(m_FontAtlas, c_GameFontSizes[i], nullptr);
+			}
+		}
+		int width = 0;
+		int height = 0;
+		const void* pixels = nk_font_atlas_bake(m_FontAtlas, &width, &height, NK_FONT_ATLAS_RGBA32);
+		if (!pixels)
+		{
+			delete m_FontAtlas;
+			m_FontAtlas = nullptr;
+			for (nk_font*& font : m_Fonts)
+			{
+				font = nullptr;
+			}
+			// A broken font file falls back on Nuklear's own font.
+			bool anyFiles = false;
+			for (uint i = 0; i < static_cast<uint>(GameFont::Count); ++i)
+			{
+				anyFiles = anyFiles || files[i];
+			}
+			TYR_LOG_ERROR("Couldn't bake the game UI's fonts.");
+			if (anyFiles)
+			{
+				const FontFile* noFiles[static_cast<uint>(GameFont::Count)] = {};
+				CreateGameFonts(noFiles);
+			}
+			return;
+		}
+		m_FontTexture = CreateGUITexture(*m_RendererAPI, "Game UI Font", (uint)width, (uint)height, pixels, (uint)width * 4);
+
+		// +1 so a texture at index 0 isn't mistaken for none.
+		nk_draw_null_texture whiteTexel;
+		nk_font_atlas_end(m_FontAtlas, nk_handle_id((int)m_FontTexture.h.index + 1), &whiteTexel);
+		m_WhiteTexelUV = Vector2(whiteTexel.uv.x, whiteTexel.uv.y);
+		TYR_LOG_INFO("Baked the game UI's fonts into %dx%d, using %u KB of font memory and %u KB of scratch at most.", width, height,
+			static_cast<uint>(permanentArena.peak / 1024), static_cast<uint>(scratchArena.peak / 1024));
+		// The allocator only lived for the baking, and nothing calls it after this.
+		m_FontAtlas->permanent = {};
+		m_FontAtlas->temporary = {};
+		nk_style_set_font(m_NuklearContext, &m_Fonts[static_cast<uint>(GameFont::Body)]->handle);
+	}
+
+	const nk_user_font* GUIModule::GetGameFont(GameFont font) const
+	{
+		const nk_font* baked = m_Fonts[static_cast<uint>(font)];
+		return baked ? &baked->handle : nullptr;
+	}
+
+	void GUIModule::SetGameViewRect(float x, float y, float width, float height)
+	{
+		m_HasGameViewRect = true;
+		m_GameViewX = x;
+		m_GameViewY = y;
+		m_GameViewWidth = width;
+		m_GameViewHeight = height;
+	}
+
+	Vector2 GUIModule::GetWindowSize() const
+	{
+		return m_WindowModule
+			? Vector2((float)m_WindowModule->GetWindowWidth(m_Window), (float)m_WindowModule->GetWindowHeight(m_Window))
+			: Vector2(1920.0f, 1080.0f);
+	}
+
+	Vector2 GUIModule::GetGameViewSize() const
+	{
+		return m_HasGameViewRect ? Vector2(m_GameViewWidth, m_GameViewHeight) : GetWindowSize();
 	}
 
 	void GUIModule::BeginFrame()
@@ -242,16 +429,11 @@ namespace tyr
 	void GUIModule::Update(float deltaTime)
 	{
 		// Must run after every module that draws UI widgets, and before RendererModule's own
-		// Update - module registration order controls this.
+		// Update, as the update order in EngineLoop has it.
 
 		// The update loop can tick more than once before a render frame slot is actually
 		// consumed - reset first so a stale submission never sits alongside a new one.
 		m_RendererAPI->ResetGUIDrawData();
-
-		// Nuklear is for the in-game HUD, not used anywhere yet - not calling this keeps it
-		// from converting/submitting/drawing anything, while keeping the implementation ready
-		// for when the HUD starts using it.
-		// SubmitNuklearDrawData();
 
 #if !TYR_FINAL
 		ImGui::SetCurrentContext(m_ImGuiContext);
@@ -259,6 +441,9 @@ namespace tyr
 		ProcessImGuiTextures();
 		SubmitImGuiDrawData();
 #endif
+
+		// After ImGui, so the game's UI is drawn over the editor's viewport showing the game.
+		SubmitNuklearDrawData();
 	}
 
 	void GUIModule::SubmitNuklearDrawData()
@@ -278,8 +463,8 @@ namespace tyr
 		config.vertex_layout = g_NuklearVertexLayout;
 		config.vertex_size = sizeof(GUIVertex);
 		config.vertex_alignment = alignof(GUIVertex);
-		// No white-pixel texture set up yet - solid shape fills won't sample correctly until
-		// a real font atlas exists.
+		config.tex_null.texture = nk_handle_id((int)m_FontTexture.h.index + 1);
+		config.tex_null.uv = nk_vec2(m_WhiteTexelUV.x, m_WhiteTexelUV.y);
 
 		nk_convert(m_NuklearContext, &cmds, &vertices, &indices, &config);
 
@@ -294,12 +479,17 @@ namespace tyr
 			// Must be the real window size - the shader divides by this to build its
 			// scale/translate, so a zero or placeholder size would corrupt every vertex's
 			// clip-space position.
-			m_NuklearDrawData.displaySize = m_WindowModule
-				? Vector2((float)m_WindowModule->GetWindowWidth(m_Window), (float)m_WindowModule->GetWindowHeight(m_Window))
-				: Vector2(1920.0f, 1080.0f);
+			m_NuklearDrawData.displaySize = GetWindowSize();
 
 			m_NuklearDrawData.vertices.Resize(vertexCount);
 			memcpy(m_NuklearDrawData.vertices.Data(), nk_buffer_memory_const(&vertices), vertexCount * sizeof(GUIVertex));
+			// Laid out in the game view's own space, and moved to where it is in the window.
+			const Vector2 viewOffset = m_HasGameViewRect ? Vector2(m_GameViewX, m_GameViewY) : Vector2(0.0f, 0.0f);
+			const Vector2 viewSize = GetGameViewSize();
+			for (GUIVertex& vertex : m_NuklearDrawData.vertices)
+			{
+				vertex.pos = vertex.pos + viewOffset;
+			}
 			m_NuklearDrawData.indices.Resize(indexCount);
 			memcpy(m_NuklearDrawData.indices.Data(), nk_buffer_memory_const(&indices), indexCount * sizeof(nk_draw_index));
 
@@ -312,12 +502,11 @@ namespace tyr
 					continue;
 				}
 
-				// Nuklear's clip rects can reach far past the screen, which a scissor can't.
-				const Vector2& displaySize = m_NuklearDrawData.displaySize;
-				const float clipMinX = std::max(cmd->clip_rect.x, 0.0f);
-				const float clipMinY = std::max(cmd->clip_rect.y, 0.0f);
-				const float clipMaxX = std::min(cmd->clip_rect.x + cmd->clip_rect.w, displaySize.x);
-				const float clipMaxY = std::min(cmd->clip_rect.y + cmd->clip_rect.h, displaySize.y);
+				// Nuklear's clip rects can reach far past the view, which a scissor can't.
+				const float clipMinX = std::max(cmd->clip_rect.x, 0.0f) + viewOffset.x;
+				const float clipMinY = std::max(cmd->clip_rect.y, 0.0f) + viewOffset.y;
+				const float clipMaxX = std::min(cmd->clip_rect.x + cmd->clip_rect.w, viewSize.x) + viewOffset.x;
+				const float clipMaxY = std::min(cmd->clip_rect.y + cmd->clip_rect.h, viewSize.y) + viewOffset.y;
 				if (clipMaxX <= clipMinX || clipMaxY <= clipMinY)
 				{
 					indexOffset += cmd->elem_count;
@@ -329,7 +518,7 @@ namespace tyr
 				drawCommand.clipMinY = (uint)clipMinY;
 				drawCommand.clipMaxX = (uint)clipMaxX;
 				drawCommand.clipMaxY = (uint)clipMaxY;
-				drawCommand.textureIndex = (uint)cmd->texture.id;
+				drawCommand.textureIndex = (uint)cmd->texture.id - 1;
 				drawCommand.indexOffset = indexOffset;
 				drawCommand.indexCount = cmd->elem_count;
 

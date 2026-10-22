@@ -7,32 +7,19 @@ namespace tyr
 	namespace
 	{
 		// How bright a flickering fixture is when it drops out, so it never goes fully dark.
-		constexpr float c_FlickerLow = 0.08f;
+		constexpr float c_FlickerLow = 0.3f;
 	}
 
 	namespace Power
 	{
-		void Update(World& world)
-		{
-			bool hasGenerator = false;
-			bool running = false;
-			world.entities.ForEach<GeneratorComponent>([&hasGenerator, &running](Entity /*entity*/, GeneratorComponent& generator)
-			{
-				hasGenerator = true;
-				running = running || generator.running;
-			});
-			world.powered = !world.simulate || !hasGenerator || running;
-		}
-
 		bool IsOn(const World& world)
 		{
-			return world.powered;
+			return !world.simulate || world.powered;
 		}
 
-		void StartGenerator(World& world, Entity generator)
+		void SetOn(World& world, bool on)
 		{
-			world.entities.GetComponent<GeneratorComponent>(generator).running = true;
-			world.powered = true;
+			world.powered = on;
 		}
 
 		void ToggleSwitch(World& world, Entity lightSwitch)
@@ -69,14 +56,16 @@ namespace tyr
 				return 1.0f;
 			}
 
-			// Mostly lit, with short drop-outs that sometimes come a few at a time.
+			// Steadily lit for a few seconds, then a quick burst of a few dips, like a failing tube.
 			fixture.flickerTimer -= deltaTime;
 			if (fixture.flickerTimer <= 0.0f)
 			{
 				fixture.flickerSeed = fixture.flickerSeed * 1664525u + 1013904223u;
 				const float random = static_cast<float>(fixture.flickerSeed >> 8) * (1.0f / 16777216.0f);
 				fixture.flickerLit = !fixture.flickerLit;
-				fixture.flickerTimer = fixture.flickerLit ? 0.04f + random * random * 3.0f : 0.03f + random * 0.15f;
+				const bool burstGoesOn = random < 0.6f;
+				fixture.flickerTimer = !fixture.flickerLit ? 0.04f + random * 0.08f
+					: burstGoesOn ? 0.05f + random * 0.12f : 2.0f + (random - 0.6f) * 10.0f;
 			}
 			return fixture.flickerLit ? 1.0f : c_FlickerLow;
 		}

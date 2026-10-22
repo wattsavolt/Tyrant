@@ -34,7 +34,12 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 	const float edge = saturate(dot(fromCentre, fromCentre) * 0.5f);
 	const float flash = saturate(g_PushConstants.flash * (0.3f + 0.7f * edge));
 	const float3 flashColour = float3(g_PushConstants.flashR, g_PushConstants.flashG, g_PushConstants.flashB);
-	const float3 shown = lerp(mapped, flashColour, flash) * (1.0f - saturate(g_PushConstants.fade));
+	// Wounds darken the edges to blood red, reaching further in the worse they are.
+	const float wounds = saturate(g_PushConstants.wounds);
+	const float2 squashed = fromCentre * float2(1.0f, 0.8f);
+	const float woundEdge = smoothstep(1.25f - wounds * 0.75f, 1.45f - wounds * 0.45f, length(squashed)) * (0.35f + 0.6f * wounds);
+	const float3 wounded = lerp(mapped, float3(0.22f, 0.0f, 0.0f), woundEdge * step(0.001f, wounds));
+	const float3 shown = lerp(wounded, flashColour, flash) * (1.0f - saturate(g_PushConstants.fade));
 	outputImages[g_PushConstants.renderFrameIndex][dispatchThreadId.xy] = float4(shown * g_PushConstants.outputScale, 1.0f);
 }
 

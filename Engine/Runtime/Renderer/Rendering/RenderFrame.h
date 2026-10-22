@@ -158,7 +158,7 @@ namespace tyr
 		// must stay alive until this slot's GPU work is confirmed done.
 		Array<RenderBufferHandle> buffersToDelete;
 		float deltaTime;
-		// Default-constructs to invalid (falsy) - no separate sentinel needed.
+		// Default-constructs to invalid (false) - no separate sentinel needed.
 		SceneHandle activeScene;
 		// Set via RendererAPI::SetQualityLevel - merged into Renderer's own quality settings by
 		// RenderAsync, the same one-shot-request pattern SceneFrame::newRenderViewport uses.

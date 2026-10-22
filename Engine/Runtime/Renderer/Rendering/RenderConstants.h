@@ -111,10 +111,12 @@ namespace tyr
 		// This could be increased later
 		static constexpr uint c_MaxViewsPerFrame = c_MaxViewsPerScene;
 		static constexpr uint c_MaxViews = c_MaxViewsPerFrame * c_BufferedFrameCount;
+		// The game's world and a couple shown instead of it, such as an item being looked at. The
+		// editor adds the level being edited and room for another view of its own.
 #if TYR_EDITOR
-		static constexpr uint c_MaxScenes = 4;
+		static constexpr uint c_MaxScenes = 5;
 #else
-		static constexpr uint c_MaxScenes = 1;
+		static constexpr uint c_MaxScenes = 3;
 #endif
 	};
 	

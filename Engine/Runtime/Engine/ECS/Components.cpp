@@ -94,6 +94,41 @@ namespace tyr
 		TYR_COMPONENT_FIELD(&PointLightComponent::attenuation, "Attenuation", true, true, true);
 		TYR_COMPONENT_FIELD(&PointLightComponent::castsShadow, "Casts Shadow", true, true, true);
 		TYR_COMPONENT_FIELD(&PointLightComponent::outdoor, "Outdoor", true, true, true);
+		TYR_COMPONENT_FIELD(&PointLightComponent::needsPower, "Needs Power", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(EmitterComponent, 0);
+		TYR_COMPONENT_FIELD(&EmitterComponent::texture, "Texture", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::columns, "Columns", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::rows, "Rows", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::frameRate, "Frame Rate", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::randomStartFrame, "Random Start Frame", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::burst, "Burst", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::burstAtStart, "Burst At Start", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::rate, "Rate", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::duration, "Duration", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::lifeMin, "Life Min", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::lifeMax, "Life Max", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::speedMin, "Speed Min", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::speedMax, "Speed Max", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::spreadAngle, "Spread Angle", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::spawnRadius, "Spawn Radius", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::gravity, "Gravity", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::floorDistance, "Floor Distance", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::drag, "Drag", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::startSize, "Start Size", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::endSize, "End Size", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::sizeVariation, "Size Variation", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::spinMin, "Spin Min", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::spinMax, "Spin Max", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::randomRotation, "Random Rotation", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::stretch, "Stretch", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::startColour, "Start Colour", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::endColour, "End Colour", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::brightness, "Brightness", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::additive, "Additive", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::softness, "Softness", true, true, true);
+		TYR_COMPONENT_FIELD(&EmitterComponent::removeWhenDone, "Remove When Done", true, true, true);
 	TYR_COMPONENT_END();
 
 	TYR_COMPONENT_START(DecalComponent, 0);
@@ -114,6 +149,7 @@ namespace tyr
 		TYR_COMPONENT_FIELD(&SpotLightComponent::attenuation, "Attenuation", true, true, true);
 		TYR_COMPONENT_FIELD(&SpotLightComponent::castsShadow, "Casts Shadow", true, true, true);
 		TYR_COMPONENT_FIELD(&SpotLightComponent::outdoor, "Outdoor", true, true, true);
+		TYR_COMPONENT_FIELD(&SpotLightComponent::needsPower, "Needs Power", true, true, true);
 	TYR_COMPONENT_END();
 
 	TYR_COMPONENT_START(DoorComponent, 0);
@@ -124,7 +160,9 @@ namespace tyr
 		TYR_COMPONENT_FIELD(&DoorComponent::openTime, "Open Time", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorComponent::burstOpenTime, "Burst Open Time", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorComponent::lock, "Lock", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorComponent::unlocksFromBack, "Unlocks From Back", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorComponent::key, "Key", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorComponent::lockedRemark, "Locked Remark", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorComponent::linkedDoor, "Linked Door", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorComponent::openSound, "Open Sound", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorComponent::closeSound, "Close Sound", true, true, true);
@@ -137,6 +175,8 @@ namespace tyr
 		TYR_COMPONENT_FIELD(&DoorPanelComponent::door, "Door", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorPanelComponent::key, "Key", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorPanelComponent::powered, "Powered", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorPanelComponent::lockedRemark, "Locked Remark", true, true, true);
+		TYR_COMPONENT_FIELD(&DoorPanelComponent::unpoweredRemark, "Unpowered Remark", true, true, true);
 		TYR_COMPONENT_FIELD(&DoorPanelComponent::useSound, "Use Sound", true, true, true);
 	TYR_COMPONENT_END();
 
@@ -172,18 +212,24 @@ namespace tyr
 
 	TYR_COMPONENT_START(PerceptionComponent, 0);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::touchRange, "Touch Range", true, true, true);
+		TYR_COMPONENT_FIELD(&PerceptionComponent::bodyLength, "Body Length", true, true, true);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::nearby, "Nearby", true, true, true);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::nearbyRange, "Nearby Range", true, true, true);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::nearbyAngle, "Nearby Angle", true, true, true);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::trackRange, "Track Range", true, true, true);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::hearing, "Hearing", true, true, true);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::hearingScale, "Hearing Scale", true, true, true);
+		TYR_COMPONENT_FIELD(&PerceptionComponent::quietBehind, "Quiet Behind", true, true, true);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::smell, "Smell", true, true, true);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::smellRange, "Smell Range", true, true, true);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::smellMaxAge, "Smell Max Age", true, true, true);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::sight, "Sight", true, true, true);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::sightRange, "Sight Range", true, true, true);
 		TYR_COMPONENT_FIELD(&PerceptionComponent::sightAngle, "Sight Angle", true, true, true);
+		TYR_COMPONENT_FIELD(&PerceptionComponent::sightNeedsLight, "Sight Needs Light", true, true, true);
+		TYR_COMPONENT_FIELD(&PerceptionComponent::fullLight, "Full Light", true, true, true);
+		TYR_COMPONENT_FIELD(&PerceptionComponent::darkLight, "Dark Light", true, true, true);
+		TYR_COMPONENT_FIELD(&PerceptionComponent::carriedLightShare, "Carried Light Share", true, true, true);
 	TYR_COMPONENT_END();
 
 	TYR_COMPONENT_START(LimbCollisionComponent, 0);
@@ -245,5 +291,15 @@ namespace tyr
 	TYR_COMPONENT_START(ActivatorComponent, 0);
 		TYR_COMPONENT_FIELD(&ActivatorComponent::kind, "Kind", true, true, true);
 		TYR_COMPONENT_FIELD(&ActivatorComponent::action, "Action", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(PowerZoneComponent, 0);
+		TYR_COMPONENT_FIELD(&PowerZoneComponent::halfExtents, "Half Extents", true, true, true);
+		TYR_COMPONENT_FIELD(&PowerZoneComponent::zone, "Zone", true, true, true);
+		TYR_COMPONENT_FIELD(&PowerZoneComponent::name, "Name", true, true, true);
+	TYR_COMPONENT_END();
+
+	TYR_COMPONENT_START(ExamineComponent, 0);
+		TYR_COMPONENT_FIELD(&ExamineComponent::remark, "Remark", true, true, true);
 	TYR_COMPONENT_END();
 }

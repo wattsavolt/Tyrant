@@ -33,6 +33,11 @@ namespace tyr
 			{
 				return entities.GetComponent<FlashlightComponent>(entity).on ? 1.0f : 0.0f;
 			}
+			if ((entities.HasComponent<PointLightComponent>(entity) && entities.GetComponent<PointLightComponent>(entity).unpowered)
+				|| (entities.HasComponent<SpotLightComponent>(entity) && entities.GetComponent<SpotLightComponent>(entity).unpowered))
+			{
+				return 0.0f;
+			}
 			if (entities.HasComponent<LightFixtureComponent>(entity))
 			{
 				const float brightness = entities.GetComponent<LightFixtureComponent>(entity).brightness;

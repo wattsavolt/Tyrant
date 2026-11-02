@@ -611,7 +611,8 @@ namespace tyr
 
 		if (m_PlayState == PlayState::Playing)
 		{
-			// A controller takes over the game with any of its main buttons, and gives the editor back with View.
+			// A controller takes over the game with any of its main buttons. Its View button is the game's map,
+			// so only Escape gives the editor back.
 			const GamepadButton padTakeOver[] = { GamepadButton::A, GamepadButton::B, GamepadButton::X, GamepadButton::Y, GamepadButton::Start };
 			bool padPressed = false;
 			for (GamepadButton button : padTakeOver)
@@ -622,7 +623,7 @@ namespace tyr
 			{
 				SetGameInputCaptured(true);
 			}
-			else if (m_GameInputCaptured && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || m_InputManager->IsGamepadButtonPressed(GamepadButton::Back)))
+			else if (m_GameInputCaptured && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
 			{
 				SetGameInputCaptured(false);
 			}
@@ -1420,6 +1421,7 @@ namespace tyr
 			const Vector3 cameraForward = m_Camera->GetForward();
 			m_App.SetFallbackStart(m_Camera->GetPosition() - Vector3(0.0f, c_FallbackEyeHeight, 0.0f), Math::Atan2(cameraForward.x, cameraForward.z));
 			m_EditorUI->ApplyRenderSettings(false);
+			m_EditorUI->SetGameRunning(true);
 			m_App.Initialize();
 		}
 		else if (state == PlayState::Editing)
@@ -1427,6 +1429,7 @@ namespace tyr
 			m_App.Shutdown();
 			m_WorldManager->SetActiveWorld(m_LevelEditorWorld);
 			m_EditorUI->ApplyRenderSettings(true);
+			m_EditorUI->SetGameRunning(false);
 		}
 		m_PlayState = state;
 

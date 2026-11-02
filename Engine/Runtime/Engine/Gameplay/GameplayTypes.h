@@ -76,7 +76,10 @@ namespace tyr
 		// Never lights.
 		Broken,
 		// Lights, but keeps dropping out.
-		Flickering
+		Flickering,
+		// Broken but still live: dark, but while it has power it now and then flashes and gives off
+		// a burst from its EmitterComponent, such as sparks.
+		Sparking
 	};
 
 	// Names for keys and other items, such as "Red Keycard".
@@ -87,6 +90,9 @@ namespace tyr
 
 	// A sound event's path, such as "event:/Doors/Open". Empty plays nothing.
 	using SoundName = LocalString<47>;
+
+	// A line the player says to themselves, such as "It's locked. Looks like I need a key."
+	using RemarkText = LocalString<95>;
 
 	// A sound asked for this frame, played once at a position.
 	struct SoundRequest

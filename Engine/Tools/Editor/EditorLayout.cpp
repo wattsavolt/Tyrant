@@ -27,6 +27,30 @@ namespace tyr
 		return panels;
 	}
 
+	void EditorLayout::SetGameRunning(bool running)
+	{
+		if (running == m_GameRunning)
+		{
+			return;
+		}
+		m_GameRunning = running;
+		if (running)
+		{
+			m_LeftBeforeGame = m_LeftCollapsed;
+			m_RightBeforeGame = m_RightCollapsed;
+			m_BottomBeforeGame = m_BottomCollapsed;
+			m_LeftCollapsed = true;
+			m_RightCollapsed = true;
+			m_BottomCollapsed = true;
+		}
+		else
+		{
+			m_LeftCollapsed = m_LeftBeforeGame;
+			m_RightCollapsed = m_RightBeforeGame;
+			m_BottomCollapsed = m_BottomBeforeGame;
+		}
+	}
+
 	bool EditorLayout::BeginPanel(const char* name, const PanelRect& rect, bool& collapsed, bool showTitle)
 	{
 		ImGui::SetNextWindowPos(ImVec2(rect.x, rect.y));

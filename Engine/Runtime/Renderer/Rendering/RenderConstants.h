@@ -9,6 +9,7 @@
 #include "RenderAPI/AccelerationStructure.h"
 #include "Rendering/GUIDrawData.h"
 #include "Rendering/DebugLineTypes.h"
+#include "Rendering/ParticleTypes.h"
 
 namespace tyr
 {
@@ -28,6 +29,9 @@ namespace tyr
 		// Per buffered RenderFrame slot, like the GUI buffers.
 		static constexpr uint c_MaxDebugLineVertices = 65536;
 		static constexpr size_t c_DebugLineVertexBufferSize = c_MaxDebugLineVertices * sizeof(DebugLineVertex);
+		// The most particles drawn in a frame, per buffered RenderFrame slot.
+		static constexpr uint c_MaxParticles = 8192;
+		static constexpr size_t c_ParticleBufferSize = c_MaxParticles * sizeof(ParticleInstance);
 		// Per-frame BLAS build budget, in bytes of mesh geometry. Pending meshes are processed
 		// in request order until adding the next would exceed this, with at least one always
 		// processed so an oversized mesh alone can't stall the queue.

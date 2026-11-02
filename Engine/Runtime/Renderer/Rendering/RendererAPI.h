@@ -39,6 +39,7 @@ namespace tyr
 	struct DecalInfo;
 	struct GUIDrawData;
 	struct DebugLineVertex;
+	struct ParticleInstance;
 	struct ViewportGridDesc;
 	enum class QualityLevel : uint8;
 
@@ -215,6 +216,10 @@ namespace tyr
 		// This frame's debug lines for the active viewport, as pairs of vertices. The depth-tested
 		// ones are hidden behind the scene, the others drawn on top. Call at most once a frame.
 		void SubmitDebugLines(const DebugLineVertex* depthTested, uint depthTestedCount, const DebugLineVertex* onTop, uint onTopCount);
+
+		// This frame's particles for the active viewport, furthest from the camera first, drawn
+		// over the lit scene before anti-aliasing. Call at most once a frame.
+		void SubmitParticles(const ParticleInstance* particles, uint count);
 
 		// Takes effect from next tick's RenderAsync onward - queued through RenderFrame the same
 		// one-shot way SetSceneRenderViewport is, since RenderAsync runs on a worker thread.

@@ -5,6 +5,7 @@
 #include "Math/Vector3.h"
 #include "ECS/EntitySystem.h"
 #include "String/LocalString.h"
+#include "Gameplay/GameplayTypes.h"
 
 namespace tyr
 {
@@ -12,7 +13,7 @@ namespace tyr
 	class WorldManager;
 	class InputManager;
 
-	using InteractionText = LocalString<63>;
+	using InteractionText = RemarkText;
 
 	// Lets a game add its own things to use, such as a hiding place, and take over the use button
 	// while there's only one thing to do, such as get back out of one.
@@ -43,7 +44,7 @@ namespace tyr
 		// The entity at or above the one hit that can be used, such as a door, panel or pickup.
 		TYR_ENGINE_API Entity FindUsable(const World& world, Entity hit);
 
-		// What using it would do, such as "[E] Open" or "[E] Take Red Keycard", shown with the button that uses it.
+		// What using it would do, such as "[E] Open", "[E] Examine" or "[E] Take Red Keycard", shown with the button that uses it.
 		TYR_ENGINE_API void Describe(const World& world, Entity target, InteractionText& outText, const char* useButton = "E");
 
 		// Uses it on behalf of the user, whose inventory holds any keys. Returns false when
@@ -52,15 +53,21 @@ namespace tyr
 	}
 
 	// Lets the player use whatever they look at within reach, with E or the gamepad's X button.
-	// Shows what it would do, and why when it can't.
+	// Shows what it would do, and why when it can't, unless the game takes that message to show itself.
 	class TYR_ENGINE_API InteractionController final
 	{
 	public:
 		void Update(WorldManager& worldManager, Handle worldHandle, Entity user, const InputManager& input, float deltaTime, bool hasInput);
 
+		// The message the last use left, such as a remark at a locked door, for the game to show
+		// instead. False when there's no new one.
+		bool TakeMessage(InteractionText& outMessage);
+
 	private:
 		InteractionText m_Message;
 		Vector3 m_MessagePosition;
 		float m_MessageTime = 0.0f;
+		bool m_MessageNew = false;
+		bool m_MessageTaken = false;
 	};
 }

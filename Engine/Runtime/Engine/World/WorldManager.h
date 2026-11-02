@@ -7,6 +7,7 @@
 #include "Animation/AnimationSystem.h"
 #include "Physics/PhysicsComponentsManager.h"
 #include "Navigation/NavmeshComponentsManager.h"
+#include "Particles/ParticleSystem.h"
 #include "AudioTypes.h"
 
 namespace tyr
@@ -35,6 +36,9 @@ namespace tyr
 		void Update(float deltaTime);
 
 		void UpdateWorld(Handle worldHandle, World& world, float deltaTime);
+		// Moves the active world's particles on, takes out emitters made while playing once they're
+		// done, and hands the particles to the renderer.
+		void UpdateParticles(World& world, float deltaTime);
 
 		Handle AddWorld(const WorldConfig& params);
 
@@ -89,6 +93,9 @@ namespace tyr
 
 		// Redraws an entity where its transform has been moved to, such as by the game.
 		void UpdateEntityTransform(Handle worldHandle, Entity entity);
+		// Stops drawing the entity's mesh or skeletal mesh, or draws it again. Its mesh is let go
+		// while it's hidden.
+		void SetEntityHidden(Handle worldHandle, Entity entity, bool hidden);
 		// Takes out an entity that isn't part of an actor, such as one the game made while playing.
 		void RemoveEntity(Handle worldHandle, Entity entity);
 
@@ -127,6 +134,8 @@ namespace tyr
 		void ReleaseColliderMesh(World& world, ColliderComponent& collider);
 		// Works out the world's power, then switches its light fixtures' lights and glow to match.
 		void UpdateLightFixtures(World& world, float deltaTime);
+		// Darkens a plain light that needs power while there's none where it is.
+		void UpdatePoweredLight(World& world, Entity entity, bool worldPowered, int8& powerZone, bool& unpowered);
 		// Keeps held flashlights at the camera, once it's been placed this frame.
 		void UpdateFlashlights(World& world, float deltaTime);
 		// Works out whether the camera is indoors, switching outdoor lights off or on when that changes.
@@ -169,6 +178,8 @@ namespace tyr
 		AnimationSystem m_AnimationSystem;
 		PhysicsComponentsManager m_PhysicsComponentsManager;
 		NavmeshComponentsManager m_NavmeshComponentsManager;
+		// The active world's particles.
+		ParticleSystem m_ParticleSystem;
 		LocalObjectPool<World, c_MaxWorlds, ResetObjectPolicy> m_WorldPool;
 		LocalArray<Handle, c_MaxWorlds> m_Worlds;
 		Handle m_ActiveWorld;

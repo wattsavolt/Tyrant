@@ -3,6 +3,7 @@
 #include "World/World.h"
 #include "Physics/PhysicsComponentsManager.h"
 #include "Navigation/NavmeshComponentsManager.h"
+#include "Gameplay/LightLevel.h"
 #include "Math/Math.h"
 #include <algorithm>
 
@@ -151,6 +152,27 @@ namespace tyr
 			return true;
 		}
 
+		float DistanceToSegment(const Vector3& point, const Vector3& start, const Vector3& end)
+		{
+			const Vector3 along = end - start;
+			const float lengthSquared = along.Dot(along);
+			const float t = lengthSquared > 0.0f ? std::clamp((point - start).Dot(along) / lengthSquared, 0.0f, 1.0f) : 0.0f;
+			return (point - (start + along * t)).Length();
+		}
+
+		// How much of its sight range it sees the target at, from how lit the target is.
+		float GetLitShare(World& world, const PhysicsComponentsManager& physics, const PerceptionComponent& perception,
+			const PerceivableComponent& target, const Vector3& chest)
+		{
+			if (!perception.sightNeedsLight)
+			{
+				return 1.0f;
+			}
+			const float light = LightLevel::Get(world, physics, chest);
+			const float share = std::clamp((light - perception.darkLight) / std::max(perception.fullLight - perception.darkLight, 0.001f), 0.0f, 1.0f);
+			return std::max(share, target.carryingLight ? perception.carriedLightShare : 0.0f);
+		}
+
 		void Know(PerceptionComponent& perception, Entity target, const Vector3& position, Sense sense)
 		{
 			perception.targetKnown = true;
@@ -185,6 +207,10 @@ namespace tyr
 				{
 					return;
 				}
+				if (useVisibility && distance > range * target.visibility * GetLitShare(world, physics, perception, target, chest))
+				{
+					return;
+				}
 				if (Clear(world, physics, eye, chest))
 				{
 					Know(perception, targetEntity, targetPosition, sense);
@@ -211,13 +237,14 @@ namespace tyr
 				const Vector3 eye = transform.position + Vector3(0.0f, c_EyeHeight, 0.0f);
 				const Vector3 facing = transform.rotation.Rotate(Vector3::c_Forward);
 
-				// Touch: whatever it hunts, close enough to brush against.
+				// Touch: whatever it hunts, close enough to brush against anywhere along its body.
+				const Vector3 bodyEnd = transform.position + facing * perception.bodyLength;
 				world.entities.ForEach<PerceivableComponent>([&](Entity targetEntity, const PerceivableComponent& target)
 				{
 					if (!target.hidden && world.entities.HasComponent<TransformComponent>(targetEntity))
 					{
 						const Vector3& targetPosition = world.entities.GetComponent<TransformComponent>(targetEntity).world.position;
-						if ((targetPosition - transform.position).Length() <= perception.touchRange)
+						if (DistanceToSegment(targetPosition, transform.position, bodyEnd) <= perception.touchRange)
 						{
 							Know(perception, targetEntity, targetPosition, Sense::Touch);
 						}
@@ -236,13 +263,17 @@ namespace tyr
 
 				// Once it's after its target, it keeps track of it while nothing's in the way between them,
 				// to its chest or, crouched behind something low, its waist.
+				// One that needs light to see loses track of it in the dark.
 				const bool targetHidden = perception.target != c_InvalidEntity && world.entities.HasComponent<PerceivableComponent>(perception.target)
 					&& world.entities.GetComponent<PerceivableComponent>(perception.target).hidden;
 				if (perception.tracking && perception.targetKnown && perception.target != c_InvalidEntity && !targetHidden
 					&& world.entities.HasComponent<TransformComponent>(perception.target))
 				{
 					const Vector3& targetPosition = world.entities.GetComponent<TransformComponent>(perception.target).world.position;
-					const bool inRange = perception.trackRange > 0.0f && (targetPosition - transform.position).Length() <= perception.trackRange;
+					const float distance = (targetPosition - transform.position).Length();
+					const bool inRange = perception.trackRange > 0.0f && distance <= perception.trackRange
+						&& (!perception.sightNeedsLight || distance <= perception.trackRange * GetLitShare(world, physics, perception,
+							world.entities.GetComponent<PerceivableComponent>(perception.target), targetPosition + Vector3(0.0f, c_TargetChestHeight, 0.0f)));
 					if (inRange && (Clear(world, physics, eye, targetPosition + Vector3(0.0f, c_TargetChestHeight, 0.0f))
 						|| Clear(world, physics, eye, targetPosition + Vector3(0.0f, c_TargetWaistHeight, 0.0f))))
 					{
@@ -262,13 +293,18 @@ namespace tyr
 							continue;
 						}
 						newestId = std::max(newestId, noise.id);
+						const bool fromTarget = noise.source != c_InvalidEntity && world.entities.HasComponent<PerceivableComponent>(noise.source);
+						const Vector3 toNoise = noise.position - transform.position;
+						if (fromTarget && noise.radius <= perception.quietBehind && Vector3(toNoise.x, 0.0f, toNoise.z).Dot(facing) < 0.0f)
+						{
+							continue;
+						}
 						if (!Hears(world, navmesh, physics, eye, transform.position, noise.position, noise.radius * perception.hearingScale))
 						{
 							continue;
 						}
 						// Its target hiding can only be heard working the hiding place's door, which gives away
 						// that it's in there.
-						const bool fromTarget = noise.source != c_InvalidEntity && world.entities.HasComponent<PerceivableComponent>(noise.source);
 						if (fromTarget && world.entities.GetComponent<PerceivableComponent>(noise.source).hidden)
 						{
 							perception.heardHiddenTarget = noise.source;

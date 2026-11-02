@@ -141,22 +141,24 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 	const float3 shadingNormal = normalize(DecodeOct(textures[g_PushConstants.normalRoughMetalIndex].Load(pixelCoord).xy));
 	const float3 normal = crossedLength > 1e-12f ? flatNormal : shadingNormal;
 
-	// A directional light has no position to aim at - trace back along its own direction, far
-	// enough to clear any realistic scene extent. Both are worked out and one picked.
-	const float3 light = float3(g_PushConstants.lightX, g_PushConstants.lightY, g_PushConstants.lightZ);
-	const bool directional = g_PushConstants.lightType == c_LightTypeDirectional;
-	const float3 toLight = light - worldPos;
-	const float toLightDistance = length(toLight);
-	const float3 rayDirection = directional ? -normalize(light) : toLight / max(toLightDistance, 0.0001f);
-	const float rayTMax = directional ? 10000.0f : max(toLightDistance - c_LightClearance, 0.001f);
-
 	// The acceleration structures hold LOD0, which can be up to lodErrorPerDistance * distance from
 	// the drawn LOD's surface, so the origin is lifted past that to stop the ray hitting LOD0 under
 	// its own pixel ("shadow acne"). Depth precision also falls off with distance.
 	const float bias = max(c_MinBias, c_LodErrorBiasScale * g_PushConstants.lodErrorPerDistance * length(toCamera));
+	const float3 origin = worldPos + normal * bias;
+
+	// A directional light has no position to aim at - trace back along its own direction, far
+	// enough to clear any realistic scene extent. Both are worked out and one picked. A local light
+	// is aimed at from the lifted origin, so the ray still stops its clearance short of the light.
+	const float3 light = float3(g_PushConstants.lightX, g_PushConstants.lightY, g_PushConstants.lightZ);
+	const bool directional = g_PushConstants.lightType == c_LightTypeDirectional;
+	const float3 toLight = light - origin;
+	const float toLightDistance = length(toLight);
+	const float3 rayDirection = directional ? -normalize(light) : toLight / max(toLightDistance, 0.0001f);
+	const float rayTMax = directional ? 10000.0f : max(toLightDistance - c_LightClearance, 0.001f);
 
 	RayDesc ray;
-	ray.Origin = worldPos + normal * bias;
+	ray.Origin = origin;
 	ray.Direction = rayDirection;
 	ray.TMin = 0.001f;
 	ray.TMax = rayTMax;

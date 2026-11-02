@@ -213,6 +213,7 @@ namespace tyr
 		// the lit image.
 		void RecordTranslucentPass(CommandList& cmdList, uint renderFrameIndex);
 		void RecordTranslucentCompositePass(CommandList& cmdList, uint renderFrameIndex);
+		void RecordParticlePass(CommandList& cmdList, uint renderFrameIndex);
 		// No separate Setup - the render graph usage declarations this needs are simple enough to
 		// stay inline in BuildAndExecuteRenderGraph's own "TAAResolve" lambda, the same way
 		// RecordLightingPass's sibling AddPass call already does. Re-derives the previous slot's

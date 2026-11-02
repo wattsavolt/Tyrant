@@ -17,14 +17,17 @@ namespace tyr
 	};
 
 	// What a navmesh polygon is, and what can use it. Beside a door, where its leaf swings to, walking
-	// costs more and nothing picks a spot to stand. Stairs are only walked by those allowed to change floors.
+	// costs more and nothing picks a spot to stand. Stairs are only walked by those allowed to change
+	// floors, and nothing walks into a safe room.
 	struct NavmeshAreas
 	{
 		static constexpr uint8 c_Door = 1;
 		static constexpr uint8 c_Stairs = 2;
+		static constexpr uint8 c_Safe = 3;
 		static constexpr uint16 c_WalkFlag = 1;
 		static constexpr uint16 c_DoorFlag = 2;
 		static constexpr uint16 c_StairsFlag = 4;
+		static constexpr uint16 c_SafeFlag = 8;
 		// How many times dearer a door zone is to walk through than open floor.
 		static constexpr float c_DoorCost = 6.0f;
 	};

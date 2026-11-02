@@ -115,6 +115,9 @@ namespace tyr
 		uint GetTypedCharCount() const { return m_TypedCharCount; }
 
 		bool IsGamepadConnected(uint gamepadIndex = 0) const { return GetGamepad(gamepadIndex).isConnected; }
+		// Whether the first gamepad was used more recently than the keyboard and mouse, for showing
+		// its buttons in prompts.
+		bool IsUsingGamepad() const { return m_UsingGamepad; }
 
 		bool IsGamepadButtonDown(GamepadButton button, uint gamepadIndex = 0) const
 		{
@@ -157,6 +160,11 @@ namespace tyr
 		GamepadState m_Gamepads[c_MaxGamepads]{};
 		bool m_GameInputEnabled = true;
 		bool m_UIInputBlocked = false;
+		bool m_UsingGamepad = false;
+
+		// Notes whether the keyboard and mouse or the first gamepad was used this tick, once the
+		// tick's state has been read.
+		void UpdateLastDevice();
 
 	private:
 		const GamepadState& GetGamepad(uint gamepadIndex) const

@@ -4,6 +4,7 @@
 #include "EngineMacros.h"
 #include "Math/Quaternion.h"
 #include "Math/Vector3.h"
+#include "Math/Vector4.h"
 #include "AssetSystem/AssetDataTypes.h"
 #include "AssetSystem/SkeletonAsset.h"
 #include "ECS/EntitySystem.h"
@@ -46,6 +47,8 @@ namespace tyr
 		float emissiveScale = 1.0f;
 		// How strongly it shines to show it can be picked up. Set while playing, not saved.
 		float highlight = 0.0f;
+		// Not drawn while set. Set with WorldManager::SetEntityHidden while playing, not saved.
+		bool hidden = false;
 	};
 
 	// A skinned mesh, posed by the AnimatorComponent on the same entity if it has one, otherwise
@@ -61,6 +64,8 @@ namespace tyr
 		SkeletalMeshInstanceHandle meshInstance;
 		// True once the instance has been asked for, even if it hasn't been created yet.
 		bool meshInstanceRequested = false;
+		// Not drawn while set. Set with WorldManager::SetEntityHidden while playing, not saved.
+		bool hidden = false;
 	};
 
 	// One clip being played, how far through it is, and how far it has faded in over the clips
@@ -265,6 +270,12 @@ namespace tyr
 		bool castsShadow;
 		// Switched off while the camera is in an IndoorVolumeComponent, so it costs nothing there.
 		bool outdoor = false;
+		// Only lit while there's power where it is, like a light fixture.
+		bool needsPower = false;
+		// Worked out while running. Not saved. Its power zone, -2 until it's looked for, and
+		// whether it's dark for want of power.
+		int8 powerZone = -2;
+		bool unpowered = false;
 		// Invalid until the light has been created in the renderer.
 		PointLightHandle lightHandle;
 	};
@@ -283,6 +294,12 @@ namespace tyr
 		bool castsShadow;
 		// Switched off while the camera is in an IndoorVolumeComponent, so it costs nothing there.
 		bool outdoor = false;
+		// Only lit while there's power where it is, like a light fixture.
+		bool needsPower = false;
+		// Worked out while running. Not saved. Its power zone, -2 until it's looked for, and
+		// whether it's dark for want of power.
+		int8 powerZone = -2;
+		bool unpowered = false;
 		// Invalid until the light has been created in the renderer.
 		SpotLightHandle lightHandle;
 	};
@@ -323,8 +340,14 @@ namespace tyr
 		float burstOpenTime = 0.25f;
 		// A DoorLock: 0 unlocked, 1 needs key, 2 locked from the back, 3 locked.
 		uint8 lock = static_cast<uint8>(DoorLock::Unlocked);
+		// Locked from one side, it unlocks from its front, or from its back with this set, such as
+		// for one half of a double door that faces the other way.
+		bool unlocksFromBack = false;
 		// The item that unlocks it when it needs a key.
 		ItemName key;
+		// What the player says when it won't open, such as "There's a card reader. I'll need a
+		// keycard." Left empty, they say something to suit how it's locked.
+		RemarkText lockedRemark;
 		// Another door that opens and closes with this one, such as the other half of a double door.
 		ActorName linkedDoor;
 		// Played at the door as it starts opening or closing, and when it won't open.
@@ -362,6 +385,10 @@ namespace tyr
 		ItemName key;
 		// Has its own power. Otherwise it only works while the world has power, such as from a generator.
 		bool powered = true;
+		// What the player says when they don't have its key. Left empty, they say they need something.
+		RemarkText lockedRemark;
+		// What the player says when it has no power. Left empty, they say it's dead.
+		RemarkText unpoweredRemark;
 		// Played at the panel whenever it's pressed.
 		SoundName useSound = "event:/Doors/Button";
 	};
@@ -371,7 +398,7 @@ namespace tyr
 	struct LightFixtureComponent
 	{
 		CircuitName circuit;
-		// A LightFixtureState: 0 working, 1 broken, 2 flickering.
+		// A LightFixtureState: 0 working, 1 broken, 2 flickering, 3 sparking.
 		uint8 state = static_cast<uint8>(LightFixtureState::Working);
 		bool switchedOn = true;
 
@@ -380,6 +407,10 @@ namespace tyr
 		float flickerTimer = 0.0f;
 		uint flickerSeed = 0;
 		bool flickerLit = true;
+		// Set when a sparking fixture flashes, until its sparks are given off.
+		bool sparked = false;
+		// The power zone it's in: -2 until it's worked out, -1 when it's in none.
+		int8 powerZone = -2;
 	};
 
 	// A wall switch that turns the light fixtures on its circuit on and off.
@@ -391,6 +422,73 @@ namespace tyr
 
 		// Worked out while running. Not saved. Whether its mesh is turned to show it on, as placed.
 		bool shownOn = true;
+	};
+
+	// Gives off particles from where its entity is, such as fire, smoke or sparks. They leave along
+	// the entity's +Y axis, spread round it by spreadAngle degrees (180 throws them every way), and
+	// change from their start look to their end look over their lives. Particles that have left
+	// carry on where they are when the entity moves.
+	struct EmitterComponent
+	{
+		// A flipbook texture of columns by rows frames, read left to right and top to bottom, or none
+		// for a soft round blob. It plays at frameRate frames a second, or over each particle's life at 0.
+		AssetID texture;
+		uint8 columns = 1;
+		uint8 rows = 1;
+		float frameRate = 0.0f;
+		bool randomStartFrame = false;
+		// How many leave at once when it starts, then how many a second, for duration seconds, or
+		// for as long as it's there with a duration of 0 or less. Without burstAtStart, a burst only
+		// leaves when gameplay asks for one with burstRequested.
+		uint burst = 0;
+		bool burstAtStart = true;
+		float rate = 10.0f;
+		float duration = 0.0f;
+		// Seconds each lives, and how fast it leaves, in metres per second, picked between these.
+		float lifeMin = 1.0f;
+		float lifeMax = 2.0f;
+		float speedMin = 0.5f;
+		float speedMax = 1.0f;
+		float spreadAngle = 30.0f;
+		// How far from the entity they appear, anywhere inside a ball this big.
+		float spawnRadius = 0.0f;
+		// Metres per second squared upwards, so negative falls and positive rises like hot smoke.
+		float gravity = 0.0f;
+		// They go once they've fallen this far below the entity, such as onto the floor. 0 lets them fall on.
+		float floorDistance = 0.0f;
+		// How quickly they slow down, as a share of their speed lost each second.
+		float drag = 0.0f;
+		// Half their width at the start and end of their lives, varied by up to sizeVariation of it.
+		float startSize = 0.2f;
+		float endSize = 0.4f;
+		float sizeVariation = 0.2f;
+		// Degrees a second they turn, picked between these, and whether they start turned any way.
+		float spinMin = 0.0f;
+		float spinMax = 0.0f;
+		bool randomRotation = true;
+		// Seconds of their travel they're drawn stretched over, as streaks such as sparks. 0 draws squares.
+		float stretch = 0.0f;
+		// Linear colour and opacity at the start and end of their lives.
+		Vector4 startColour = Vector4(1.0f, 1.0f, 1.0f, 1.0f);
+		Vector4 endColour = Vector4(1.0f, 1.0f, 1.0f, 0.0f);
+		// Scales the colour, for glowing particles brighter than white. 0 covers what's behind by
+		// the opacity, 1 only adds light to it.
+		float brightness = 1.0f;
+		float additive = 0.0f;
+		// How far in front of a surface they start fading out.
+		float softness = 0.3f;
+		// Removes the entity once it's done giving off particles and they've all gone, for effects
+		// made while playing.
+		bool removeWhenDone = false;
+
+		// Worked out while playing. Not saved.
+		float elapsed = 0.0f;
+		float rateCarry = 0.0f;
+		bool burstDone = false;
+		// Set by gameplay. Not saved. Gives off another burst on the next update.
+		bool burstRequested = false;
+		bool textureRequested = false;
+		uint liveCount = 0;
 	};
 
 	// A light the player can carry, with a spot light on the same entity. While held, the world
@@ -433,14 +531,19 @@ namespace tyr
 		float visibility = 1.0f;
 		// Not saved. Hidden away, such as in a wardrobe, nothing can sense it at all.
 		bool hidden = false;
+		// Not saved. Set by the game while it's carrying a lit light, such as a flashlight that's on,
+		// which shows it up in the dark.
+		bool carryingLight = false;
 	};
 
 	// What an enemy can sense, and what it knows from it. It hunts entities with a
 	// PerceivableComponent.
 	struct PerceptionComponent
 	{
-		// Anything it hunts within this distance it always knows of, such as one bumping into it.
+		// Anything it hunts within this distance of its body it always knows of, such as one bumping
+		// into it. Its body runs this far forward from its feet, for one that's long or leans forward.
 		float touchRange = 0.9f;
+		float bodyLength = 0.0f;
 		// Anything it hunts this close in front of it, with nothing in the way, it senses without
 		// seeing. The angle is the whole width in front of it, in degrees.
 		bool nearby = true;
@@ -454,6 +557,9 @@ namespace tyr
 		// A heard noise is only walked to, unless it's its target's while it's already after it.
 		bool hearing = true;
 		float hearingScale = 1.0f;
+		// What it hunts making a noise that carries no further than this, such as creeping footsteps,
+		// isn't heard from behind it.
+		float quietBehind = 0.0f;
 		bool smell = false;
 		// How far from its nose it smells scent, and the oldest scent it notices, in seconds.
 		float smellRange = 3.0f;
@@ -462,6 +568,13 @@ namespace tyr
 		float sightRange = 15.0f;
 		// The whole width of what it sees, in degrees.
 		float sightAngle = 120.0f;
+		// Needing light to see, it sees the whole sightRange where it's this lit, less in dimmer places
+		// and nothing at all below darkLight. Carrying a light, its target is still seen in the dark
+		// out to carriedLightShare of the range. Light levels are as LightLevel::Get gives them.
+		bool sightNeedsLight = false;
+		float fullLight = 10.0f;
+		float darkLight = 1.0f;
+		float carriedLightShare = 0.4f;
 
 		// Worked out while playing. Not saved. What it knows of its target, and the noise it last
 		// heard, with what made it if that's something it hunts.
@@ -499,6 +612,8 @@ namespace tyr
 		float hurt = 0.0f;
 		// Not saved. Counts the times it's been hurt, so others can notice a new hit.
 		uint damageCount = 0;
+		// Not saved. Set by the game, such as for a cheat, so nothing hurts it.
+		bool invulnerable = false;
 	};
 
 	// Keeps a skeletal mesh's limbs out of walls and doors while playing, with a capsule along each of
@@ -555,7 +670,7 @@ namespace tyr
 	struct NavmeshAreaComponent
 	{
 		Vector3 halfExtents = Vector3(1.0f, 1.0f, 1.0f);
-		// 2 is stairs.
+		// 2 is stairs, 3 a safe room nothing walks into.
 		uint8 area = 2;
 	};
 
@@ -618,6 +733,24 @@ namespace tyr
 
 		// Not saved. Set when it's used, until the game deals with it.
 		bool used = false;
+	};
+
+	// Part of a power zone: a box around the entity, stretched by its scale. Lights, door panels and
+	// the like inside it only have power while the world does and its zone is switched on. Where boxes
+	// overlap, the smallest counts.
+	struct PowerZoneComponent
+	{
+		Vector3 halfExtents = Vector3(10.0f, 5.0f, 10.0f);
+		uint8 zone = 0;
+		// What the zone is called, such as on a switchboard. Any of its boxes can name it.
+		ItemName name;
+	};
+
+	// Something the player can look at with the use button, such as a painting, and say a line
+	// about to themselves.
+	struct ExamineComponent
+	{
+		RemarkText remark;
 	};
 
 }

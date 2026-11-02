@@ -163,6 +163,10 @@ namespace tyr
 		// Debug lines drawn into the viewport's overlay after the grid, one pipeline tested against
 		// the scene's depth and one drawn on top.
 		RenderBufferHandle debugLineVertexBuffer;
+		RenderBufferHandle particleBuffer;
+		GraphicsPipelineHandle particlePipeline;
+		ShaderModuleHandle particleVertexShader;
+		ShaderModuleHandle particlePixelShader;
 		GraphicsPipelineHandle debugLineDepthTestedPipeline;
 		GraphicsPipelineHandle debugLineOnTopPipeline;
 		ShaderModuleHandle debugLineVertexShader;

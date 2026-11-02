@@ -119,8 +119,10 @@ namespace tyr
 			SavedActor saved;
 			saved.id = actor.id.GetHash();
 			const Entity root = actor.RootEntity();
-			// Only things that move about by themselves are put back where they were. Doors are put back by how open they are.
-			const bool moves = world.entities.HasComponent<CharacterComponent>(root) || world.entities.HasComponent<RigidBodyComponent>(root);
+			// Only things that move about by themselves are put back where they were. Doors, moved by
+			// gameplay, are put back by how open they are, from where they were placed.
+			const bool moves = world.entities.HasComponent<CharacterComponent>(root) || (world.entities.HasComponent<RigidBodyComponent>(root)
+				&& world.entities.GetComponent<RigidBodyComponent>(root).motionType == static_cast<uint8>(MotionType::Dynamic));
 			if (moves && world.entities.HasComponent<TransformComponent>(root))
 			{
 				const Transform& transform = world.entities.GetComponent<TransformComponent>(root).world;

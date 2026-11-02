@@ -14,6 +14,11 @@ namespace tyr
 		constexpr int c_MaxQueryNodes = 4096;
 		// How far from the start and end, along each axis, the nearest navmesh is looked for.
 		const float c_PathSearchExtents[3] = { 2.0f, 4.0f, 2.0f };
+		// Where the end can't be walked to, such as in a safe room, it's moved to the nearest floor at
+		// its own height before any on another floor. Moved further than this, the path falls short.
+		const float c_EndLevelExtents[3] = { 2.0f, 1.0f, 2.0f };
+		const float c_EndLevelWideExtents[3] = { 8.0f, 1.0f, 8.0f };
+		constexpr float c_EndMovedFar = 1.0f;
 		// Debug lines float this far over the polygons, so they aren't hidden in the floor.
 		constexpr float c_DebugLineLift = 0.05f;
 
@@ -47,7 +52,7 @@ namespace tyr
 		dtNavMesh* mesh = nullptr;
 		dtNavMeshQuery* query = nullptr;
 		// Paths cross door zones at a cost; spots to go to are never picked in one. Only the stairs
-		// filter lets paths onto stairs.
+		// filter lets paths onto stairs. None goes into a safe room.
 		dtQueryFilter filter;
 		dtQueryFilter stairsFilter;
 		dtQueryFilter spotFilter;
@@ -89,9 +94,10 @@ namespace tyr
 		navmesh->query = dtAllocNavMeshQuery();
 		navmesh->filter.setAreaCost(NavmeshAreas::c_Door, NavmeshAreas::c_DoorCost);
 		navmesh->spotFilter.setAreaCost(NavmeshAreas::c_Door, NavmeshAreas::c_DoorCost);
-		navmesh->filter.setExcludeFlags(NavmeshAreas::c_StairsFlag);
+		navmesh->filter.setExcludeFlags(NavmeshAreas::c_StairsFlag | NavmeshAreas::c_SafeFlag);
 		navmesh->stairsFilter.setAreaCost(NavmeshAreas::c_Door, NavmeshAreas::c_DoorCost);
-		navmesh->spotFilter.setExcludeFlags(NavmeshAreas::c_DoorFlag | NavmeshAreas::c_StairsFlag);
+		navmesh->stairsFilter.setExcludeFlags(NavmeshAreas::c_SafeFlag);
+		navmesh->spotFilter.setExcludeFlags(NavmeshAreas::c_DoorFlag | NavmeshAreas::c_StairsFlag | NavmeshAreas::c_SafeFlag);
 		bool failed = dtStatusFailed(navmesh->mesh->init(&params));
 
 		size_t offset = sizeof(header);
@@ -193,11 +199,22 @@ namespace tyr
 		float startPoint[3];
 		float endPoint[3];
 		data.query->findNearestPoly(&start.x, c_PathSearchExtents, &filter, &startPolygon, startPoint);
-		data.query->findNearestPoly(&end.x, c_PathSearchExtents, &filter, &endPolygon, endPoint);
+		data.query->findNearestPoly(&end.x, c_EndLevelExtents, &filter, &endPolygon, endPoint);
+		if (endPolygon == 0)
+		{
+			data.query->findNearestPoly(&end.x, c_EndLevelWideExtents, &filter, &endPolygon, endPoint);
+		}
+		if (endPolygon == 0)
+		{
+			data.query->findNearestPoly(&end.x, c_PathSearchExtents, &filter, &endPolygon, endPoint);
+		}
 		if (startPolygon == 0 || endPolygon == 0)
 		{
 			return false;
 		}
+		const float movedX = endPoint[0] - end.x;
+		const float movedZ = endPoint[2] - end.z;
+		outPath.partial = movedX * movedX + movedZ * movedZ > c_EndMovedFar * c_EndMovedFar;
 
 		dtPolyRef polygons[NavmeshConstants::c_MaxPathPolys];
 		int polygonCount = 0;

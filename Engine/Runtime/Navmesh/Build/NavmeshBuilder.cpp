@@ -202,7 +202,8 @@ namespace tyr
 				const unsigned char area = build.polyMesh->areas[i];
 				build.polyMesh->flags[i] = area == RC_WALKABLE_AREA ? NavmeshAreas::c_WalkFlag
 					: area == NavmeshAreas::c_Door ? NavmeshAreas::c_WalkFlag | NavmeshAreas::c_DoorFlag
-					: area == NavmeshAreas::c_Stairs ? NavmeshAreas::c_WalkFlag | NavmeshAreas::c_StairsFlag : 0;
+					: area == NavmeshAreas::c_Stairs ? NavmeshAreas::c_WalkFlag | NavmeshAreas::c_StairsFlag
+					: area == NavmeshAreas::c_Safe ? NavmeshAreas::c_WalkFlag | NavmeshAreas::c_SafeFlag : 0;
 			}
 
 			dtNavMeshCreateParams params = {};

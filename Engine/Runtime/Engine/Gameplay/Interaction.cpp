@@ -26,7 +26,7 @@ namespace tyr
 		{
 			return world.entities.HasComponent<DoorComponent>(entity) || world.entities.HasComponent<DoorPanelComponent>(entity)
 				|| world.entities.HasComponent<PickupComponent>(entity) || world.entities.HasComponent<LightSwitchComponent>(entity)
-				|| world.entities.HasComponent<ActivatorComponent>(entity);
+				|| world.entities.HasComponent<ActivatorComponent>(entity) || world.entities.HasComponent<ExamineComponent>(entity);
 		}
 
 		bool HasItem(const World& world, Entity user, const ItemName& item)
@@ -46,6 +46,12 @@ namespace tyr
 			message = text;
 		}
 
+		// The thing's own remark, or the player's usual line when it has none.
+		void SetRemark(InteractionText& message, const RemarkText& remark, const char* fallback)
+		{
+			message = remark.Size() > 0 ? remark.CStr() : fallback;
+		}
+
 		bool UseDoor(World& world, Entity target, Entity user, InteractionText& outMessage)
 		{
 			DoorComponent& door = world.entities.GetComponent<DoorComponent>(target);
@@ -55,23 +61,25 @@ namespace tyr
 			case DoorLock::NeedsKey:
 				if (!HasItem(world, user, door.key))
 				{
-					SetMessage(outMessage, "Locked. Needs %s.", door.key.CStr());
+					SetRemark(outMessage, door.lockedRemark, "It's locked. Looks like I need a key.");
 					Sounds::PlayHeard(world, door.lockedSound, GetPosition(world, target), door.noiseRadius * 0.5f);
 					return false;
 				}
 				Doors::Unlock(world, target);
 				break;
 			case DoorLock::LockedFromBack:
-				if (!Doors::IsInFront(world, target, userPosition))
+				if (Doors::IsInFront(world, target, userPosition) == door.unlocksFromBack)
 				{
-					outMessage = "Locked from the other side.";
+					SetRemark(outMessage, door.lockedRemark, "It won't open. It must be locked from the other side.");
 					Sounds::PlayHeard(world, door.lockedSound, GetPosition(world, target), door.noiseRadius * 0.5f);
 					return false;
 				}
+				// Its key is left in the lock on this side.
+				outMessage = "The key's in the lock. I unlocked it.";
 				Doors::Unlock(world, target);
 				break;
 			case DoorLock::Locked:
-				outMessage = "Locked.";
+				SetRemark(outMessage, door.lockedRemark, "It's locked. It won't budge.");
 				Sounds::PlayHeard(world, door.lockedSound, GetPosition(world, target), door.noiseRadius * 0.5f);
 				return false;
 			default:
@@ -85,9 +93,9 @@ namespace tyr
 		{
 			const DoorPanelComponent& panel = world.entities.GetComponent<DoorPanelComponent>(target);
 			Sounds::PlayHeard(world, panel.useSound, GetPosition(world, target), c_UseNoise);
-			if (!panel.powered && !Power::IsOn(world))
+			if (!panel.powered && !Power::IsOn(world, GetPosition(world, target)))
 			{
-				outMessage = "No power.";
+				SetRemark(outMessage, panel.unpoweredRemark, "It's dead. There's no power.");
 				return false;
 			}
 			const Entity door = Doors::Find(world, panel.door);
@@ -102,7 +110,7 @@ namespace tyr
 			{
 				if (!HasItem(world, user, panel.key))
 				{
-					SetMessage(outMessage, "Needs %s.", panel.key.CStr());
+					SetRemark(outMessage, panel.lockedRemark, "It won't work. I need something to open this.");
 					return false;
 				}
 				Doors::Unlock(world, door);
@@ -115,9 +123,9 @@ namespace tyr
 		{
 			Sounds::PlayHeard(world, world.entities.GetComponent<LightSwitchComponent>(target).useSound, GetPosition(world, target), c_UseNoise);
 			Power::ToggleSwitch(world, target);
-			if (!Power::IsOn(world))
+			if (!Power::IsOn(world, GetPosition(world, target)))
 			{
-				outMessage = "Nothing happens. No power.";
+				outMessage = "Nothing. The power must be out.";
 			}
 			return true;
 		}
@@ -140,7 +148,7 @@ namespace tyr
 			}
 			if (taken == 0)
 			{
-				outMessage = "Can't carry any more.";
+				outMessage = "I can't carry any more.";
 				return false;
 			}
 			Sounds::PlayHeard(world, pickup.pickupSound, GetPosition(world, target), c_UseNoise);
@@ -149,7 +157,7 @@ namespace tyr
 			pickup.count = static_cast<uint8>(pickup.count - taken);
 			if (pickup.count > 0)
 			{
-				outMessage = "Took what would fit.";
+				outMessage = "I took what I could carry.";
 				return true;
 			}
 
@@ -248,6 +256,10 @@ namespace tyr
 			{
 				snprintf(action, sizeof(action), Doors::IsOpening(world, target) ? "Close" : "Open");
 			}
+			else if (world.entities.HasComponent<ExamineComponent>(target))
+			{
+				snprintf(action, sizeof(action), "Examine");
+			}
 			else
 			{
 				outText = {};
@@ -286,6 +298,11 @@ namespace tyr
 			if (world.entities.HasComponent<DoorComponent>(target))
 			{
 				return UseDoor(world, target, user, outMessage);
+			}
+			if (world.entities.HasComponent<ExamineComponent>(target))
+			{
+				outMessage = world.entities.GetComponent<ExamineComponent>(target).remark.CStr();
+				return true;
 			}
 			return false;
 		}
@@ -342,7 +359,7 @@ namespace tyr
 	{
 		World& world = worldManager.GetWorld(worldHandle);
 		m_MessageTime = std::max(m_MessageTime - deltaTime, 0.0f);
-		if (m_MessageTime > 0.0f)
+		if (m_MessageTime > 0.0f && !m_MessageTaken)
 		{
 			DebugDraw::Text(m_MessagePosition, m_Message.CStr(), DebugColour::c_Orange);
 		}
@@ -354,7 +371,7 @@ namespace tyr
 		RayCastEntityHit hit;
 		const Vector3 eye = world.camera->GetPosition();
 		const Vector3 forward = world.camera->GetForward();
-		const bool usePressed = input.IsKeyPressed(c_KeyUse) || input.IsGamepadButtonPressed(GamepadButton::A) || input.IsGamepadButtonPressed(GamepadButton::X);
+		const bool usePressed = input.IsKeyPressed(c_KeyUse) || input.IsGamepadButtonPressed(GamepadButton::A);
 
 		// While the game leaves only one thing to do, such as get out of hiding, that's all the button does.
 		InteractionText onlyAction;
@@ -363,7 +380,7 @@ namespace tyr
 			if (m_MessageTime <= 0.0f)
 			{
 				char prompt[InteractionText::c_Capacity];
-				snprintf(prompt, sizeof(prompt), "[%s] %s", input.IsGamepadConnected() ? "A" : "E", onlyAction.CStr());
+				snprintf(prompt, sizeof(prompt), "[%s] %s", input.IsUsingGamepad() ? "A" : "E", onlyAction.CStr());
 				DebugDraw::Text(eye + forward * 0.6f, prompt, DebugColour::c_White);
 			}
 			if (usePressed)
@@ -390,7 +407,7 @@ namespace tyr
 		if (m_MessageTime <= 0.0f)
 		{
 			InteractionText prompt;
-			Interaction::Describe(world, target, prompt, input.IsGamepadConnected() ? "A" : "E");
+			Interaction::Describe(world, target, prompt, input.IsUsingGamepad() ? "A" : "E");
 			DebugDraw::Text(hit.position, prompt.CStr(), DebugColour::c_White);
 		}
 
@@ -411,7 +428,21 @@ namespace tyr
 				m_Message = message;
 				m_MessagePosition = hit.position;
 				m_MessageTime = c_MessageDuration;
+				m_MessageNew = true;
+				m_MessageTaken = false;
 			}
 		}
+	}
+
+	bool InteractionController::TakeMessage(InteractionText& outMessage)
+	{
+		if (!m_MessageNew)
+		{
+			return false;
+		}
+		outMessage = m_Message;
+		m_MessageNew = false;
+		m_MessageTaken = true;
+		return true;
 	}
 }

@@ -55,6 +55,8 @@ namespace tyr
 		float flash = 0.0f;
 		// Dark red creeping in from the edges, from 0 for unhurt to 1 for nearly dead.
 		float wounds = 0.0f;
+		// Blood splashed over the middle of the view, from 0 for none to 1 covering most of it.
+		float blood = 0.0f;
 	};
 
 	// Bright light spilling into the pixels around it. Set per level.

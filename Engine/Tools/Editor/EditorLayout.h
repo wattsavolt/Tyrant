@@ -38,6 +38,10 @@ namespace tyr
 		bool& RightCollapsed() { return m_RightCollapsed; }
 		bool& BottomCollapsed() { return m_BottomCollapsed; }
 
+		// Collapses all three panels while the game runs, giving it the most room, and puts them back
+		// as they were once it stops.
+		void SetGameRunning(bool running);
+
 	private:
 		static constexpr float c_ToolbarHeight = 32.0f;
 		static constexpr float c_CollapsedPanelSize = 30.0f;
@@ -47,5 +51,9 @@ namespace tyr
 		bool m_LeftCollapsed = false;
 		bool m_RightCollapsed = false;
 		bool m_BottomCollapsed = false;
+		bool m_GameRunning = false;
+		bool m_LeftBeforeGame = false;
+		bool m_RightBeforeGame = false;
+		bool m_BottomBeforeGame = false;
 	};
 }

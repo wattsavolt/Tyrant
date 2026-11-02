@@ -46,6 +46,7 @@ namespace tyr
 			// The active scene's lights this tick.
 			m_Resources->lightIndexBuffer,
 			m_Resources->debugLineVertexBuffer,
+			m_Resources->particleBuffer,
 			// Skinned meshes' bone weights, and this tick's poses.
 			m_Resources->skinVertexBuffer, m_Resources->boneMatrixBuffer,
 			// Decals, and the active scene's decal list.

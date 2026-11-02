@@ -32,6 +32,8 @@ namespace tyr
 		Title,
 		// Notes and papers the player reads.
 		Document,
+		// Big headings, such as the game's name on its main menu.
+		Heading,
 		Count
 	};
 

@@ -604,6 +604,9 @@ namespace tyr
 
 					sceneInfo.viewProj = view * projection;
 					renderFrame.overlayViewProj = sceneInfo.viewProj;
+					// Device depth is projection[2][2] + projection[3][2] / z, for z metres in front.
+					renderFrame.depthScale = projection[3][2];
+					renderFrame.depthOffset = projection[2][2];
 					renderFrame.lodProjectionScale = Math::Abs(projection[1][1]) * 0.5f * (float)viewportHeight;
 
 					// TAA sub-pixel jitter - read via the main-thread-safe mirror, not
@@ -740,7 +743,7 @@ namespace tyr
 
 		if (m_FirstRender)
 		{
-			constexpr uint bindingCount = 25;
+			constexpr uint bindingCount = 26;
 			BufferBindingInfo bindingInfos[bindingCount];
 			BufferBindingUpdate bindingUpdates[bindingCount];
 
@@ -777,6 +780,7 @@ namespace tyr
 			SetBinding(22, TYR_BINDING_DECAL, m_Resources.decalBuffer);
 			SetBinding(23, TYR_BINDING_DECAL_INDICES, m_Resources.decalIndexBuffer);
 			SetBinding(24, TYR_BINDING_EXPOSURE, m_Resources.exposureBuffer);
+			SetBinding(25, TYR_BINDING_PARTICLE, m_Resources.particleBuffer);
 
 			m_Ctx.device->UpdateDescriptorSet(m_Resources.descriptorSet, bindingUpdates, bindingCount);
 
@@ -1528,6 +1532,15 @@ namespace tyr
 			uint _pad1;
 			uint _pad2;
 		};
+
+		// Matches Particle.hlsli's push constants byte for byte.
+		struct ParticlePushConstants
+		{
+			uint firstParticle;
+			uint depthIndex;
+			float depthScale;
+			float depthOffset;
+		};
 	}
 
 	void Renderer::RecordLightingPass(CommandList& cmdList, uint renderFrameIndex)
@@ -1792,6 +1805,7 @@ namespace tyr
 		pushConstants.flashG = effects.flashColour.y;
 		pushConstants.flashB = effects.flashColour.z;
 		pushConstants.wounds = effects.wounds;
+		pushConstants.blood = effects.blood;
 		cmdList.PushConstants(m_Resources.tonemapPipeline, SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstants), &pushConstants);
 		cmdList.Dispatch((viewportData->width + 7) / 8, (viewportData->height + 7) / 8, 1);
 	}
@@ -1862,6 +1876,55 @@ namespace tyr
 		const uint groupCountX = (viewportData->width + 7) / 8;
 		const uint groupCountY = (viewportData->height + 7) / 8;
 		cmdList.Dispatch(groupCountX, groupCountY, 1);
+	}
+
+	void Renderer::RecordParticlePass(CommandList& cmdList, uint renderFrameIndex)
+	{
+		const RenderViewportTextureData* viewportData = GetActiveViewportTextureData(renderFrameIndex);
+		const RenderFrame& renderFrame = m_RenderFrames[renderFrameIndex];
+		if (!viewportData || !viewportData->colourTexture || viewportData->width == 0 || viewportData->height == 0 || renderFrame.particleCount == 0)
+		{
+			return;
+		}
+		const Texture& colour = m_Registry.GetTexture(viewportData->colourTexture);
+
+		RenderingInfo renderingInfo{};
+		renderingInfo.renderArea.offset = { 0, 0 };
+		renderingInfo.renderArea.extents = { viewportData->width, viewportData->height };
+		renderingInfo.viewMask = 0;
+		renderingInfo.layerCount = 1;
+
+		// Blended over the lit scene. The scene's depth is read in the pixel shader rather than
+		// attached, so particles can fade out softly where they meet a surface.
+		RenderingAttachmentInfo colourAttachment;
+		colourAttachment.loadOp = AttachmentLoadOp::Load;
+		colourAttachment.storeOp = AttachmentStoreOp::Store;
+		colourAttachment.resolveMode = RESOLVE_MODE_NONE;
+		colourAttachment.imageLayout = colour.imageLayout;
+		colourAttachment.imageView = colour.imageView;
+		renderingInfo.colourAttachmentCount = 1;
+		renderingInfo.colourAttachments = &colourAttachment;
+		renderingInfo.hasDepthAttachment = false;
+
+		Viewport viewport;
+		viewport.width = viewportData->width;
+		viewport.height = viewportData->height;
+
+		cmdList.BeginRendering(renderingInfo);
+		cmdList.SetViewport(&viewport, 1);
+		cmdList.SetScissor(&renderingInfo.renderArea, 1);
+
+		ParticlePushConstants pushConstants{};
+		pushConstants.firstParticle = renderFrameIndex * RenderConstants::c_MaxParticles;
+		pushConstants.depthIndex = viewportData->depthBuffer.h.index;
+		pushConstants.depthScale = renderFrame.depthScale;
+		pushConstants.depthOffset = renderFrame.depthOffset;
+		cmdList.BindGraphicsPipeline(m_Resources.particlePipeline);
+		cmdList.BindDescriptorSet(m_Resources.descriptorSet, m_Resources.particlePipeline);
+		const ShaderStage stages = static_cast<ShaderStage>(SHADER_STAGE_VERTEX_BIT | SHADER_STAGE_FRAGMENT_BIT);
+		cmdList.PushConstants(m_Resources.particlePipeline, stages, 0, sizeof(ParticlePushConstants), &pushConstants);
+		cmdList.Draw(renderFrame.particleCount * 6, 1, 0, 0);
+		cmdList.EndRendering();
 	}
 
 	void Renderer::RecordDebugLinePass(CommandList& cmdList, uint renderFrameIndex)
@@ -2129,7 +2192,8 @@ namespace tyr
 
 		// Tracked separately from graphBuffers above - GeometryPass doesn't touch these, only
 		// TransferPass (writes) and the GUI and debug line passes (reads).
-		const RenderBufferHandle guiGraphBuffers[] = { m_Resources.guiVertexBuffer, m_Resources.guiIndexBuffer, m_Resources.debugLineVertexBuffer };
+		const RenderBufferHandle guiGraphBuffers[] = { m_Resources.guiVertexBuffer, m_Resources.guiIndexBuffer, m_Resources.debugLineVertexBuffer,
+			m_Resources.particleBuffer };
 		constexpr uint guiBufferCount = (uint)(sizeof(guiGraphBuffers) / sizeof(guiGraphBuffers[0]));
 
 		for (uint i = 0; i < guiBufferCount; ++i)
@@ -2525,6 +2589,21 @@ namespace tyr
 							static_cast<BarrierAccess>(BARRIER_ACCESS_SHADER_READ_BIT | BARRIER_ACCESS_SHADER_WRITE_BIT), IMAGE_LAYOUT_GENERAL);
 					},
 					[this, renderFrameIndex](CommandList& cl) { RecordTranslucentCompositePass(cl, renderFrameIndex); },
+					RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
+			}
+
+			// Particles, blended over the lit scene and its translucent surfaces before anti-aliasing.
+			if (hasViewportTextures && colourTexture && renderFrame.particleCount > 0)
+			{
+				graph.AddPass("Particles",
+					[this, depthBuffer, colourTexture](RenderGraphBuilder& builder)
+					{
+						builder.ReadBuffer(m_Registry.GetBuffer(m_Resources.particleBuffer), PIPELINE_STAGE_VERTEX_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT);
+						builder.ReadTexture(*depthBuffer, PIPELINE_STAGE_FRAGMENT_SHADER_BIT, BARRIER_ACCESS_SHADER_READ_BIT, IMAGE_LAYOUT_GENERAL);
+						builder.WriteTexture(*colourTexture, PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+							static_cast<BarrierAccess>(BARRIER_ACCESS_COLOR_ATTACHMENT_READ_BIT | BARRIER_ACCESS_COLOR_ATTACHMENT_WRITE_BIT), IMAGE_LAYOUT_GENERAL);
+					},
+					[this, renderFrameIndex](CommandList& cl) { RecordParticlePass(cl, renderFrameIndex); },
 					RenderGraphPhase::Post, CommandQueueType::CQ_GRAPHICS);
 			}
 
@@ -3243,7 +3322,7 @@ namespace tyr
 
 		// Linear HDR colour, written by the deferred lighting pass and read by TAA and the tone mapper.
 		targets.colourTexture = CreateViewportTargetTexture(debugName, PixelFormat::PF_R16G16B16A16_SFLOAT,
-			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT), width, height);
+			static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_STORAGE_BIT | IMAGE_USAGE_COLOUR_ATTACHMENT_BIT), width, height);
 
 		// Must match the geometry pipeline's declared colour attachment formats - dynamic
 		// rendering requires the two to agree.
@@ -3731,6 +3810,22 @@ namespace tyr
 		{
 			ShaderDesc desc;
 			desc.entryPoint = "main";
+			desc.fileName = "ParticleVS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_VERTEX_BIT;
+			m_Resources.particleVertexShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
+			desc.fileName = "ParticlePS";
+			desc.dirPath = "";
+			desc.stage = SHADER_STAGE_FRAGMENT_BIT;
+			m_Resources.particlePixelShader = m_ShaderCreator.CompileAndCreateShader(shaderCompileConfig, desc);
+		}
+		{
+			ShaderDesc desc;
+			desc.entryPoint = "main";
 			desc.fileName = "DebugLineVS";
 			desc.dirPath = "";
 			desc.stage = SHADER_STAGE_VERTEX_BIT;
@@ -3779,6 +3874,8 @@ namespace tyr
 		m_Ctx.device->DeleteShaderModule(m_Resources.tonemapComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.bloomDownsampleComputeShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.bloomUpsampleComputeShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.particleVertexShader);
+		m_Ctx.device->DeleteShaderModule(m_Resources.particlePixelShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.debugLineVertexShader);
 		m_Ctx.device->DeleteShaderModule(m_Resources.debugLinePixelShader);
 		ShaderCreator::UnloadCompilerLibs();
@@ -3887,8 +3984,8 @@ namespace tyr
 				// drawCountBuffer/instanceVisibilityBuffer for GPU-driven culling + one Hi-Z buffer
 				// per buffered frame slot + shadowLightSlotMapBuffer for ray-traced shadows +
 				// lightIndexBuffer + debugLineVertexBuffer + skinVertexBuffer/boneMatrixBuffer +
-				// decalBuffer/decalIndexBuffer + exposureBuffer.
-				poolSize.descriptorCount = 24 + RenderConstants::c_BufferedFrameCount;
+				// decalBuffer/decalIndexBuffer + exposureBuffer + particleBuffer.
+				poolSize.descriptorCount = 25 + RenderConstants::c_BufferedFrameCount;
 			}
 			{
 				DescriptorPoolSize& poolSize = poolDesc.poolSizes.ExpandOne();
@@ -3945,7 +4042,8 @@ namespace tyr
 			// compute pass, and the geometry from the shadow pass, to alpha test masked hits.
 			const ShaderStage meshAndComputeStages = static_cast<ShaderStage>(meshPipelineStages | SHADER_STAGE_COMPUTE_BIT);
 
-			AddBinding(TYR_BINDING_SCENE_INFO, DescriptorType::UniformBuffer, 1, meshAndComputeStages);
+			// The particle vertex shader reads the camera from it too.
+			AddBinding(TYR_BINDING_SCENE_INFO, DescriptorType::UniformBuffer, 1, static_cast<ShaderStage>(meshAndComputeStages | SHADER_STAGE_VERTEX_BIT));
 			AddBinding(TYR_BINDING_MESH, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
 			AddBinding(TYR_BINDING_MESH_LOD, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
 			AddBinding(TYR_BINDING_MESHLET, DescriptorType::StorageBuffer, 1, meshAndComputeStages);
@@ -4011,6 +4109,7 @@ namespace tyr
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
 			AddBinding(TYR_BINDING_BLOOM, DescriptorType::StorageImage, RenderConstants::c_BufferedFrameCount * RenderConstants::c_BloomLevels,
 				SHADER_STAGE_COMPUTE_BIT, lightingOutputFlags);
+			AddBinding(TYR_BINDING_PARTICLE, DescriptorType::StorageBuffer, 1, SHADER_STAGE_VERTEX_BIT);
 
 			m_Resources.descriptorSetLayout = m_Ctx.device->CreateDescriptorSetLayout(layoutDesc);
 
@@ -4225,6 +4324,25 @@ namespace tyr
 		debugLineDesc.depthStencilStateDesc.depthCompareOp = CompareOp::GreaterOrEqual;
 		m_Resources.debugLineDepthTestedPipeline = m_Ctx.device->CreateGraphicsPipeline(debugLineDesc);
 
+		// Particles - vertex-pulled squares blended premultiplied over the HDR colour texture, so
+		// each can lie anywhere between covering what's behind it and adding light to it.
+		GraphicsPipelineDesc particleDesc = guiDesc;
+		particleDesc.blendStateDesc.srcColorBlendFactor = BlendFactor::One;
+		particleDesc.blendStateDesc.destColorBlendFactor = BlendFactor::InvSrcAlpha;
+		particleDesc.blendStateDesc.srcAlphaBlendFactor = BlendFactor::Zero;
+		particleDesc.blendStateDesc.destAlphaBlendFactor = BlendFactor::One;
+		particleDesc.dynamicRendering.colorAttachmentFormats.Clear();
+		particleDesc.dynamicRendering.colorAttachmentFormats.Add(PF_R16G16B16A16_SFLOAT);
+		particleDesc.pipelineLayoutDesc.pushConstantRanges.Clear();
+		PushConstantRange& particlePushConstantRange = particleDesc.pipelineLayoutDesc.pushConstantRanges.ExpandOne();
+		particlePushConstantRange.stageFlags = static_cast<ShaderStage>(SHADER_STAGE_VERTEX_BIT | SHADER_STAGE_FRAGMENT_BIT);
+		particlePushConstantRange.offset = 0;
+		particlePushConstantRange.size = sizeof(ParticlePushConstants);
+		particleDesc.shaders.Clear();
+		particleDesc.shaders.Add(m_Resources.particleVertexShader);
+		particleDesc.shaders.Add(m_Resources.particlePixelShader);
+		m_Resources.particlePipeline = m_Ctx.device->CreateGraphicsPipeline(particleDesc);
+
 		// Deferred lighting pass - full-screen compute, reads the G-buffer/depth via the same
 		// bindless textures[] array and writes the shaded result into the viewport colour
 		// texture via TYR_BINDING_LIGHTING_OUTPUT (see RecordLightingPass).
@@ -4392,6 +4510,7 @@ namespace tyr
 		m_Ctx.device->DeleteComputePipeline(m_Resources.bloomUpsamplePipeline);
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.debugLineOnTopPipeline);
 		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.debugLineDepthTestedPipeline);
+		m_Ctx.device->DeleteGraphicsPipeline(m_Resources.particlePipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.lightingPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.cullingEarlyPipeline);
 		m_Ctx.device->DeleteComputePipeline(m_Resources.cullingLatePipeline);
@@ -4526,6 +4645,14 @@ namespace tyr
 		}
 		{
 			RenderBufferDesc desc;
+			desc.debugName = "Particle Buffer";
+			// One c_BufferedFrameCount-th per buffered RenderFrame slot, read by ParticleVS.hlsl.
+			desc.size = RenderConstants::c_ParticleBufferSize * RenderConstants::c_BufferedFrameCount;
+			desc.usage = RenderBufferUsage::Storage;
+			m_Resources.particleBuffer = m_Registry.CreateBuffer(desc);
+		}
+		{
+			RenderBufferDesc desc;
 			desc.debugName = "Active Mesh Instance Index Buffer";
 			desc.size = sizeof(uint) * RenderConstants::c_MaxMeshInstances;
 			desc.usage = RenderBufferUsage::Storage;
@@ -4644,6 +4771,7 @@ namespace tyr
 		m_Registry.DeleteBuffer(m_Resources.sceneInfoBuffer);
 		m_Registry.DeleteBuffer(m_Resources.guiVertexBuffer);
 		m_Registry.DeleteBuffer(m_Resources.debugLineVertexBuffer);
+		m_Registry.DeleteBuffer(m_Resources.particleBuffer);
 		m_Registry.DeleteBuffer(m_Resources.guiIndexBuffer);
 		m_Registry.DeleteBuffer(m_Resources.activeMeshInstanceIndexBuffer);
 		m_Registry.DeleteBuffer(m_Resources.meshDrawBuffer);

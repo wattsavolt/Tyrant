@@ -35,11 +35,11 @@ namespace tyr
 		constexpr uint c_NuklearVertexMemorySize = 512 * 1024;
 		constexpr uint c_NuklearIndexMemorySize = 128 * 1024;
 		// Enough for the fonts' glyphs, and for the scratch memory baking them takes, the pixels included.
-		constexpr uint c_NuklearFontMemorySize = 256 * 1024;
-		constexpr uint c_NuklearFontScratchSize = 8 * 1024 * 1024;
+		constexpr uint c_NuklearFontMemorySize = 512 * 1024;
+		constexpr uint c_NuklearFontScratchSize = 16 * 1024 * 1024;
 		constexpr size_t c_NuklearFontAlignment = 16;
 		// Pixel heights of the game UI's fonts, in GameFont order.
-		constexpr float c_GameFontSizes[] = { 22.0f, 36.0f, 24.0f };
+		constexpr float c_GameFontSizes[] = { 22.0f, 36.0f, 24.0f, 84.0f };
 		static_assert(sizeof(c_GameFontSizes) / sizeof(c_GameFontSizes[0]) == static_cast<uint>(GameFont::Count), "Each game font needs a size.");
 
 		// Matches GUIVertex (Rendering/GUIDrawData.h) field for field, so nk_convert can write
@@ -53,8 +53,19 @@ namespace tyr
 		};
 
 		// Creates a GPU texture for UI pixels and queues them for upload.
-		TextureHandle CreateGUITexture(RendererAPI& rendererAPI, const char* name, uint width, uint height, const void* pixels, uint rowSize)
+		// False, making nothing, when there's no upload memory free just now, such as while a level's
+		// assets are loading, so the caller can try again next frame.
+		bool CreateGUITexture(RendererAPI& rendererAPI, const char* name, uint width, uint height, const void* pixels, uint rowSize,
+			TextureHandle& outHandle)
 		{
+			// Uploaded texture rows have to be padded to the row pitch alignment.
+			const uint alignedRowSize = MemoryUtil::Align(rowSize, RenderConstants::c_RowPitchAlignment);
+			UploadBufferAllocation alloc;
+			if (!rendererAPI.RequestResourceUploadAllocation((size_t)alignedRowSize * height, alloc))
+			{
+				return false;
+			}
+
 			TextureDesc desc;
 			desc.debugName = name;
 			desc.info.width = width;
@@ -68,33 +79,25 @@ namespace tyr
 			desc.usage = static_cast<ImageUsage>(IMAGE_USAGE_SAMPLED_BIT | IMAGE_USAGE_TRANSFER_DST_BIT);
 			desc.layout = ImageLayout::IMAGE_LAYOUT_GENERAL;
 
-			const TextureHandle handle = rendererAPI.CreateTexture(desc);
-
-			// Uploaded texture rows have to be padded to the row pitch alignment.
-			const uint alignedRowSize = MemoryUtil::Align(rowSize, RenderConstants::c_RowPitchAlignment);
-			UploadBufferAllocation alloc;
-			if (rendererAPI.RequestResourceUploadAllocation((size_t)alignedRowSize * height, alloc))
+			outHandle = rendererAPI.CreateTexture(desc);
+			const uint8* src = static_cast<const uint8*>(pixels);
+			uint8* dst = static_cast<uint8*>(alloc.cpuPtr);
+			for (uint row = 0; row < height; ++row)
 			{
-				const uint8* src = static_cast<const uint8*>(pixels);
-				uint8* dst = static_cast<uint8*>(alloc.cpuPtr);
-				for (uint row = 0; row < height; ++row)
-				{
-					memcpy(dst + (size_t)row * alignedRowSize, src + (size_t)row * rowSize, rowSize);
-				}
-				rendererAPI.FlushBufferUploadAllocation(alloc);
-
-				TextureUploadRequest request;
-				request.srcBuffer = alloc.buffer;
-				request.srcOffset = alloc.offset;
-				request.dstTexture = handle;
-				request.highestMip = 0;
-				request.mipCount = 1;
-				request.type = TextureUploadRequestType::GUI;
-				request.resourceId = alloc.resourceId;
-				rendererAPI.AddTextureUploadRequest(request);
+				memcpy(dst + (size_t)row * alignedRowSize, src + (size_t)row * rowSize, rowSize);
 			}
+			rendererAPI.FlushBufferUploadAllocation(alloc);
 
-			return handle;
+			TextureUploadRequest request;
+			request.srcBuffer = alloc.buffer;
+			request.srcOffset = alloc.offset;
+			request.dstTexture = outHandle;
+			request.highestMip = 0;
+			request.mipCount = 1;
+			request.type = TextureUploadRequestType::GUI;
+			request.resourceId = alloc.resourceId;
+			rendererAPI.AddTextureUploadRequest(request);
+			return true;
 		}
 
 		// Memory for Nuklear's font baking, handed out from the bottom up like a stack. Freeing the
@@ -171,9 +174,9 @@ namespace tyr
 		}
 
 		// Creates a GPU texture for an ImGui texture and queues its pixels for upload.
-		TextureHandle CreateImGuiTexture(RendererAPI& rendererAPI, ImTextureData& tex)
+		bool CreateImGuiTexture(RendererAPI& rendererAPI, ImTextureData& tex, TextureHandle& outHandle)
 		{
-			return CreateGUITexture(rendererAPI, "ImGui Texture", (uint)tex.Width, (uint)tex.Height, tex.GetPixels(), (uint)tex.GetPitch());
+			return CreateGUITexture(rendererAPI, "ImGui Texture", (uint)tex.Width, (uint)tex.Height, tex.GetPixels(), (uint)tex.GetPitch(), outHandle);
 		}
 
 		// (Win32 virtual-key code, ImGuiKey) pairs - not exhaustive, just enough for menus,
@@ -333,7 +336,11 @@ namespace tyr
 			}
 			if (!m_Fonts[i])
 			{
-				m_Fonts[i] = nk_font_atlas_add_default(m_FontAtlas, c_GameFontSizes[i], nullptr);
+				// Not oversampled either, which would make the big sizes overflow the scratch memory.
+				struct nk_font_config config = nk_font_config(c_GameFontSizes[i]);
+				config.oversample_h = 1;
+				config.oversample_v = 1;
+				m_Fonts[i] = nk_font_atlas_add_default(m_FontAtlas, c_GameFontSizes[i], &config);
 			}
 		}
 		int width = 0;
@@ -361,7 +368,10 @@ namespace tyr
 			}
 			return;
 		}
-		m_FontTexture = CreateGUITexture(*m_RendererAPI, "Game UI Font", (uint)width, (uint)height, pixels, (uint)width * 4);
+		if (!CreateGUITexture(*m_RendererAPI, "Game UI Font", (uint)width, (uint)height, pixels, (uint)width * 4, m_FontTexture))
+		{
+			TYR_LOG_ERROR("No upload memory was free for the game UI's fonts.");
+		}
 
 		// +1 so a texture at index 0 isn't mistaken for none.
 		nk_draw_null_texture whiteTexel;
@@ -581,12 +591,16 @@ namespace tyr
 
 	void GUIModule::ProcessImGuiTextures()
 	{
+		// A texture that can't be uploaded yet keeps its status, so it's tried again next frame.
 		for (ImTextureData* tex : ImGui::GetPlatformIO().Textures)
 		{
+			TextureHandle handle;
 			if (tex->Status == ImTextureStatus_WantCreate)
 			{
-				const TextureHandle handle = CreateImGuiTexture(*m_RendererAPI, *tex);
-
+				if (!CreateImGuiTexture(*m_RendererAPI, *tex, handle))
+				{
+					continue;
+				}
 				// +1 because ImGui treats a texture ID of 0 as unset.
 				tex->SetTexID((ImTextureID)(intptr_t)(handle.h.index + 1));
 				tex->BackendUserData = PackTextureHandle(handle);
@@ -603,9 +617,11 @@ namespace tyr
 				// Recreates rather than updating the existing texture in place - UploadToTextures
 				// assumes every texture only ever goes through it once, right after creation, so a
 				// genuine in-place re-upload isn't safe there yet.
-				const TextureHandle oldHandle = UnpackTextureHandle(tex->BackendUserData);
-				const TextureHandle handle = CreateImGuiTexture(*m_RendererAPI, *tex);
-				m_RendererAPI->DeleteTexture(oldHandle);
+				if (!CreateImGuiTexture(*m_RendererAPI, *tex, handle))
+				{
+					continue;
+				}
+				m_RendererAPI->DeleteTexture(UnpackTextureHandle(tex->BackendUserData));
 				tex->SetTexID((ImTextureID)(intptr_t)(handle.h.index + 1));
 				tex->BackendUserData = PackTextureHandle(handle);
 				tex->SetStatus(ImTextureStatus_OK);
@@ -668,7 +684,9 @@ namespace tyr
 			for (int c = 0; c < cmdList->CmdBuffer.Size; ++c)
 			{
 				const ImDrawCmd& src = cmdList->CmdBuffer[c];
-				if (src.ElemCount == 0)
+				// Nothing's drawn with a texture still waiting for upload memory.
+				const bool textureWaiting = src.TexRef._TexData && src.TexRef._TexData->TexID == ImTextureID_Invalid;
+				if (src.ElemCount == 0 || textureWaiting)
 				{
 					continue;
 				}

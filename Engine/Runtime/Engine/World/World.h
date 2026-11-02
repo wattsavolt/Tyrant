@@ -75,8 +75,10 @@ namespace tyr
 		bool simulate = true;
 		// Holds physics and animation still, such as while the editor has the game paused.
 		bool paused = false;
-		// Whether its lights and door panels have power, which the game decides.
+		// Whether its lights and door panels have power, which the game decides, and which power
+		// zones are switched off, one bit each.
 		bool powered = true;
+		uint unpoweredZones = 0;
 		// Set by the editor while it shows AI debugging, for the game to label its own AI too.
 		bool debugAI = false;
 		EntitySystem entities;

@@ -1,6 +1,7 @@
 #include "Power.h"
 #include "ECS/Components.h"
 #include "World/World.h"
+#include "Math/Math.h"
 
 namespace tyr
 {
@@ -8,6 +9,18 @@ namespace tyr
 	{
 		// How bright a flickering fixture is when it drops out, so it never goes fully dark.
 		constexpr float c_FlickerLow = 0.3f;
+		// How bright a sparking fixture flashes, for how long, and the seconds between flashes.
+		constexpr float c_SparkFlash = 0.6f;
+		constexpr float c_SparkFlashMin = 0.05f;
+		constexpr float c_SparkFlashMax = 0.12f;
+		constexpr float c_SparkGapMin = 1.5f;
+		constexpr float c_SparkGapMax = 7.0f;
+
+		float NextRandom(LightFixtureComponent& fixture)
+		{
+			fixture.flickerSeed = fixture.flickerSeed * 1664525u + 1013904223u;
+			return static_cast<float>(fixture.flickerSeed >> 8) * (1.0f / 16777216.0f);
+		}
 	}
 
 	namespace Power
@@ -20,6 +33,53 @@ namespace tyr
 		void SetOn(World& world, bool on)
 		{
 			world.powered = on;
+		}
+
+		int GetZone(World& world, const Vector3& position)
+		{
+			int zone = -1;
+			float smallest = 0.0f;
+			world.entities.ForEach<PowerZoneComponent>([&](Entity entity, const PowerZoneComponent& box)
+			{
+				if (box.zone >= c_MaxZones || !world.entities.HasComponent<TransformComponent>(entity))
+				{
+					return;
+				}
+				const Transform& transform = world.entities.GetComponent<TransformComponent>(entity).world;
+				const Vector3 local = transform.rotation.Inverse().Rotate(position - transform.position);
+				const Vector3 extents(box.halfExtents.x * transform.scale.x, box.halfExtents.y * transform.scale.y, box.halfExtents.z * transform.scale.z);
+				const float size = extents.x * extents.y * extents.z;
+				if (Math::Abs(local.x) <= extents.x && Math::Abs(local.y) <= extents.y && Math::Abs(local.z) <= extents.z
+					&& (zone < 0 || size < smallest))
+				{
+					zone = box.zone;
+					smallest = size;
+				}
+			});
+			return zone;
+		}
+
+		bool IsZoneOn(const World& world, uint zone)
+		{
+			return !world.simulate || zone >= c_MaxZones || (world.unpoweredZones & (1u << zone)) == 0;
+		}
+
+		void SetZoneOn(World& world, uint zone, bool on)
+		{
+			if (zone < c_MaxZones)
+			{
+				world.unpoweredZones = on ? world.unpoweredZones & ~(1u << zone) : world.unpoweredZones | (1u << zone);
+			}
+		}
+
+		bool IsOn(World& world, const Vector3& position)
+		{
+			if (!IsOn(world))
+			{
+				return false;
+			}
+			const int zone = GetZone(world, position);
+			return zone < 0 || IsZoneOn(world, static_cast<uint>(zone));
 		}
 
 		void ToggleSwitch(World& world, Entity lightSwitch)
@@ -51,6 +111,24 @@ namespace tyr
 			{
 				return 0.0f;
 			}
+			if (state == LightFixtureState::Sparking)
+			{
+				if (!animate)
+				{
+					return 0.0f;
+				}
+				// Dark for a few seconds, then a short flash as it sparks.
+				fixture.flickerTimer -= deltaTime;
+				if (fixture.flickerTimer <= 0.0f)
+				{
+					const float random = NextRandom(fixture);
+					fixture.flickerLit = !fixture.flickerLit;
+					fixture.sparked = fixture.flickerLit;
+					fixture.flickerTimer = fixture.flickerLit ? c_SparkFlashMin + random * (c_SparkFlashMax - c_SparkFlashMin)
+						: c_SparkGapMin + random * (c_SparkGapMax - c_SparkGapMin);
+				}
+				return fixture.flickerLit ? c_SparkFlash : 0.0f;
+			}
 			if (state != LightFixtureState::Flickering || !animate)
 			{
 				return 1.0f;
@@ -60,8 +138,7 @@ namespace tyr
 			fixture.flickerTimer -= deltaTime;
 			if (fixture.flickerTimer <= 0.0f)
 			{
-				fixture.flickerSeed = fixture.flickerSeed * 1664525u + 1013904223u;
-				const float random = static_cast<float>(fixture.flickerSeed >> 8) * (1.0f / 16777216.0f);
+				const float random = NextRandom(fixture);
 				fixture.flickerLit = !fixture.flickerLit;
 				const bool burstGoesOn = random < 0.6f;
 				fixture.flickerTimer = !fixture.flickerLit ? 0.04f + random * 0.08f

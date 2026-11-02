@@ -35,8 +35,8 @@ namespace tyr
 		const char* const c_DoorLockNames[] = { "Unlocked", "Needs Key", "Locked From Back", "Locked" };
 		const PropertiesReflector::EnumNames c_DoorMotions = { c_DoorMotionNames, 2 };
 		const PropertiesReflector::EnumNames c_DoorLocks = { c_DoorLockNames, 4 };
-		const char* const c_LightFixtureStateNames[] = { "Working", "Broken", "Flickering" };
-		const PropertiesReflector::EnumNames c_LightFixtureStates = { c_LightFixtureStateNames, 3 };
+		const char* const c_LightFixtureStateNames[] = { "Working", "Broken", "Flickering", "Sparking" };
+		const PropertiesReflector::EnumNames c_LightFixtureStates = { c_LightFixtureStateNames, 4 };
 
 		// An invalid material makes the slot use the mesh's own. Trailing ones are dropped, so a
 		// mesh with no overrides has an empty list, the same as its actor type.

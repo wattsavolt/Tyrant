@@ -181,6 +181,11 @@ namespace tyr
 		// This frame's debug line vertices, depth-tested ones first, then ones drawn on top.
 		uint debugLineDepthTestedCount = 0;
 		uint debugLineOnTopCount = 0;
+		// This frame's particles, and what turns a device depth into metres from the camera:
+		// depthScale / (depth - depthOffset).
+		uint particleCount = 0;
+		float depthScale = 0.0f;
+		float depthOffset = 0.0f;
 		// The active scene's lights this frame, in the same order as the light index list the
 		// lighting shader reads, so shadow slots match it.
 		SceneLights activeLights;
@@ -268,6 +273,9 @@ namespace tyr
 			lodProjectionScale = 0.0f;
 			debugLineDepthTestedCount = 0;
 			debugLineOnTopCount = 0;
+			particleCount = 0;
+			depthScale = 0.0f;
+			depthOffset = 0.0f;
 			activeLights.Clear();
 			visibleDecalCount = 0;
 			presentViewport = false;

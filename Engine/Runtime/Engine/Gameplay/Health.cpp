@@ -21,6 +21,10 @@ namespace tyr
 				return false;
 			}
 			HealthComponent& health = world.entities.GetComponent<HealthComponent>(entity);
+			if (health.invulnerable)
+			{
+				return false;
+			}
 			if (!health.damaged)
 			{
 				health.health = health.maxHealth;

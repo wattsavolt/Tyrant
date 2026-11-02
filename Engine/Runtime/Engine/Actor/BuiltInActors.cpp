@@ -148,6 +148,31 @@ namespace tyr
 	// the half of the world in front of it, so its mesh sits behind its origin. The mesh's emissive
 	// materials glow while it's lit.
 	TYR_ACTOR_START(LightFixtureActor)
+		// Sparks, given off only when a sparking fixture flashes. They're short-lived and end at the floor.
+		EmitterComponent sparks{};
+		sparks.burst = 18;
+		sparks.burstAtStart = false;
+		sparks.rate = 0.0f;
+		sparks.lifeMin = 0.3f;
+		sparks.lifeMax = 0.9f;
+		sparks.speedMin = 1.0f;
+		sparks.speedMax = 3.5f;
+		sparks.spreadAngle = 180.0f;
+		sparks.spawnRadius = 0.04f;
+		sparks.gravity = -9.8f;
+		sparks.floorDistance = 2.6f;
+		sparks.drag = 0.6f;
+		sparks.startSize = 0.006f;
+		sparks.endSize = 0.003f;
+		sparks.sizeVariation = 0.3f;
+		sparks.randomRotation = false;
+		sparks.stretch = 0.03f;
+		sparks.startColour = Vector4(1.0f, 0.9f, 0.6f, 1.0f);
+		sparks.endColour = Vector4(1.0f, 0.4f, 0.08f, 0.0f);
+		sparks.brightness = 60.0f;
+		sparks.additive = 1.0f;
+		sparks.softness = 0.02f;
+
 		SpotLightComponent light{};
 		light.colour = Vector3(1.0f, 0.95f, 0.88f);
 		light.intensity = 8.0f;
@@ -162,6 +187,7 @@ namespace tyr
 		root.AddComponent(BoxComponent{});
 		root.AddComponent(light);
 		root.AddComponent(LightFixtureComponent{});
+		root.AddComponent(sparks);
 	TYR_ACTOR_END()
 
 	// A wall switch for the light fixtures on its circuit.
@@ -182,6 +208,17 @@ namespace tyr
 		root.AddComponent(BoxComponent{});
 		root.AddComponent(ColliderComponent{});
 		root.AddComponent(ActivatorComponent{});
+	TYR_ACTOR_END()
+
+	// Something the player can look at and say a line about, such as a painting. Without a mesh,
+	// its collider's half extents set what's aimed at.
+	TYR_ACTOR_START(ExamineActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(MeshComponent{});
+		root.AddComponent(BoxComponent{});
+		root.AddComponent(ColliderComponent{});
+		root.AddComponent(ExamineComponent{});
 	TYR_ACTOR_END()
 
 	// An item lying in the world, such as a key card, that the player can take.
@@ -238,6 +275,13 @@ namespace tyr
 		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
 		root.AddComponent(CreateIdentityTransform());
 		root.AddComponent(IndoorVolumeComponent{});
+	TYR_ACTOR_END()
+
+	// A box of a power zone, whose lights and door panels can be switched off together.
+	TYR_ACTOR_START(PowerZoneActor)
+		ActorEntityDesc& root = actorTypeDesc.AddEntity("Root");
+		root.AddComponent(CreateIdentityTransform());
+		root.AddComponent(PowerZoneComponent{});
 	TYR_ACTOR_END()
 
 	// A box the navmesh is built in. Its bounds don't take clicks in the viewport, since they're

@@ -21,7 +21,7 @@ namespace tyr
 	class TYR_ENGINE_API OverridableFields final
 	{
 	public:
-		static constexpr uint c_MaxFields = 32;
+		static constexpr uint c_MaxFields = 64;
 		static constexpr uint c_MaxTypes = 128;
 		using FieldList = LocalArray<OverridableField, c_MaxFields>;
 

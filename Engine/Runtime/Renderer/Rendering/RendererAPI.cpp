@@ -950,6 +950,33 @@ namespace tyr
 		renderFrame.debugLineOnTopCount = onTopCount;
 	}
 
+	void RendererAPI::SubmitParticles(const ParticleInstance* particles, uint count)
+	{
+		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();
+		TYR_ASSERT(renderFrame.particleCount == 0);
+		count = std::min(count, RenderConstants::c_MaxParticles);
+		if (count == 0)
+		{
+			return;
+		}
+
+		const size_t bytes = sizeof(ParticleInstance) * count;
+		UploadBufferAllocation alloc;
+		if (!m_AllocManager.RequestFrameUploadAllocation(bytes, alloc))
+		{
+			return;
+		}
+		RenderResourceUtil::WriteUploadBuffer(m_Registry.GetBuffer(alloc.buffer), m_Device, alloc.offset, (void*)particles, bytes);
+
+		BufferUploadRequest& request = renderFrame.frameBufferUploadRequests.ExpandOne();
+		request.srcBuffer = alloc.buffer;
+		request.srcOffset = alloc.offset;
+		request.dstBuffer = m_Renderer.GetRenderResources().particleBuffer;
+		request.dstOffset = m_Renderer.GetRenderFrameIndex() * RenderConstants::c_ParticleBufferSize;
+		request.size = bytes;
+		renderFrame.particleCount = count;
+	}
+
 	void RendererAPI::ResetGUIDrawData()
 	{
 		RenderFrame& renderFrame = m_Renderer.GetRenderFrame();

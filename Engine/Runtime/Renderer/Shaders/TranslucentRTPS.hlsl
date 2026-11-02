@@ -161,8 +161,11 @@ TranslucentOutput main(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace)
 		float lightDistance;
 		const float3 radiance = GetPointLightRadiance(light, position, lightDir, lightDistance);
 		const float lit = max(radiance.r, max(radiance.g, radiance.b)) > 0.0f ? 1.0f : 0.0f;
-		const float shadowDistance = (lightDistance - c_LightClearance) * light.castsShadow * lit;
-		const float shadow = TraceShadow(shadowOrigin, lightDir, shadowDistance);
+		// Aimed from the lifted origin, so the ray still stops its clearance short of the light.
+		const float3 toLight = light.position - shadowOrigin;
+		const float toLightDistance = length(toLight);
+		const float shadowDistance = (toLightDistance - c_LightClearance) * light.castsShadow * lit;
+		const float shadow = TraceShadow(shadowOrigin, toLight / max(toLightDistance, 1e-4f), shadowDistance);
 		colour += ShadeLight(mat, opacity, surfaceNormal, viewDir, lightDir, radiance) * shadow;
 	}
 
@@ -173,8 +176,11 @@ TranslucentOutput main(VS_OUTPUT input, bool isFrontFace : SV_IsFrontFace)
 		float lightDistance;
 		const float3 radiance = GetSpotLightRadiance(light, position, lightDir, lightDistance);
 		const float lit = max(radiance.r, max(radiance.g, radiance.b)) > 0.0f ? 1.0f : 0.0f;
-		const float shadowDistance = (lightDistance - c_LightClearance) * light.castsShadow * lit;
-		const float shadow = TraceShadow(shadowOrigin, lightDir, shadowDistance);
+		// Aimed from the lifted origin, so the ray still stops its clearance short of the light.
+		const float3 toLight = light.position - shadowOrigin;
+		const float toLightDistance = length(toLight);
+		const float shadowDistance = (toLightDistance - c_LightClearance) * light.castsShadow * lit;
+		const float shadow = TraceShadow(shadowOrigin, toLight / max(toLightDistance, 1e-4f), shadowDistance);
 		colour += ShadeLight(mat, opacity, surfaceNormal, viewDir, lightDir, radiance) * shadow;
 	}
 

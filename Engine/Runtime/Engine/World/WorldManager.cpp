@@ -99,6 +99,11 @@ namespace tyr
 			{
 				return 0.0f;
 			}
+			if ((entities.HasComponent<PointLightComponent>(entity) && entities.GetComponent<PointLightComponent>(entity).unpowered)
+				|| (entities.HasComponent<SpotLightComponent>(entity) && entities.GetComponent<SpotLightComponent>(entity).unpowered))
+			{
+				return 0.0f;
+			}
 			if (entities.HasComponent<FlashlightComponent>(entity))
 			{
 				return entities.GetComponent<FlashlightComponent>(entity).on ? 1.0f : 0.0f;
@@ -219,7 +224,25 @@ namespace tyr
 
 		World& world = m_WorldPool[m_ActiveWorld];
 		UpdateWorld(m_ActiveWorld, world, deltaTime);
+		UpdateParticles(world, deltaTime);
 		DebugDraw::Flush(m_ActiveWorld, deltaTime, *m_RendererAPI);
+	}
+
+	void WorldManager::UpdateParticles(World& world, float deltaTime)
+	{
+		// They hang still while paused, and still show.
+		if (!world.paused)
+		{
+			Entity finished[ParticleSystem::c_MaxFinished];
+			uint finishedCount = 0;
+			m_ParticleSystem.Update(world, *m_AssetManager, deltaTime, finished, finishedCount);
+			for (uint i = 0; i < finishedCount; ++i)
+			{
+				ReleaseEntity(world, finished[i]);
+				world.entities.RemoveEntity(finished[i]);
+			}
+		}
+		m_ParticleSystem.Submit(world, *m_RendererAPI);
 	}
 
 	void WorldManager::UpdateWorld(Handle worldHandle, World& world, float deltaTime)
@@ -236,7 +259,7 @@ namespace tyr
 			// A mesh component may have no mesh yet, such as on a newly placed actor.
 			world.entities.ForEach<MeshComponent>([this, worldHandle](Entity entity, MeshComponent& meshComponent)
 			{
-				if (!meshComponent.meshInstanceRequested && AssetUtil::IsValidAssetID(meshComponent.mesh))
+				if (!meshComponent.meshInstanceRequested && !meshComponent.hidden && AssetUtil::IsValidAssetID(meshComponent.mesh))
 				{
 					SyncMeshInstance(worldHandle, entity, meshComponent);
 				}
@@ -244,7 +267,7 @@ namespace tyr
 
 			world.entities.ForEach<SkeletalMeshComponent>([this, worldHandle](Entity entity, SkeletalMeshComponent& skeletalMesh)
 			{
-				if (!skeletalMesh.meshInstanceRequested && AssetUtil::IsValidAssetID(skeletalMesh.mesh))
+				if (!skeletalMesh.meshInstanceRequested && !skeletalMesh.hidden && AssetUtil::IsValidAssetID(skeletalMesh.mesh))
 				{
 					SyncSkeletalMeshInstance(worldHandle, entity, skeletalMesh);
 				}
@@ -408,6 +431,7 @@ namespace tyr
 
 		m_ActiveWorld = worldHandle;
 		DebugDraw::SetWorld(worldHandle);
+		m_ParticleSystem.Clear();
 
 		if (worldHandle)
 		{
@@ -488,8 +512,16 @@ namespace tyr
 					return;
 				}
 
-				// Created where the entity is now, which may have changed while it was loading.
+				// Hidden while it was loading, or shown again and loaded twice, so this one isn't needed.
 				World& world = m_WorldPool[worldHandle];
+				const MeshComponent& loading = world.entities.GetComponent<MeshComponent>(entity);
+				if (loading.hidden || loading.meshInstance)
+				{
+					ReleaseMeshInstance({}, meshID, assets.materialIDs);
+					return;
+				}
+
+				// Created where the entity is now, which may have changed while it was loading.
 				const Transform transform = GetWorldTransform(world.entities, entity);
 				MeshInstanceDesc desc;
 				desc.info.transform = Matrix4::CreateTRS(transform.position, transform.rotation, transform.scale);
@@ -730,6 +762,50 @@ namespace tyr
 		UpdateEntityTransform(GetWorld(worldHandle), entity);
 	}
 
+	void WorldManager::SetEntityHidden(Handle worldHandle, Entity entity, bool hidden)
+	{
+		World& world = m_WorldPool[worldHandle];
+		if (world.entities.HasComponent<MeshComponent>(entity))
+		{
+			MeshComponent& mesh = world.entities.GetComponent<MeshComponent>(entity);
+			if (mesh.hidden != hidden)
+			{
+				mesh.hidden = hidden;
+				if (hidden)
+				{
+					// One still loading lets itself go once it sees it's hidden.
+					RemoveMeshInstance(mesh);
+					mesh.meshInstance = {};
+					mesh.loadedMaterials.Clear();
+					mesh.meshInstanceRequested = false;
+				}
+				else if (AssetUtil::IsValidAssetID(mesh.mesh))
+				{
+					SyncMeshInstance(worldHandle, entity, mesh);
+				}
+			}
+		}
+		if (world.entities.HasComponent<SkeletalMeshComponent>(entity))
+		{
+			SkeletalMeshComponent& skeletalMesh = world.entities.GetComponent<SkeletalMeshComponent>(entity);
+			if (skeletalMesh.hidden != hidden)
+			{
+				skeletalMesh.hidden = hidden;
+				if (hidden)
+				{
+					RemoveSkeletalMeshInstance(skeletalMesh);
+					skeletalMesh.meshInstance = {};
+					skeletalMesh.loadedMaterials.Clear();
+					skeletalMesh.meshInstanceRequested = false;
+				}
+				else if (AssetUtil::IsValidAssetID(skeletalMesh.mesh))
+				{
+					SyncSkeletalMeshInstance(worldHandle, entity, skeletalMesh);
+				}
+			}
+		}
+	}
+
 	void WorldManager::RemoveEntity(Handle worldHandle, Entity entity)
 	{
 		World& world = GetWorld(worldHandle);
@@ -866,8 +942,16 @@ namespace tyr
 					return;
 				}
 
-				// Created where the entity is now, which may have changed while it was loading.
+				// Hidden while it was loading, or shown again and loaded twice, so this one isn't needed.
 				World& world = m_WorldPool[worldHandle];
+				const SkeletalMeshComponent& loading = world.entities.GetComponent<SkeletalMeshComponent>(entity);
+				if (loading.hidden || loading.meshInstance)
+				{
+					ReleaseSkeletalMeshInstance({}, meshID, assets.materialIDs);
+					return;
+				}
+
+				// Created where the entity is now, which may have changed while it was loading.
 				const Transform transform = GetWorldTransform(world.entities, entity);
 				SkeletalMeshInstanceDesc desc;
 				desc.info.transform = Matrix4::CreateTRS(transform.position, transform.rotation, transform.scale);
@@ -1040,6 +1124,15 @@ namespace tyr
 		{
 			ReleaseDecal(world, world.entities.GetComponent<DecalComponent>(entity));
 		}
+		if (world.entities.HasComponent<EmitterComponent>(entity))
+		{
+			EmitterComponent& emitter = world.entities.GetComponent<EmitterComponent>(entity);
+			if (emitter.textureRequested)
+			{
+				m_AssetManager->DeleteTexture(emitter.texture);
+				emitter.textureRequested = false;
+			}
+		}
 		if (world.physicsWorld && world.entities.HasComponent<CharacterComponent>(entity))
 		{
 			m_PhysicsComponentsManager.RemoveCharacter(world.physicsWorld, world.entities.GetComponent<CharacterComponent>(entity));
@@ -1160,22 +1253,52 @@ namespace tyr
 
 	void WorldManager::UpdateLightFixtures(World& world, float deltaTime)
 	{
-		const bool powered = Power::IsOn(world);
+		const bool worldPowered = Power::IsOn(world);
 		const bool animate = world.simulate && !world.paused;
-		world.entities.ForEach<LightFixtureComponent>([this, &world, powered, animate, deltaTime](Entity entity, LightFixtureComponent& fixture)
+		world.entities.ForEach<LightFixtureComponent>([this, &world, worldPowered, animate, deltaTime](Entity entity, LightFixtureComponent& fixture)
 		{
 			// Fixtures flicker out of step with each other.
 			if (fixture.flickerSeed == 0)
 			{
 				fixture.flickerSeed = entity * 2654435761u + 1u;
 			}
+			// Fixtures don't move, so the zone each is in is only looked for once.
+			if (fixture.powerZone == -2 && world.entities.HasComponent<TransformComponent>(entity))
+			{
+				fixture.powerZone = static_cast<int8>(Power::GetZone(world, world.entities.GetComponent<TransformComponent>(entity).world.position));
+			}
+			const bool powered = worldPowered && (fixture.powerZone < 0 || Power::IsZoneOn(world, static_cast<uint>(fixture.powerZone)));
 			const float brightness = Power::UpdateFixture(fixture, powered, animate, deltaTime);
+			if (fixture.sparked)
+			{
+				fixture.sparked = false;
+				if (world.entities.HasComponent<EmitterComponent>(entity))
+				{
+					world.entities.GetComponent<EmitterComponent>(entity).burstRequested = true;
+				}
+			}
 			if (brightness == fixture.brightness)
 			{
 				return;
 			}
 			fixture.brightness = brightness;
 			UpdateEntityTransform(world, entity);
+		});
+
+		// Plain lights that need power go dark without it, each sent again when that changes.
+		world.entities.ForEach<PointLightComponent>([this, &world, worldPowered](Entity entity, PointLightComponent& light)
+		{
+			if (light.needsPower)
+			{
+				UpdatePoweredLight(world, entity, worldPowered, light.powerZone, light.unpowered);
+			}
+		});
+		world.entities.ForEach<SpotLightComponent>([this, &world, worldPowered](Entity entity, SpotLightComponent& light)
+		{
+			if (light.needsPower)
+			{
+				UpdatePoweredLight(world, entity, worldPowered, light.powerZone, light.unpowered);
+			}
 		});
 
 		// A flipped switch turns half a turn about the wall's normal, which shows its rocker the other way up.
@@ -1256,6 +1379,20 @@ namespace tyr
 				m_AudioAPI->SetEventPosition(ambient.handle, position);
 			}
 		});
+	}
+
+	void WorldManager::UpdatePoweredLight(World& world, Entity entity, bool worldPowered, int8& powerZone, bool& unpowered)
+	{
+		if (powerZone == -2 && world.entities.HasComponent<TransformComponent>(entity))
+		{
+			powerZone = static_cast<int8>(Power::GetZone(world, world.entities.GetComponent<TransformComponent>(entity).world.position));
+		}
+		const bool dark = !worldPowered || (powerZone >= 0 && !Power::IsZoneOn(world, static_cast<uint>(powerZone)));
+		if (dark != unpowered)
+		{
+			unpowered = dark;
+			UpdateEntityTransform(world, entity);
+		}
 	}
 
 	void WorldManager::UpdateIndoors(World& world)
@@ -1501,6 +1638,11 @@ namespace tyr
 		}
 		world.folders.Clear();
 		world.settings = {};
+		world.unpoweredZones = 0;
+		if (worldHandle == m_ActiveWorld)
+		{
+			m_ParticleSystem.Clear();
+		}
 		m_NavmeshComponentsManager.Release(world);
 		world.navmeshData.Clear();
 		++world.changeCount;

@@ -74,6 +74,8 @@
 #define TYR_BINDING_BLOOM 35
 // The first is half the viewport's size, and each after it half the one before.
 #define TYR_BLOOM_LEVELS 6
+// This frame's particles, sorted furthest first, one c_MaxParticles slice per buffered frame.
+#define TYR_BINDING_PARTICLE 36
 
 // How many copies of the per-frame render targets TYR_BINDING_LIGHTING_OUTPUT holds, one
 // per buffered frame slot - kept in sync with the matching C++ constant.
@@ -516,6 +518,8 @@ namespace tyr
 		float flashB;
 		// Dark red creeping in from the edges, from 0 to 1, showing how badly hurt the player is.
 		float wounds;
+		// Blood splashed over the middle of the view, from 0 for none to 1 covering most of it.
+		float blood;
 	};
 
 	TYR_SHADER_STRUCT(BloomPushConstants)

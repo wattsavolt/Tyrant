@@ -201,5 +201,6 @@ namespace tyr
 			pad.rightTrigger = NormalizeTrigger(state.Gamepad.bRightTrigger, XINPUT_GAMEPAD_TRIGGER_THRESHOLD);
 		}
 		UpdateGameInputGamepad();
+		UpdateLastDevice();
 	}
 }
